@@ -1,3 +1,7 @@
+## 1.0.2
+
+- Fixed image clips rendered upside-down in preview and export on iOS (`makePixelBuffer`: apply vertical flip to CGContext before drawing UIImage).
+
 ## 1.0.1
 
 - Removed cross-fade transition feature: `TimelineCompositionConfig.transitionDuration` removed.

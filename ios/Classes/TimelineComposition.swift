@@ -491,6 +491,10 @@ final class TimelineComposition {
       return nil
     }
 
+    // CGContext manual tem origem bottom-left; UIImage espera top-left.
+    context.translateBy(x: 0, y: size.height)
+    context.scaleBy(x: 1, y: -1)
+
     context.clear(CGRect(origin: .zero, size: size))
     UIGraphicsPushContext(context)
     image.draw(in: CGRect(origin: .zero, size: size))
