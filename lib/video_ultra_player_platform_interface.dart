@@ -1,29 +1,55 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-
-import 'video_ultra_player_method_channel.dart';
+import 'package:video_ultra_player/src/models/timeline_player_state.dart';
+import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 
 abstract class VideoUltraPlayerPlatform extends PlatformInterface {
-  /// Constructs a VideoUltraPlayerPlatform.
   VideoUltraPlayerPlatform() : super(token: _token);
 
   static final Object _token = Object();
 
   static VideoUltraPlayerPlatform _instance = MethodChannelVideoUltraPlayer();
 
-  /// The default instance of [VideoUltraPlayerPlatform] to use.
-  ///
-  /// Defaults to [MethodChannelVideoUltraPlayer].
   static VideoUltraPlayerPlatform get instance => _instance;
 
-  /// Platform-specific implementations should set this with their own
-  /// platform-specific class that extends [VideoUltraPlayerPlatform] when
-  /// they register themselves.
   static set instance(VideoUltraPlayerPlatform instance) {
     PlatformInterface.verifyToken(instance, _token);
     _instance = instance;
   }
 
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('platformVersion() has not been implemented.');
+  Future<int> load(List<Map<String, dynamic>> clips) {
+    throw UnimplementedError('load() has not been implemented.');
+  }
+
+  Future<void> play(int textureId) {
+    throw UnimplementedError('play() has not been implemented.');
+  }
+
+  Future<void> pause(int textureId) {
+    throw UnimplementedError('pause() has not been implemented.');
+  }
+
+  Future<void> seekTo(int textureId, Duration position) {
+    throw UnimplementedError('seekTo() has not been implemented.');
+  }
+
+  Future<void> setVolume(int textureId, double volume) {
+    throw UnimplementedError('setVolume() has not been implemented.');
+  }
+
+  Future<void> setClipAlignment(
+    int textureId,
+    int clipIndex,
+    double x,
+    double y,
+  ) {
+    throw UnimplementedError('setClipAlignment() has not been implemented.');
+  }
+
+  Future<void> dispose(int textureId) {
+    throw UnimplementedError('dispose() has not been implemented.');
+  }
+
+  Stream<TimelinePlayerState> stateStream(int textureId) {
+    throw UnimplementedError('stateStream() has not been implemented.');
   }
 }

@@ -1,27 +1,18 @@
 import Flutter
-import UIKit
 import XCTest
-
 
 @testable import video_ultra_player
 
-// This demonstrates a simple unit test of the Swift portion of this plugin's implementation.
-//
-// See https://developer.apple.com/documentation/xctest for more information about using XCTest.
-
 class RunnerTests: XCTestCase {
-
-  func testGetPlatformVersion() {
+  func testUnknownMethodIsNotImplemented() {
     let plugin = VideoUltraPlayerPlugin()
-
-    let call = FlutterMethodCall(methodName: "getPlatformVersion", arguments: [])
+    let call = FlutterMethodCall(methodName: "unknown", arguments: [])
 
     let resultExpectation = expectation(description: "result block must be called.")
     plugin.handle(call) { result in
-      XCTAssertEqual(result as! String, "iOS " + UIDevice.current.systemVersion)
+      XCTAssertTrue(result is FlutterMethodNotImplemented)
       resultExpectation.fulfill()
     }
     waitForExpectations(timeout: 1)
   }
-
 }

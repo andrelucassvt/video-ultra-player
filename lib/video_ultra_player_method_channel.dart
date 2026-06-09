@@ -1,19 +1,91 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:video_ultra_player/src/models/timeline_player_state.dart';
+import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
-import 'video_ultra_player_platform_interface.dart';
-
-/// An implementation of [VideoUltraPlayerPlatform] that uses method channels.
 class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
-  /// The method channel used to interact with the native platform.
   @visibleForTesting
-  final methodChannel = const MethodChannel('video_ultra_player');
+  final methodChannel = const MethodChannel(
+    'video_ultra_player/timeline_player',
+  );
+
+  @visibleForTesting
+  final eventChannel = const EventChannel(
+    'video_ultra_player/timeline_player/events',
+  );
 
   @override
-  Future<String?> getPlatformVersion() async {
-    final version = await methodChannel.invokeMethod<String>(
-      'getPlatformVersion',
+  Future<int> load(List<Map<String, dynamic>> clips) async {
+    final textureId = await methodChannel.invokeMethod<int>(
+      'load',
+      <String, Object?>{'clips': clips},
     );
-    return version;
+    if (textureId == null) {
+      throw StateError('Native timeline load did not return a texture id.');
+    }
+    return textureId;
+  }
+
+  @override
+  Future<void> play(int textureId) {
+    return methodChannel.invokeMethod<void>('play', _textureArgs(textureId));
+  }
+
+  @override
+  Future<void> pause(int textureId) {
+    return methodChannel.invokeMethod<void>('pause', _textureArgs(textureId));
+  }
+
+  @override
+  Future<void> seekTo(int textureId, Duration position) {
+    return methodChannel.invokeMethod<void>('seekTo', <String, Object?>{
+      'textureId': textureId,
+      'positionMs': position.inMilliseconds,
+    });
+  }
+
+  @override
+  Future<void> setVolume(int textureId, double volume) {
+    return methodChannel.invokeMethod<void>('setVolume', <String, Object?>{
+      'textureId': textureId,
+      'volume': volume,
+    });
+  }
+
+  @override
+  Future<void> setClipAlignment(
+    int textureId,
+    int clipIndex,
+    double x,
+    double y,
+  ) {
+    return methodChannel.invokeMethod<void>(
+      'setClipAlignment',
+      <String, Object?>{
+        'textureId': textureId,
+        'clipIndex': clipIndex,
+        'x': x,
+        'y': y,
+      },
+    );
+  }
+
+  @override
+  Future<void> dispose(int textureId) {
+    return methodChannel.invokeMethod<void>('dispose', _textureArgs(textureId));
+  }
+
+  @override
+  Stream<TimelinePlayerState> stateStream(int textureId) {
+    return eventChannel
+        .receiveBroadcastStream(_textureArgs(textureId))
+        .map(
+          (event) =>
+              TimelinePlayerState.fromMap(event as Map<dynamic, dynamic>),
+        );
+  }
+
+  Map<String, Object?> _textureArgs(int textureId) {
+    return <String, Object?>{'textureId': textureId};
   }
 }
