@@ -123,6 +123,7 @@ void main() {
     await platform.play(77);
     await platform.pause(77);
     await platform.seekTo(77, const Duration(milliseconds: 300));
+    await platform.seekToClip(77, 1);
     await platform.setVolume(77, 0.25);
     await platform.setClipAlignment(77, 2, -1, 1);
     await platform.dispose(77);
@@ -131,13 +132,15 @@ void main() {
       'play',
       'pause',
       'seekTo',
+      'seekToClip',
       'setVolume',
       'setClipAlignment',
       'dispose',
     ]);
     expect(calls[2].arguments, {'textureId': 77, 'positionMs': 300});
-    expect(calls[3].arguments, {'textureId': 77, 'volume': 0.25});
-    expect(calls[4].arguments, {
+    expect(calls[3].arguments, {'textureId': 77, 'clipIndex': 1});
+    expect(calls[4].arguments, {'textureId': 77, 'volume': 0.25});
+    expect(calls[5].arguments, {
       'textureId': 77,
       'clipIndex': 2,
       'x': -1.0,

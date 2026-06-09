@@ -208,6 +208,10 @@ final class TimelineComposition {
     return makeVideoComposition()
   }
 
+  func startTime(forClipIndex clipIndex: Int) -> CMTime? {
+    return segments.first(where: { $0.clipIndex == clipIndex })?.startTime
+  }
+
   func playbackState(at time: CMTime) -> (clipIndex: Int, localPosition: CMTime) {
     guard !segments.isEmpty else {
       return (0, .zero)

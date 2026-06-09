@@ -99,6 +99,10 @@ class NativeTimelinePlayer {
     return _platform.seekTo(_requireTextureId(), position);
   }
 
+  Future<void> seekToClip(int clipIndex) {
+    return _platform.seekToClip(_requireTextureId(), clipIndex);
+  }
+
   Future<void> setVolume(double volume) {
     if (volume < 0 || volume > 1) {
       throw RangeError.range(volume, 0, 1, 'volume');

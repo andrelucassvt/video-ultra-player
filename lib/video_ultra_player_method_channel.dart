@@ -76,6 +76,14 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<void> seekToClip(int textureId, int clipIndex) {
+    return methodChannel.invokeMethod<void>('seekToClip', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+    });
+  }
+
+  @override
   Future<void> setVolume(int textureId, double volume) {
     return methodChannel.invokeMethod<void>('setVolume', <String, Object?>{
       'textureId': textureId,

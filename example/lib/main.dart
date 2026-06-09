@@ -459,6 +459,26 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                           ),
                         ],
                       ),
+                      if (_clipCount > 1 && _textureId != null) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: [
+                            for (int i = 0; i < _clipCount; i++)
+                              ChoiceChip(
+                                label: Text('Clip ${i + 1}'),
+                                selected: state.clipIndex == i,
+                                onSelected: (_) {
+                                  setState(() {
+                                    _scrubValue = null;
+                                  });
+                                  _player.seekToClip(i);
+                                },
+                              ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       Wrap(
                         spacing: 12,

@@ -70,6 +70,13 @@ class MockVideoUltraPlayerPlatform
   }
 
   @override
+  Future<void> seekToClip(int textureId, int clipIndex) async {
+    calls.add('seekToClip');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+  }
+
+  @override
   Future<void> setVolume(int textureId, double volume) async {
     calls.add('setVolume');
     lastTextureId = textureId;
@@ -274,6 +281,7 @@ void main() {
     await player.play();
     await player.pause();
     await player.seekTo(const Duration(milliseconds: 1200));
+    await player.seekToClip(2);
     await player.setVolume(0.7);
     await player.setClipAlignment(1, -0.25, 0.5);
     await player.dispose();
@@ -283,6 +291,7 @@ void main() {
       'play',
       'pause',
       'seekTo',
+      'seekToClip',
       'setVolume',
       'setClipAlignment',
       'dispose',
@@ -338,10 +347,23 @@ void main() {
     await expectation;
   });
 
+  test('seekToClip forwards clip index to platform', () async {
+    final player = NativeTimelinePlayer();
+    await player.load(const [
+      TimelineClip(path: '/tmp/a.mp4', type: MediaType.video),
+    ]);
+
+    await player.seekToClip(3);
+
+    expect(fakePlatform.calls, contains('seekToClip'));
+    expect(fakePlatform.lastClipIndex, 3);
+  });
+
   test('commands before load throw StateError', () {
     final player = NativeTimelinePlayer();
 
     expect(() => player.play(), throwsStateError);
+    expect(() => player.seekToClip(0), throwsStateError);
     expect(() => player.stateStream, throwsStateError);
   });
 }

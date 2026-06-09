@@ -61,6 +61,13 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       else { return }
       controller.seek(toMilliseconds: positionMs.int64Value)
       result(nil)
+    case "seekToClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber
+      else { return }
+      controller.seekToClip(clipIndex: clipIndex.intValue)
+      result(nil)
     case "setVolume":
       guard let controller = controller(for: call, result: result),
             let args = call.arguments as? [String: Any],
@@ -376,6 +383,19 @@ private final class TimelinePlayerController {
     let position = CMTime(value: max(positionMs, 0), timescale: 1_000)
     player.seek(
       to: position,
+      toleranceBefore: .zero,
+      toleranceAfter: .zero
+    ) { [weak self] _ in
+      self?.emitState()
+    }
+  }
+
+  func seekToClip(clipIndex: Int) {
+    guard let startTime = composition.startTime(forClipIndex: clipIndex) else {
+      return
+    }
+    player.seek(
+      to: startTime,
       toleranceBefore: .zero,
       toleranceAfter: .zero
     ) { [weak self] _ in

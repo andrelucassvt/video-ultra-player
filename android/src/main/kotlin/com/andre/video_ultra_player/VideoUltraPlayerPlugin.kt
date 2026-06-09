@@ -64,6 +64,15 @@ class VideoUltraPlayerPlugin :
                 controller.seekTo(positionMs)
                 result.success(null)
             }
+            "seekToClip" -> withController(call, result) { controller ->
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                if (clipIndex == null) {
+                    result.error("invalid_arguments", "Expected clipIndex.", null)
+                    return@withController
+                }
+                controller.seekToClip(clipIndex)
+                result.success(null)
+            }
             "setVolume" -> withController(call, result) { controller ->
                 val volume = numberArg(call.arguments, "volume")?.toDouble()
                 if (volume == null) {

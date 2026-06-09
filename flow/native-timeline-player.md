@@ -118,11 +118,11 @@ O resultado final no Flutter é renderizado com `Texture(textureId: player.textu
 31. **Controles Dart** — `example/lib/main.dart` → botões, slider, pan e export
     Botão alterna `play/pause`; slider chama `seekTo(Duration)` no fim do arrasto; pan chama `setClipAlignment`; botão `Export MP4` chama `_exportTimeline`.
 
-32. **Commands Dart** — `lib/src/native_timeline_player.dart` → `play`, `pause`, `seekTo`, `setVolume`, `setClipAlignment`, `dispose`
-    Todos exigem `textureId` carregado; `setVolume` valida faixa `0.0..1.0`; `dispose` limpa `textureId`, stream local e chama a plataforma.
+32. **Commands Dart** — `lib/src/native_timeline_player.dart` → `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `dispose`
+    Todos exigem `textureId` carregado; `setVolume` valida faixa `0.0..1.0`; `seekToClip(clipIndex)` faz seek ao início do clipe `clipIndex` resolvido no nativo; `dispose` limpa `textureId`, stream local e chama a plataforma.
 
 33. **Commands nativos** — `ios/Classes/VideoUltraPlayerPlugin.swift` e `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt`
-    Cada comando busca o controller pelo `textureId` e delega para o controller nativo correspondente.
+    Cada comando busca o controller pelo `textureId` e delega para o controller nativo correspondente. `seekToClip` usa `TimelineComposition.startTime(forClipIndex:)` no iOS e `segments.getOrNull(clipIndex)?.startMs` no Android; índice inválido é no-op seguro em ambas as plataformas.
 
 34. **Limpeza** — `ios/Classes/VideoUltraPlayerPlugin.swift` / `TimelineComposition.swift` e `android/src/main/kotlin/com/andre/video_ultra_player/TimelineCompositionController.kt`
     `dispose` pausa/release o player, remove observer/timer, unregister/release da textura e limpa recursos temporários. No Android, `onDetachedFromEngine` também cancela exporters ativos.
@@ -178,7 +178,7 @@ O resultado final no Flutter é renderizado com `Texture(textureId: player.textu
 ## Regras de Negócio Relevantes
 
 - **A timeline precisa ter pelo menos um clipe** — `lib/src/native_timeline_player.dart`: `load` e `exportTimeline` lançam `ArgumentError` se a lista estiver vazia; Android também usa `require(rawClips.isNotEmpty())`.
-- **Comandos exigem player carregado** — `lib/src/native_timeline_player.dart`: `_requireTextureId` impede `play`, `pause`, `seekTo`, `setVolume`, `setClipAlignment` e `stateStream` antes do `load`.
+- **Comandos exigem player carregado** — `lib/src/native_timeline_player.dart`: `_requireTextureId` impede `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment` e `stateStream` antes do `load`.
 - **Exportação não exige preview carregado** — `lib/src/native_timeline_player.dart`: `exportTimeline` trabalha só com a lista de `TimelineClip` recebida e não chama `_requireTextureId`.
 - **Um export ativo por player** — `lib/src/native_timeline_player.dart`: `exportTimeline` lança `StateError` se outra exportação ainda está em andamento; `exportProgress` só pode ser obtido durante um export ativo.
 - **Config de composição é global** — `lib/src/models/timeline_composition_config.dart`: `transitionDuration`, `aspectRatio` e `baseWidth` valem para a composição inteira e são enviados tanto em `load` quanto em `exportTimeline`.

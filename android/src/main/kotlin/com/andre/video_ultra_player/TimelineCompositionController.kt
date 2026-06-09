@@ -131,6 +131,12 @@ internal class TimelineCompositionController(
         emitState()
     }
 
+    fun seekToClip(clipIndex: Int) {
+        val startMs = segments.getOrNull(clipIndex)?.startMs ?: return
+        player?.seekTo(startMs)
+        emitState()
+    }
+
     fun setVolume(volume: Double) {
         player?.volume = volume.coerceIn(0.0, 1.0).toFloat()
         emitState()

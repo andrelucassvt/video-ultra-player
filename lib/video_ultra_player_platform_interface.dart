@@ -44,6 +44,10 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('seekTo() has not been implemented.');
   }
 
+  Future<void> seekToClip(int textureId, int clipIndex) {
+    throw UnimplementedError('seekToClip() has not been implemented.');
+  }
+
   Future<void> setVolume(int textureId, double volume) {
     throw UnimplementedError('setVolume() has not been implemented.');
   }
