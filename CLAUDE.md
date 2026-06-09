@@ -1,206 +1,62 @@
-# Base App Flutter — Claude Code Instructions
+# video_ultra_player
 
-Projeto Flutter com Clean Architecture. Todas as regras aqui são obrigatórias para geração e modificação de código.
+Plugin Flutter federado (Dart + iOS/Swift + Android/Kotlin) para um player de timeline com composição nativa única (gapless real, CapCut-like). Hoje é skeleton de `flutter create --template=plugin` — só `getPlatformVersion` existe; a arquitetura-alvo está em `plan/`.
 
----
+## Stack
 
-## 🏗️ Arquitetura
+- Dart `^3.11.5` / Flutter `>=3.3.0`; runtime dep: `plugin_platform_interface`
+- iOS: Swift 5.0, deployment target 13.0, CocoaPods (`ios/video_ultra_player.podspec`)
+- Android: Kotlin 2.2.20, Gradle **Kotlin DSL** (`build.gradle.kts`), `compileSdk 36`, `minSdk 24`, JVM 17
+- Planejado: `androidx.media3` (`CompositionPlayer`) no Android e `AVFoundation` (`AVMutableComposition`) no iOS
 
-```
-Presentation → Domain ← Data
-```
+## Arquitetura
 
-- **Presentation**: Views (StatefulWidget) + Cubits/States (BLoC)
-- **Domain**: Entities + Repository Interfaces (contratos puros)
-- **Data**: Models + DataSources + Repository Implementations
-
-**Dependências proibidas**: `domain` não importa `data`; Cubit não acessa DataSource diretamente; classes de `data/` não são importadas em `domain/`.
-
----
-
-## 📂 Estrutura de Pastas (OBRIGATÓRIA)
+Plugin federado: API pública Dart → platform interface (contrato abstrato) → method channel → implementação nativa por plataforma. A API nunca chama o channel direto; sempre passa por `VideoUltraPlayerPlatform.instance`.
 
 ```
-lib/
-├── presentation/
-│   └── <feature>/
-│       ├── view/<feature>_view.dart
-│       ├── view_model/<feature>_cubit.dart
-│       ├── view_model/<feature>_state.dart
-│       ├── widgets/          # reutilizáveis dentro da feature
-│       └── content/          # auxiliares de UI específicos (não reutilizáveis)
-│
-├── domain/
-│   ├── entities/<entity>_entity.dart
-│   └── interfaces/<feature>_repository.dart
-│
-├── data/
-│   ├── models/<entity>_model.dart
-│   ├── datasources/<feature>_remote_datasource.dart
-│   └── repositories/<feature>_repository_impl.dart
-│
-├── common/
-│   ├── widgets/
-│   ├── styles/
-│   ├── utils/
-│   └── services/
-│
-└── config/
-    ├── error/result_pattern.dart
-    ├── routes/app_router.dart + app_routes.dart
-    ├── inject/app_injector.dart
-    └── app_initializer.dart
+VideoUltraPlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPlayer
+                                                 └→ iOS / Android (pluginClass)
 ```
 
-**Proibido:**
-- Widgets fora de `presentation/` (exceto `common/widgets/`)
-- Acessar DataSources diretamente do Cubit
-- Importar classes de `data/` dentro de `domain/`
-- Criar arquivos barrel/export
+## Estrutura
 
----
+- `lib/video_ultra_player.dart` — API pública (consumida pelo app)
+- `lib/video_ultra_player_platform_interface.dart` — contrato abstrato Dart↔nativo
+- `lib/video_ultra_player_method_channel.dart` — implementação default via MethodChannel
+- `ios/Classes/` — `FlutterPlugin` Swift
+- `android/src/main/kotlin/com/andre/video_ultra_player/` — `FlutterPlugin` Kotlin
+- `example/` — app que consome/demonstra o plugin
+- `test/` — testes Dart (espelham `lib/`)
+- `plan/` — arquitetura-alvo e plano de implementação (LEIA antes de implementar)
+- `flow/` — documentação de fluxos (ver seção no fim)
 
-## 🧭 Fluxo para nova feature
+## Comandos
 
-```
-Feature precisa de API ou banco externo?
-  ├─ SIM → Entity + Repository Interface (domain)
-  │         + Model + DataSource + RepositoryImpl (data)
-  │         + registrar DataSource e Repository no AppInjector
-  │
-  └─ NÃO ─ precisa persistir dados localmente?
-              ├─ SIM → injetar StorageService no Cubit (sem Data Layer)
-              └─ NÃO → apenas View + Cubit + State + rota + DI
-```
+- `flutter analyze` — lint/análise estática
+- `flutter test` — testes unitários Dart
+- `cd example && flutter run` — roda o app de exemplo em device/simulador
+- `cd example && flutter run -d ios` / `-d android` — força a plataforma
 
-| Situação | O que criar |
-|---|---|
-| Tela simples / UI local | View + Cubit + State + rota + DI |
-| Dados locais | + `StorageService` no Cubit |
-| API externa | + Entity + Interface + Model + DataSource + RepositoryImpl |
-| Widget reutilizável na feature | `presentation/<feature>/widgets/` |
-| Widget reutilizável entre features | `common/widgets/` |
-| Auxiliar de UI específico de uma View | `presentation/<feature>/content/` |
-| Recurso do dispositivo (storage, bio, notif) | `common/services/` |
+## Convenções
 
----
+- Nome do channel = nome do pacote (`video_ultra_player`); para a timeline, `video_ultra_player/timeline_player`. **Nunca** `com.luma_vid/...` (resíduo de outro contexto).
+- Toda nova capacidade é federada: contrato em `platform_interface` → impl em `method_channel` → nativo iOS **e** Android. Não chame `MethodChannel` direto da API pública.
+- Android é **Kotlin DSL** (`build.gradle.kts`) — edite `dependencies {}` em sintaxe Kotlin, não Groovy.
+- Antes de criar/alterar features, a skill `brainstorming` é obrigatória (`.claude/rules/brainstorming.instructions.md`).
+- Não criar arquivos `.md` para documentar mudanças de código.
 
-## ⚡ Regras Globais
+## Gotchas
 
-### Geral
-- **Imports**: SEMPRE absolutos — `package:base_app/...` — NUNCA relativos
-- **Textos na UI**: SEMPRE `context.l10n.<chave>` — ZERO strings hardcoded visíveis ao usuário
-- **Logs**: `log()` de `dart:developer` — NUNCA `print()`
-- **`const`**: use sempre que possível; trailing commas obrigatório
-- **Arquivos `.md`**: NUNCA crie para documentar mudanças de código
+- O `CLAUDE.md` anterior descrevia uma arquitetura Clean Architecture de **app** (Cubits/GetIt/GoRouter) que **não existe** neste repo de plugin — foi descartada. Não recrie pastas `presentation/domain/data` aqui.
+- Os arquivos do app consumidor citados nos planos (`SequencePreviewPlayer`, `VideoEditorService`, `TimelinePlaybackModel`) **vivem no app, não neste pacote** — não podem ser validados aqui.
+- `AVPlayerLayer` (iOS) e `SurfaceView` (Android) **não são capturáveis** para textura; a timeline usa `AVPlayerItemVideoOutput.copyPixelBuffer` / `SurfaceTexture` do `TextureRegistry` (ver plano).
 
-### View (StatefulWidget)
-- Instancia Cubit via `AppInjector.inject.get<XxxCubit>()`; chama `_cubit.close()` no `dispose()`
-- Carrega dados no `initState()`; sem lógica de negócio na View
-- Envolva o conteúdo principal com `SafeArea`
-- NUNCA crie `Widget _buildXxx()` nem classes privadas de widget na View — extraia para `widgets/` (reutilizável) ou `content/` (auxiliar específico); dialog/bottomSheet são exceção
-- Navegação SEMPRE na View ou `BlocListener` — NUNCA passe `BuildContext` ao Cubit
+## Não fazer
 
-### Cubit
-- Dependências injetadas via construtor
-- Async: SEMPRE emita `Loading` primeiro → chame repository → use `result.when()`
-- NUNCA acesse `SharedPreferences` diretamente — use `StorageService`
-- NUNCA acesse DataSource diretamente — passe pelo Repository
-
-### State
-- `sealed class` + `@immutable` + `const`; propriedades `final`; sem métodos de lógica
-
-### Entity
-- `@immutable`, `const`, `final`, `copyWith()`, `==`, `hashCode`
-- Sem imports de infra; sem serialização
-
-### Repository Interface (domain)
-- Apenas contratos; retorna `Result<T>`; usa Entities; sem implementações
-
-### Model (data)
-- Extende a Entity; implementa `fromJson()`/`toJson()`; sem lógica de negócio
-
-### DataSource
-- Retorna dados brutos; lança exceções (sem try/catch); não retorna Models ou Entities
-
-### RepositoryImpl (data)
-- SEMPRE `try/catch`; retorna `Result<T>`; converte dados em Models
-
-### DI (GetIt via AppInjector)
-- `registerFactory` → Cubits (nova instância a cada `get()`)
-- `registerLazySingleton` → Services, Repositories, DataSources e tudo mais
-- NUNCA registre Widgets ou classes de UI
-
-### Services (`common/services/`)
-- SEMPRE interface abstrata + implementação concreta separada
-- Injetados no Cubit via construtor; NUNCA acessados diretamente da View
-- Registrados como `registerLazySingleton`
-
-### Dart Moderno
-- **null safety**: evite `!`; prefira `??`, `?.` e early return para garantir não-nulabilidade
-- **pattern matching**: use `switch` com `when` e padrões onde simplificam condicionais
-- **exhaustive switch**: prefira `switch` expressão para enums — evite `if/else if` encadeado
-- **records**: use `(Type, Type)` para retornar múltiplos valores sem criar uma classe intermediária
-- **arrow functions**: use `=>` para funções de uma única expressão
-
-### Layout
-- **Expanded vs Flexible**: `Expanded` preenche espaço disponível; `Flexible` encolhe sem crescer; nunca combine os dois no mesmo `Row`/`Column`
-- **Wrap**: use quando widgets em `Row`/`Column` puderem ultrapassar a tela
-- **Listas**: SEMPRE `ListView.builder` para listas longas — NUNCA `Column` + `.map()` para muitos itens
-- **`build()` puro**: nunca faça chamadas de rede, I/O ou cálculos pesados dentro de `build()`
-
-### Imagens
-- **`Image.network`**: sempre inclua `loadingBuilder` e `errorBuilder`
-- **Listas/reutilizadas**: use `cached_network_image` para imagens que aparecem em listas ou são repetidas
-
-### Acessibilidade
-- **Semantics**: adicione `Semantics(label: ...)` em elementos interativos sem texto visível (ícones, imagens clicáveis)
-- **Contraste WCAG**: texto normal mínimo 4.5:1; texto grande mínimo 3:1 contra o fundo
-- **Texto dinâmico**: não fixe alturas de containers com texto; use `TextOverflow` e `maxLines` com cuidado
-
----
-
-## 📦 Pacotes Principais
-
-```yaml
-dependencies:
-  bloc: ^9.0.1
-  flutter_bloc: ^9.1.1
-  get_it: ^8.0.2
-  go_router: ^16.2.4
-  dio: ^5.7.0
-  shared_preferences: ^2.5.3
-  intl: ^0.20.2
-  flutter_localizations: sdk
-
-dev_dependencies:
-  bloc_test: ^10.0.0
-  flutter_test: sdk
-  flutter_lints: ^2.0.0
-```
-
----
-
-## 📋 Convenções
-
-| Elemento | Convenção | Exemplo |
-|---|---|---|
-| Arquivos | `snake_case` | `home_view.dart` |
-| Classes | `PascalCase` | `HomeCubit` |
-| Variáveis/Métodos | `camelCase` | `loadHome()` |
-| Privados | `_` prefix | `_cubit` |
-
-- Máximo 80 caracteres por linha
-- `ListView.builder` para listas longas
-
----
+- Não usar `print()` — use `log()` de `dart:developer`.
+- Não rodar `flutter pub upgrade` sem perguntar.
+- Não implementar a timeline em só uma plataforma sem alinhar — a paridade iOS/Android faz parte do contrato.
 
 ## 📖 Documentação de Flows
 
-A pasta `./flow/` contém documentação gerada dos fluxos do projeto:
-
-- `flow/project-structure.md` — estrutura geral, features, camadas e configuração
-- `flow/flow-suggestions.md` — lista de flows ainda não documentados _(se existir)_
-- `flow/<feature>.md` — flow completo de cada feature documentada
-
-Antes de implementar uma nova feature ou debugar um fluxo existente, consulte os documentos em `./flow/` se existirem. Use `/flow <nome>` para criar ou atualizar um flow específico, ou `/flow-init` para gerar a documentação inicial do projeto inteiro.
+Para qualquer feature ou fluxo, verifique a pasta `./flow/`: leia os títulos dos arquivos `.md` disponíveis e, se algum for relevante para a tarefa atual, leia-o antes de implementar ou debugar. Use `/flow <nome>` para criar ou atualizar flows individuais.
