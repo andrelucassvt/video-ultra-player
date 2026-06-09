@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 
 void main() {
@@ -19,8 +20,11 @@ class TimelineDemoApp extends StatefulWidget {
 
 class _TimelineDemoAppState extends State<TimelineDemoApp> {
   final NativeTimelinePlayer _player = NativeTimelinePlayer();
+  final ImagePicker _picker = ImagePicker();
   Stream<TimelinePlayerState>? _stateStream;
   int? _textureId;
+  int _clipCount = 3;
+  String _timelineSource = 'Sample timeline';
   bool _loading = false;
   String? _error;
   double? _scrubValue;
@@ -29,7 +33,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
   void initState() {
     super.initState();
     if (widget.autoLoad) {
-      _loadTimeline();
+      _loadSampleTimeline();
     }
   }
 
@@ -39,7 +43,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     super.dispose();
   }
 
-  Future<void> _loadTimeline() async {
+  Future<void> _loadSampleTimeline() async {
     if (_loading) {
       return;
     }
@@ -53,7 +57,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
       final clipAPath = await _copyAssetToTempFile('assets/clip_a.mp4');
       final stillPath = await _copyAssetToTempFile('assets/still.png');
       final clipBPath = await _copyAssetToTempFile('assets/clip_b.mp4');
-      final textureId = await _player.load([
+      await _replaceTimeline([
         TimelineClip(
           path: clipAPath,
           type: MediaType.video,
@@ -71,15 +75,57 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
           type: MediaType.video,
           duration: const Duration(seconds: 2),
         ),
-      ]);
-
+      ], source: 'Sample timeline');
+    } catch (error) {
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _textureId = textureId;
-        _stateStream = _player.stateStream;
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _pickVideosFromGallery() async {
+    if (_loading) {
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final videos = await _picker.pickMultiVideo();
+      if (!mounted) {
+        return;
+      }
+
+      if (videos.isEmpty) {
+        setState(() {
+          _loading = false;
+        });
+        return;
+      }
+
+      await _replaceTimeline(
+        videos
+            .map(
+              (video) => TimelineClip(path: video.path, type: MediaType.video),
+            )
+            .toList(growable: false),
+        source: 'Gallery videos',
+      );
+    } on PlatformException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = error.message ?? error.code;
         _loading = false;
       });
     } catch (error) {
@@ -92,6 +138,27 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _replaceTimeline(
+    List<TimelineClip> clips, {
+    required String source,
+  }) async {
+    await _player.dispose();
+    final textureId = await _player.load(clips);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _textureId = textureId;
+      _stateStream = _player.stateStream;
+      _clipCount = clips.length;
+      _timelineSource = source;
+      _scrubValue = null;
+      _loading = false;
+    });
   }
 
   Future<String> _copyAssetToTempFile(String assetPath) async {
@@ -247,18 +314,27 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Row(
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           FilledButton.tonalIcon(
-                            onPressed: _loading ? null : _loadTimeline,
+                            onPressed: _loading ? null : _pickVideosFromGallery,
+                            icon: const Icon(Icons.video_file_outlined),
+                            label: const Text('Choose videos'),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: _loading ? null : _loadSampleTimeline,
                             icon: const Icon(Icons.refresh),
                             label: Text(
-                              _textureId == null ? 'Load timeline' : 'Reload',
+                              _textureId == null
+                                  ? 'Load sample'
+                                  : 'Reload sample',
                             ),
                           ),
-                          const SizedBox(width: 12),
                           Text(
-                            'Clip ${state.clipIndex + 1} of 3',
+                            'Clip ${state.clipIndex + 1} of $_clipCount - $_timelineSource',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],

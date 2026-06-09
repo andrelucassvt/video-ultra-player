@@ -8,7 +8,8 @@ void main() {
     await tester.pumpWidget(const TimelineDemoApp(autoLoad: false));
 
     expect(find.text('Native Timeline Player'), findsOneWidget);
-    expect(find.text('Load timeline'), findsOneWidget);
+    expect(find.text('Choose videos'), findsOneWidget);
+    expect(find.text('Load sample'), findsOneWidget);
     expect(find.byIcon(Icons.video_library_outlined), findsOneWidget);
   });
 }
