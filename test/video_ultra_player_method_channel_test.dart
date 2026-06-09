@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 
@@ -41,6 +42,33 @@ void main() {
       'clips': [
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
+      'config': {
+        'aspectRatio': 'original',
+        'baseWidth': 1080,
+      },
+    });
+  });
+
+  test('load includes serialized composition config', () async {
+    final textureId = await platform.load(
+      [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      config: TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio9x16,
+        baseWidth: 1080,
+      ).toJson(),
+    );
+
+    expect(textureId, 77);
+    expect(calls.single.arguments, {
+      'clips': [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      'config': {
+        'aspectRatio': 'ratio9x16',
+        'baseWidth': 1080,
+      },
     });
   });
 
@@ -58,9 +86,38 @@ void main() {
           <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
         ],
         'outputPath': '/tmp/final.mp4',
+        'config': {
+          'aspectRatio': 'original',
+          'baseWidth': 1080,
+        },
       });
     },
   );
+
+  test('exportTimeline includes serialized composition config', () async {
+    final outputPath = await platform.exportTimeline(
+      [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      outputPath: '/tmp/final.mp4',
+      config: TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio1x1,
+        baseWidth: 1200,
+      ).toJson(),
+    );
+
+    expect(outputPath, '/tmp/final.mp4');
+    expect(calls.single.arguments, {
+      'clips': [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      'outputPath': '/tmp/final.mp4',
+      'config': {
+        'aspectRatio': 'ratio1x1',
+        'baseWidth': 1200,
+      },
+    });
+  });
 
   test('commands invoke native channel with arguments', () async {
     await platform.play(77);

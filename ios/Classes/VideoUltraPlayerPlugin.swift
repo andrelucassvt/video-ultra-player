@@ -5,9 +5,11 @@ import UIKit
 public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private static let methodChannelName = "video_ultra_player/timeline_player"
   private static let eventChannelName = "video_ultra_player/timeline_player/events"
+  private static let exportEventChannelName = "video_ultra_player/timeline_player/export"
 
   private let textureRegistry: FlutterTextureRegistry?
   private var controllers: [Int64: TimelinePlayerController] = [:]
+  private let exportProgressHandler = TimelineExportProgressStreamHandler()
 
   public override init() {
     textureRegistry = nil
@@ -29,8 +31,13 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       name: eventChannelName,
       binaryMessenger: registrar.messenger()
     )
+    let exportEventChannel = FlutterEventChannel(
+      name: exportEventChannelName,
+      binaryMessenger: registrar.messenger()
+    )
     registrar.addMethodCallDelegate(instance, channel: channel)
     eventChannel.setStreamHandler(instance)
+    exportEventChannel.setStreamHandler(instance.exportProgressHandler)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -123,10 +130,12 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     }
 
     guard let clips = clips(from: call.arguments, result: result) else { return }
+    let config = compositionConfig(from: call.arguments)
 
     do {
       let controller = try TimelinePlayerController(
         clips: clips,
+        config: config,
         textureRegistry: textureRegistry
       )
       controllers[controller.textureId] = controller
@@ -147,6 +156,7 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     result: @escaping FlutterResult
   ) {
     guard let clips = clips(from: call.arguments, result: result) else { return }
+    let config = compositionConfig(from: call.arguments)
     let outputPath = (call.arguments as? [String: Any])?["outputPath"] as? String
     let outputURL = exportOutputURL(outputPath: outputPath)
     let composition = TimelineComposition()
@@ -160,7 +170,7 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         try FileManager.default.removeItem(at: outputURL)
       }
 
-      let exportAsset = try composition.buildExportAsset(clips: clips)
+      let exportAsset = try composition.buildExportAsset(clips: clips, config: config)
       guard
         let exporter = AVAssetExportSession(
           asset: exportAsset.asset,
@@ -174,13 +184,31 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       exporter.outputFileType = .mp4
       exporter.shouldOptimizeForNetworkUse = true
       exporter.videoComposition = exportAsset.videoComposition
+      exporter.audioMix = exportAsset.audioMix
+      exportProgressHandler.emit(progress: 0, state: "exporting")
+      let progressTimer = Timer.scheduledTimer(
+        withTimeInterval: 0.1,
+        repeats: true
+      ) { [weak exporter, weak exportProgressHandler] _ in
+        guard let exporter else { return }
+        exportProgressHandler?.emit(
+          progress: Double(exporter.progress),
+          state: "exporting"
+        )
+      }
       exporter.exportAsynchronously {
         DispatchQueue.main.async {
+          progressTimer.invalidate()
           composition.dispose()
           switch exporter.status {
           case .completed:
+            self.exportProgressHandler.emit(progress: 1, state: "completed")
             result(outputURL.path)
           case .failed, .cancelled:
+            self.exportProgressHandler.emit(
+              progress: Double(exporter.progress),
+              state: "failed"
+            )
             result(
               FlutterError(
                 code: "export_failed",
@@ -189,6 +217,10 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
               )
             )
           default:
+            self.exportProgressHandler.emit(
+              progress: Double(exporter.progress),
+              state: "failed"
+            )
             result(
               FlutterError(
                 code: "export_failed",
@@ -201,6 +233,7 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       }
     } catch {
       composition.dispose()
+      exportProgressHandler.emit(progress: 0, state: "failed")
       result(
         FlutterError(
           code: "export_failed",
@@ -238,6 +271,11 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       return nil
     }
     return clips
+  }
+
+  private func compositionConfig(from arguments: Any?) -> TimelineCompositionConfig {
+    let args = arguments as? [String: Any]
+    return TimelineCompositionConfig(dictionary: args?["config"] as? [String: Any])
   }
 
   private func exportOutputURL(outputPath: String?) -> URL {
@@ -308,10 +346,11 @@ private final class TimelinePlayerController {
 
   init(
     clips: [TimelineClipDescriptor],
+    config: TimelineCompositionConfig,
     textureRegistry: FlutterTextureRegistry
   ) throws {
     self.textureRegistry = textureRegistry
-    let playerItem = try composition.build(clips: clips)
+    let playerItem = try composition.build(clips: clips, config: config)
     player = AVPlayer(playerItem: playerItem)
     texture = TimelineTexture(
       playerItem: playerItem,
@@ -407,6 +446,31 @@ private final class TimelinePlayerController {
   @objc private func didPlayToEnd() {
     player.pause()
     emitState()
+  }
+}
+
+private final class TimelineExportProgressStreamHandler: NSObject, FlutterStreamHandler {
+  private var eventSink: FlutterEventSink?
+
+  func onListen(
+    withArguments arguments: Any?,
+    eventSink events: @escaping FlutterEventSink
+  ) -> FlutterError? {
+    eventSink = events
+    events(["progress": 0.0, "state": "idle"])
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    eventSink = nil
+    return nil
+  }
+
+  func emit(progress: Double, state: String) {
+    eventSink?([
+      "progress": min(max(progress, 0), 1),
+      "state": state,
+    ])
   }
 }
 

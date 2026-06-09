@@ -1,4 +1,5 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 
@@ -16,13 +17,17 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<int> load(List<Map<String, dynamic>> clips) {
+  Future<int> load(
+    List<Map<String, dynamic>> clips, {
+    Map<String, dynamic>? config,
+  }) {
     throw UnimplementedError('load() has not been implemented.');
   }
 
   Future<String> exportTimeline(
     List<Map<String, dynamic>> clips, {
     String? outputPath,
+    Map<String, dynamic>? config,
   }) {
     throw UnimplementedError('exportTimeline() has not been implemented.');
   }
@@ -58,5 +63,9 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
 
   Stream<TimelinePlayerState> stateStream(int textureId) {
     throw UnimplementedError('stateStream() has not been implemented.');
+  }
+
+  Stream<TimelineExportProgress> exportProgress() {
+    throw UnimplementedError('exportProgress() has not been implemented.');
   }
 }

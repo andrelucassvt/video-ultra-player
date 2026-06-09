@@ -45,29 +45,64 @@ struct TimelineClipDescriptor {
   }
 }
 
+struct TimelineCompositionConfig {
+  enum OutputAspectRatio: String {
+    case ratio16x9
+    case ratio9x16
+    case ratio1x1
+    case original
+  }
+
+  let aspectRatio: OutputAspectRatio
+  let baseWidth: Int
+
+  init(dictionary: [String: Any]? = nil) {
+    let aspectRatioValue = dictionary?["aspectRatio"] as? String
+    let baseWidth = dictionary?["baseWidth"] as? NSNumber
+
+    self.aspectRatio = OutputAspectRatio(rawValue: aspectRatioValue ?? "") ?? .original
+    self.baseWidth = max(baseWidth?.intValue ?? 1080, 1)
+  }
+}
+
 struct TimelineSegment {
   let clipIndex: Int
   let startTime: CMTime
   let duration: CMTime
   let naturalSize: CGSize
   let preferredTransform: CGAffineTransform
+  let videoTrack: AVCompositionTrack
+  let audioTrack: AVCompositionTrack?
 }
 
 struct TimelineExportAsset {
   let asset: AVAsset
   let videoComposition: AVVideoComposition?
+  let audioMix: AVAudioMix?
 }
 
 final class TimelineComposition {
+  private struct PreparedClip {
+    let asset: AVURLAsset
+    let videoTrack: AVAssetTrack
+    let audioTrack: AVAssetTrack?
+    let duration: CMTime
+    let renderableSize: CGSize
+  }
+
   private var clips: [TimelineClipDescriptor] = []
   private var segments: [TimelineSegment] = []
   private var composition: AVMutableComposition?
   private var generatedImageVideoURLs: [URL] = []
   private var renderSize = CGSize(width: 1280, height: 720)
+  private var audioMix: AVAudioMix?
 
   private(set) var totalDuration = CMTime.zero
 
-  func build(clips: [TimelineClipDescriptor]) throws -> AVPlayerItem {
+  func build(
+    clips: [TimelineClipDescriptor],
+    config: TimelineCompositionConfig = TimelineCompositionConfig()
+  ) throws -> AVPlayerItem {
     guard !clips.isEmpty else {
       throw TimelineCompositionError.emptyClips
     }
@@ -75,10 +110,29 @@ final class TimelineComposition {
     self.clips = clips
     segments = []
     totalDuration = .zero
+    audioMix = nil
+
+    let preparedClips = try clips.map { clip -> PreparedClip in
+      let asset = try asset(for: clip)
+      guard let sourceVideoTrack = asset.tracks(withMediaType: .video).first else {
+        throw TimelineCompositionError.missingVideoTrack(clip.path)
+      }
+
+      return PreparedClip(
+        asset: asset,
+        videoTrack: sourceVideoTrack,
+        audioTrack: asset.tracks(withMediaType: .audio).first,
+        duration: duration(for: clip, asset: asset),
+        renderableSize: normalizedSize(
+          naturalSize: sourceVideoTrack.naturalSize,
+          preferredTransform: sourceVideoTrack.preferredTransform
+        )
+      )
+    }
 
     let composition = AVMutableComposition()
     guard
-      let compositionVideoTrack = composition.addMutableTrack(
+      let videoTrack = composition.addMutableTrack(
         withMediaType: .video,
         preferredTrackID: kCMPersistentTrackID_Invalid
       )
@@ -86,85 +140,72 @@ final class TimelineComposition {
       throw TimelineCompositionError.cannotCreateCompositionTrack
     }
 
-    let compositionAudioTrack = composition.addMutableTrack(
+    let audioTrack = composition.addMutableTrack(
       withMediaType: .audio,
       preferredTrackID: kCMPersistentTrackID_Invalid
     )
 
-    var currentTime = CMTime.zero
-    var firstRenderableSize: CGSize?
+    let firstRenderableSize = preparedClips.first?.renderableSize ?? renderSize
+    renderSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
 
-    for (index, clip) in clips.enumerated() {
-      let asset = try asset(for: clip)
-      guard let sourceVideoTrack = asset.tracks(withMediaType: .video).first else {
-        throw TimelineCompositionError.missingVideoTrack(clip.path)
-      }
+    var startTime = CMTime.zero
+    for (index, preparedClip) in preparedClips.enumerated() {
+      let timeRange = CMTimeRange(start: .zero, duration: preparedClip.duration)
+      try videoTrack.insertTimeRange(timeRange, of: preparedClip.videoTrack, at: startTime)
 
-      let duration = duration(for: clip, asset: asset)
-      let timeRange = CMTimeRange(start: .zero, duration: duration)
-      try compositionVideoTrack.insertTimeRange(
-        timeRange,
-        of: sourceVideoTrack,
-        at: currentTime
-      )
-
-      if let sourceAudioTrack = asset.tracks(withMediaType: .audio).first,
-         let compositionAudioTrack {
-        let audioDuration = CMTimeMinimum(duration, asset.duration)
-        try compositionAudioTrack.insertTimeRange(
+      if let sourceAudioTrack = preparedClip.audioTrack, let audioTrack {
+        let audioDuration = CMTimeMinimum(preparedClip.duration, preparedClip.asset.duration)
+        try audioTrack.insertTimeRange(
           CMTimeRange(start: .zero, duration: audioDuration),
           of: sourceAudioTrack,
-          at: currentTime
-        )
-      }
-
-      if firstRenderableSize == nil {
-        firstRenderableSize = normalizedSize(
-          naturalSize: sourceVideoTrack.naturalSize,
-          preferredTransform: sourceVideoTrack.preferredTransform
+          at: startTime
         )
       }
 
       segments.append(
         TimelineSegment(
           clipIndex: index,
-          startTime: currentTime,
-          duration: duration,
-          naturalSize: sourceVideoTrack.naturalSize,
-          preferredTransform: sourceVideoTrack.preferredTransform
+          startTime: startTime,
+          duration: preparedClip.duration,
+          naturalSize: preparedClip.videoTrack.naturalSize,
+          preferredTransform: preparedClip.videoTrack.preferredTransform,
+          videoTrack: videoTrack,
+          audioTrack: audioTrack
         )
       )
-      currentTime = CMTimeAdd(currentTime, duration)
+      startTime = CMTimeAdd(startTime, preparedClip.duration)
     }
 
-    renderSize = evenSize(firstRenderableSize ?? renderSize)
-    totalDuration = currentTime
+    totalDuration = startTime
+    audioMix = makeAudioMix()
     self.composition = composition
 
     let playerItem = AVPlayerItem(asset: composition)
-    playerItem.videoComposition = makeVideoComposition(compositionVideoTrack: compositionVideoTrack)
+    playerItem.videoComposition = makeVideoComposition()
+    playerItem.audioMix = audioMix
     return playerItem
   }
 
-  func buildExportAsset(clips: [TimelineClipDescriptor]) throws -> TimelineExportAsset {
-    let playerItem = try build(clips: clips)
+  func buildExportAsset(
+    clips: [TimelineClipDescriptor],
+    config: TimelineCompositionConfig = TimelineCompositionConfig()
+  ) throws -> TimelineExportAsset {
+    let playerItem = try build(clips: clips, config: config)
     return TimelineExportAsset(
       asset: playerItem.asset,
-      videoComposition: playerItem.videoComposition
+      videoComposition: playerItem.videoComposition,
+      audioMix: playerItem.audioMix
     )
   }
 
   func updateAlignment(clipIndex: Int, x: CGFloat, y: CGFloat) -> AVVideoComposition? {
-    guard clips.indices.contains(clipIndex),
-          let composition,
-          let compositionVideoTrack = composition.tracks(withMediaType: .video).first
-    else {
+    guard clips.indices.contains(clipIndex), composition != nil else {
       return nil
     }
 
     clips[clipIndex].alignmentX = min(max(x, -1), 1)
     clips[clipIndex].alignmentY = min(max(y, -1), 1)
-    return makeVideoComposition(compositionVideoTrack: compositionVideoTrack)
+    return makeVideoComposition()
   }
 
   func playbackState(at time: CMTime) -> (clipIndex: Int, localPosition: CMTime) {
@@ -172,10 +213,15 @@ final class TimelineComposition {
       return (0, .zero)
     }
 
-    for segment in segments {
+    let clampedTime = CMTimeMinimum(CMTimeMaximum(time, .zero), totalDuration)
+    for segment in segments.reversed() {
       let endTime = CMTimeAdd(segment.startTime, segment.duration)
-      if CMTimeCompare(time, segment.startTime) >= 0 && CMTimeCompare(time, endTime) < 0 {
-        return (segment.clipIndex, CMTimeSubtract(time, segment.startTime))
+      if CMTimeCompare(clampedTime, segment.startTime) >= 0 &&
+          CMTimeCompare(clampedTime, endTime) < 0 {
+        return (
+          segment.clipIndex,
+          CMTimeSubtract(clampedTime, segment.startTime)
+        )
       }
     }
 
@@ -190,30 +236,70 @@ final class TimelineComposition {
     generatedImageVideoURLs.removeAll()
   }
 
-  private func makeVideoComposition(
-    compositionVideoTrack: AVCompositionTrack
-  ) -> AVMutableVideoComposition {
+  private func makeVideoComposition() -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-    videoComposition.instructions = segments.map { segment in
-      let instruction = AVMutableVideoCompositionInstruction()
-      instruction.timeRange = CMTimeRange(
+
+    let instructions = segments.map { segment in
+      singleLayerInstruction(
+        for: segment,
         start: segment.startTime,
         duration: segment.duration
       )
+    }
 
-      let layerInstruction = AVMutableVideoCompositionLayerInstruction(
-        assetTrack: compositionVideoTrack
-      )
-      layerInstruction.setTransform(
-        transform(for: segment),
-        at: segment.startTime
-      )
-      instruction.layerInstructions = [layerInstruction]
-      return instruction
+    videoComposition.instructions = instructions.sorted {
+      CMTimeCompare($0.timeRange.start, $1.timeRange.start) < 0
     }
     return videoComposition
+  }
+
+  private func singleLayerInstruction(
+    for segment: TimelineSegment,
+    start: CMTime,
+    duration: CMTime
+  ) -> AVMutableVideoCompositionInstruction {
+    let instruction = AVMutableVideoCompositionInstruction()
+    instruction.timeRange = CMTimeRange(start: start, duration: duration)
+    let layerInstruction = layerInstruction(for: segment, at: start)
+    layerInstruction.setOpacity(1, at: start)
+    instruction.layerInstructions = [layerInstruction]
+    return instruction
+  }
+
+  private func layerInstruction(
+    for segment: TimelineSegment,
+    at time: CMTime
+  ) -> AVMutableVideoCompositionLayerInstruction {
+    let layerInstruction = AVMutableVideoCompositionLayerInstruction(
+      assetTrack: segment.videoTrack
+    )
+    layerInstruction.setTransform(transform(for: segment), at: time)
+    return layerInstruction
+  }
+
+  private func makeAudioMix() -> AVAudioMix? {
+    var parametersByTrackId: [CMPersistentTrackID: AVMutableAudioMixInputParameters] = [:]
+
+    for segment in segments {
+      guard let audioTrack = segment.audioTrack else {
+        continue
+      }
+
+      let parameters = parametersByTrackId[audioTrack.trackID] ??
+        AVMutableAudioMixInputParameters(track: audioTrack)
+      parameters.setVolume(1, at: segment.startTime)
+      parametersByTrackId[audioTrack.trackID] = parameters
+    }
+
+    guard !parametersByTrackId.isEmpty else {
+      return nil
+    }
+
+    let mix = AVMutableAudioMix()
+    mix.inputParameters = Array(parametersByTrackId.values)
+    return mix
   }
 
   private func transform(for segment: TimelineSegment) -> CGAffineTransform {
@@ -249,6 +335,23 @@ final class TimelineComposition {
     return transform
   }
 
+  private func renderSize(
+    for config: TimelineCompositionConfig,
+    firstRenderableSize: CGSize
+  ) -> CGSize {
+    let baseWidth = CGFloat(max(config.baseWidth, 1))
+    switch config.aspectRatio {
+    case .ratio16x9:
+      return evenSize(CGSize(width: baseWidth, height: baseWidth * 9 / 16))
+    case .ratio9x16:
+      return evenSize(CGSize(width: baseWidth * 9 / 16, height: baseWidth))
+    case .ratio1x1:
+      return evenSize(CGSize(width: baseWidth, height: baseWidth))
+    case .original:
+      return evenSize(firstRenderableSize)
+    }
+  }
+
   private func asset(for clip: TimelineClipDescriptor) throws -> AVURLAsset {
     if clip.type == .video {
       return AVURLAsset(url: URL(fileURLWithPath: clip.path))
@@ -258,7 +361,6 @@ final class TimelineComposition {
       throw TimelineCompositionError.invalidClip
     }
 
-    // Image clips use the planned fallback: generate a short local movie segment.
     let duration = cmTime(fromMilliseconds: clip.durationMs ?? 2_000)
     let url = try makeImageVideo(from: image, duration: duration)
     generatedImageVideoURLs.append(url)
@@ -415,5 +517,9 @@ final class TimelineComposition {
 
   private func cmTime(fromMilliseconds milliseconds: Int64) -> CMTime {
     return CMTime(value: max(milliseconds, 1), timescale: 1_000)
+  }
+
+  private func isPositive(_ time: CMTime) -> Bool {
+    return time.isNumeric && CMTimeCompare(time, .zero) > 0
   }
 }

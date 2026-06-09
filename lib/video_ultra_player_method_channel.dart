@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
+import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
@@ -14,11 +16,22 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
     'video_ultra_player/timeline_player/events',
   );
 
+  @visibleForTesting
+  final exportEventChannel = const EventChannel(
+    'video_ultra_player/timeline_player/export',
+  );
+
   @override
-  Future<int> load(List<Map<String, dynamic>> clips) async {
+  Future<int> load(
+    List<Map<String, dynamic>> clips, {
+    Map<String, dynamic>? config,
+  }) async {
     final textureId = await methodChannel.invokeMethod<int>(
       'load',
-      <String, Object?>{'clips': clips},
+      <String, Object?>{
+        'clips': clips,
+        'config': config ?? TimelineCompositionConfig().toJson(),
+      },
     );
     if (textureId == null) {
       throw StateError('Native timeline load did not return a texture id.');
@@ -30,11 +43,14 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   Future<String> exportTimeline(
     List<Map<String, dynamic>> clips, {
     String? outputPath,
+    Map<String, dynamic>? config,
   }) async {
-    final exportedPath = await methodChannel.invokeMethod<String>(
-      'exportTimeline',
-      <String, Object?>{'clips': clips, 'outputPath': outputPath},
-    );
+    final exportedPath = await methodChannel
+        .invokeMethod<String>('exportTimeline', <String, Object?>{
+          'clips': clips,
+          'outputPath': outputPath,
+          'config': config ?? TimelineCompositionConfig().toJson(),
+        });
     if (exportedPath == null) {
       throw StateError('Native timeline export did not return an output path.');
     }
@@ -98,6 +114,13 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
           (event) =>
               TimelinePlayerState.fromMap(event as Map<dynamic, dynamic>),
         );
+  }
+
+  @override
+  Stream<TimelineExportProgress> exportProgress() {
+    return exportEventChannel.receiveBroadcastStream().map(
+      (event) => TimelineExportProgress.fromMap(event as Map<dynamic, dynamic>),
+    );
   }
 
   Map<String, Object?> _textureArgs(int textureId) {

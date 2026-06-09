@@ -31,6 +31,8 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
   String? _error;
   String? _exportPath;
   double? _scrubValue;
+  OutputAspectRatio _aspectRatio = OutputAspectRatio.original;
+  Stream<TimelineExportProgress>? _exportProgressStream;
 
   @override
   void initState() {
@@ -148,7 +150,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     required String source,
   }) async {
     await _player.dispose();
-    final textureId = await _player.load(clips);
+    final textureId = await _player.load(clips, config: _compositionConfig);
 
     if (!mounted) {
       return;
@@ -162,8 +164,33 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
       _timelineSource = source;
       _scrubValue = null;
       _exportPath = null;
+      _exportProgressStream = null;
       _loading = false;
     });
+  }
+
+  Future<void> _reloadCurrentTimeline() async {
+    if (_loading || _exporting || _clips.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await _replaceTimeline(_clips, source: _timelineSource);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _exportTimeline() async {
@@ -175,6 +202,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
       _exporting = true;
       _error = null;
       _exportPath = null;
+      _exportProgressStream = null;
     });
 
     try {
@@ -187,10 +215,15 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
 
       final outputPath =
           '${directory.path}/timeline_${DateTime.now().millisecondsSinceEpoch}.mp4';
-      final exportedPath = await _player.exportTimeline(
+      final exportFuture = _player.exportTimeline(
         _clips,
         outputPath: outputPath,
+        config: _compositionConfig,
       );
+      setState(() {
+        _exportProgressStream = _player.exportProgress;
+      });
+      final exportedPath = await exportFuture;
 
       if (!mounted) {
         return;
@@ -229,6 +262,19 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     return file.path;
   }
 
+  TimelineCompositionConfig get _compositionConfig {
+    return TimelineCompositionConfig(aspectRatio: _aspectRatio);
+  }
+
+  double get _previewAspectRatio {
+    return switch (_aspectRatio) {
+      OutputAspectRatio.ratio16x9 => 16 / 9,
+      OutputAspectRatio.ratio9x16 => 9 / 16,
+      OutputAspectRatio.ratio1x1 => 1,
+      OutputAspectRatio.original => 16 / 9,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.fromSeed(
@@ -244,6 +290,18 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
             stream: _stateStream,
             initialData: const TimelinePlayerState.initial(),
             builder: (context, snapshot) {
+              if (snapshot.hasError && _error == null) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() {
+                      final err = snapshot.error;
+                      _error = err is PlatformException
+                          ? 'Playback error [${err.code}]: ${err.message ?? "(no message)"}'
+                          : 'Playback error (${err.runtimeType}): $err';
+                    });
+                  }
+                });
+              }
               final state =
                   snapshot.data ?? const TimelinePlayerState.initial();
               final totalMs = state.totalDuration.inMilliseconds;
@@ -260,7 +318,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       AspectRatio(
-                        aspectRatio: 16 / 9,
+                        aspectRatio: _previewAspectRatio,
                         child: Builder(
                           builder: (textureContext) {
                             return GestureDetector(
@@ -320,6 +378,36 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                         ),
                       ),
                       const SizedBox(height: 20),
+                      SegmentedButton<OutputAspectRatio>(
+                        segments: const [
+                          ButtonSegment(
+                            value: OutputAspectRatio.original,
+                            label: Text('Original'),
+                          ),
+                          ButtonSegment(
+                            value: OutputAspectRatio.ratio16x9,
+                            label: Text('16:9'),
+                          ),
+                          ButtonSegment(
+                            value: OutputAspectRatio.ratio9x16,
+                            label: Text('9:16'),
+                          ),
+                          ButtonSegment(
+                            value: OutputAspectRatio.ratio1x1,
+                            label: Text('1:1'),
+                          ),
+                        ],
+                        selected: {_aspectRatio},
+                        onSelectionChanged: _loading || _exporting
+                            ? null
+                            : (selection) {
+                                setState(() {
+                                  _aspectRatio = selection.first;
+                                });
+                                _reloadCurrentTimeline();
+                              },
+                      ),
+                      const SizedBox(height: 8),
                       Row(
                         children: [
                           IconButton.filled(
@@ -418,6 +506,37 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                         SelectableText(
                           'Exported to $_exportPath',
                           style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                      if (_exporting || _exportProgressStream != null) ...[
+                        const SizedBox(height: 12),
+                        StreamBuilder<TimelineExportProgress>(
+                          stream: _exportProgressStream,
+                          initialData: const TimelineExportProgress.idle(),
+                          builder: (context, exportSnapshot) {
+                            final exportProgress =
+                                exportSnapshot.data ??
+                                const TimelineExportProgress.idle();
+                            final percent = (exportProgress.progress * 100)
+                                .round();
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                LinearProgressIndicator(
+                                  value:
+                                      exportProgress.state ==
+                                          TimelineExportState.idle
+                                      ? null
+                                      : exportProgress.progress,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Export ${exportProgress.state.name} - $percent%',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                       if (_error != null) ...[

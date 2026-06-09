@@ -16,10 +16,12 @@ class VideoUltraPlayerPlugin :
     EventChannel.StreamHandler {
     private var methodChannel: MethodChannel? = null
     private var eventChannel: EventChannel? = null
+    private var exportEventChannel: EventChannel? = null
     private var applicationContext: Context? = null
     private var textureRegistry: TextureRegistry? = null
     private val controllers = mutableMapOf<Long, TimelineCompositionController>()
     private val activeExporters = mutableSetOf<TimelineCompositionExporter>()
+    private val exportProgressHandler = ExportProgressStreamHandler()
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
@@ -32,6 +34,10 @@ class VideoUltraPlayerPlugin :
             flutterPluginBinding.binaryMessenger,
             "video_ultra_player/timeline_player/events"
         ).also { it.setStreamHandler(this) }
+        exportEventChannel = EventChannel(
+            flutterPluginBinding.binaryMessenger,
+            "video_ultra_player/timeline_player/export"
+        ).also { it.setStreamHandler(exportProgressHandler) }
     }
 
     override fun onMethodCall(
@@ -98,12 +104,14 @@ class VideoUltraPlayerPlugin :
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel?.setMethodCallHandler(null)
         eventChannel?.setStreamHandler(null)
+        exportEventChannel?.setStreamHandler(null)
         activeExporters.forEach { it.cancel() }
         activeExporters.clear()
         controllers.values.forEach { it.dispose() }
         controllers.clear()
         methodChannel = null
         eventChannel = null
+        exportEventChannel = null
         applicationContext = null
         textureRegistry = null
     }
@@ -139,6 +147,7 @@ class VideoUltraPlayerPlugin :
 
         val args = call.arguments as? Map<*, *>
         val clips = args?.get("clips") as? List<*>
+        val config = args?.get("config") as? Map<*, *>
         if (clips == null) {
             result.error("invalid_arguments", "Expected clips list.", null)
             return
@@ -146,7 +155,7 @@ class VideoUltraPlayerPlugin :
 
         try {
             val controller = TimelineCompositionController(context, registry)
-            val textureId = controller.load(clips)
+            val textureId = controller.load(clips, config)
             controllers[textureId] = controller
             result.success(textureId)
         } catch (error: Throwable) {
@@ -175,6 +184,7 @@ class VideoUltraPlayerPlugin :
         val args = call.arguments as? Map<*, *>
         val clips = args?.get("clips") as? List<*>
         val outputPath = args?.get("outputPath") as? String
+        val config = args?.get("config") as? Map<*, *>
         if (clips == null) {
             result.error("invalid_arguments", "Expected clips list.", null)
             return
@@ -185,8 +195,16 @@ class VideoUltraPlayerPlugin :
         try {
             exporter.export(
                 rawClips = clips,
+                rawConfig = config,
                 outputPath = outputPath,
                 callback = object : TimelineExportCallback {
+                    override fun onProgress(
+                        progress: Double,
+                        state: String
+                    ) {
+                        exportProgressHandler.emit(progress, state)
+                    }
+
                     override fun onCompleted(outputPath: String) {
                         activeExporters.remove(exporter)
                         result.success(outputPath)
@@ -205,6 +223,7 @@ class VideoUltraPlayerPlugin :
         } catch (error: Throwable) {
             activeExporters.remove(exporter)
             exporter.cancel()
+            exportProgressHandler.emit(0.0, "failed")
             result.error(
                 "export_failed",
                 "Unable to export native timeline composition.",
@@ -243,5 +262,33 @@ class VideoUltraPlayerPlugin :
 
     private fun numberArg(arguments: Any?, key: String): Number? {
         return (arguments as? Map<*, *>)?.get(key) as? Number
+    }
+}
+
+private class ExportProgressStreamHandler : EventChannel.StreamHandler {
+    private var eventSink: EventChannel.EventSink? = null
+
+    override fun onListen(
+        arguments: Any?,
+        events: EventChannel.EventSink
+    ) {
+        eventSink = events
+        events.success(mapOf("progress" to 0.0, "state" to "idle"))
+    }
+
+    override fun onCancel(arguments: Any?) {
+        eventSink = null
+    }
+
+    fun emit(
+        progress: Double,
+        state: String
+    ) {
+        eventSink?.success(
+            mapOf(
+                "progress" to progress.coerceIn(0.0, 1.0),
+                "state" to state
+            )
+        )
     }
 }

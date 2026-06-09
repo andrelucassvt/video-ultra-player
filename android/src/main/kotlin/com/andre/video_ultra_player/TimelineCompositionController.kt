@@ -1,6 +1,7 @@
 package com.andre.video_ultra_player
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
@@ -12,6 +13,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.Size
 import androidx.media3.effect.Crop
+import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.transformer.EditedMediaItem
@@ -19,6 +21,7 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import io.flutter.plugin.common.EventChannel
 import io.flutter.view.TextureRegistry
@@ -31,6 +34,7 @@ private const val DEFAULT_WIDTH = 1280
 private const val DEFAULT_HEIGHT = 720
 private const val DEFAULT_IMAGE_DURATION_MS = 2_000L
 private const val STATE_INTERVAL_MS = 33L
+private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
 
 internal class TimelineCompositionController(
     private val context: Context,
@@ -38,6 +42,8 @@ internal class TimelineCompositionController(
 ) {
     private var clips: MutableList<TimelineClip> = mutableListOf()
     private var segments: List<TimelineSegment> = emptyList()
+    private var compositionConfig = TimelineCompositionConfig()
+    private var renderSize = TimelineRenderSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     private var totalDurationMs: Long = 0L
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
@@ -55,12 +61,17 @@ internal class TimelineCompositionController(
         }
     }
 
-    fun load(rawClips: List<*>): Long {
+    fun load(
+        rawClips: List<*>,
+        rawConfig: Map<*, *>?
+    ): Long {
+        compositionConfig = TimelineCompositionConfig.from(rawConfig)
         clips = parseTimelineClips(context, rawClips).toMutableList()
+        renderSize = outputSizeFor(compositionConfig, clips.first())
         rebuildSegments()
 
         val entry = textureRegistry.createSurfaceTexture()
-        entry.surfaceTexture().setDefaultBufferSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        entry.surfaceTexture().setDefaultBufferSize(renderSize.width, renderSize.height)
         val renderSurface = Surface(entry.surfaceTexture())
 
         textureEntry = entry
@@ -71,20 +82,28 @@ internal class TimelineCompositionController(
             .also { compositionPlayer ->
                 compositionPlayer.setVideoSurface(
                     renderSurface,
-                    Size(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+                    Size(renderSize.width, renderSize.height)
                 )
                 compositionPlayer.addListener(
                     object : Player.Listener {
                         override fun onPlayerError(error: PlaybackException) {
-                            eventSink?.error(
-                                "playback_error",
-                                error.message ?: "CompositionPlayer playback failed.",
-                                null
-                            )
+                            val msg = buildString {
+                                append(error.message ?: "CompositionPlayer playback failed.")
+                                var cause: Throwable? = error.cause
+                                var depth = 0
+                                while (cause != null && depth < 5) {
+                                    append(" | ")
+                                    append(cause.javaClass.simpleName)
+                                    cause.message?.let { append(": $it") }
+                                    cause = cause.cause
+                                    depth++
+                                }
+                            }
+                            eventSink?.error("playback_error", msg, null)
                         }
                     }
                 )
-                compositionPlayer.setComposition(buildTimelineComposition(clips))
+                compositionPlayer.setComposition(buildTimelineComposition(clips, renderSize))
                 compositionPlayer.prepare()
             }
 
@@ -131,7 +150,10 @@ internal class TimelineCompositionController(
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
         // Media3 effects are immutable, so live pan/crop is applied by rebuilding the Composition.
-        currentPlayer.setComposition(buildTimelineComposition(clips), positionMs)
+        currentPlayer.setComposition(
+            buildTimelineComposition(clips, renderSize),
+            positionMs.coerceIn(0L, totalDurationMs)
+        )
         currentPlayer.prepare()
         if (wasPlaying) {
             currentPlayer.play()
@@ -154,10 +176,7 @@ internal class TimelineCompositionController(
     private fun rebuildSegments() {
         var startMs = 0L
         segments = clips.map { clip ->
-            TimelineSegment(
-                startMs = startMs,
-                durationMs = clip.resolvedDurationMs
-            ).also {
+            TimelineSegment(startMs = startMs, durationMs = clip.resolvedDurationMs).also {
                 startMs += clip.resolvedDurationMs
             }
         }
@@ -187,16 +206,19 @@ internal class TimelineCompositionController(
             return 0
         }
 
-        val index = segments.indexOfFirst { segment ->
-            positionMs >= segment.startMs && positionMs < segment.startMs + segment.durationMs
+        for (index in segments.indices.reversed()) {
+            val segment = segments[index]
+            if (positionMs >= segment.startMs && positionMs < segment.startMs + segment.durationMs) {
+                return index
+            }
         }
-        return if (index >= 0) index else segments.lastIndex
+        return segments.lastIndex
     }
 }
 
 internal interface TimelineExportCallback {
+    fun onProgress(progress: Double, state: String)
     fun onCompleted(outputPath: String)
-
     fun onError(error: Throwable)
 }
 
@@ -206,19 +228,43 @@ internal class TimelineCompositionExporter(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var transformer: Transformer? = null
     private var completed = false
+    private val progressHolder = ProgressHolder()
+    private var progressCallback: TimelineExportCallback? = null
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            val exportTransformer = transformer
+            val callback = progressCallback
+            if (exportTransformer != null && callback != null && !completed) {
+                val state = exportTransformer.getProgress(progressHolder)
+                val progress = if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                    progressHolder.progress.coerceIn(0, 100) / 100.0
+                } else {
+                    0.0
+                }
+                callback.onProgress(progress, "exporting")
+                mainHandler.postDelayed(this, EXPORT_PROGRESS_INTERVAL_MS)
+            }
+        }
+    }
 
     fun export(
         rawClips: List<*>,
+        rawConfig: Map<*, *>?,
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
+        progressCallback = callback
+        callback.onProgress(0.0, "exporting")
+        val config = TimelineCompositionConfig.from(rawConfig)
+        val parsedClips = parseTimelineClips(context, rawClips)
+        val outputSize = outputSizeFor(config, parsedClips.first())
         val outputFile = exportOutputFile(outputPath)
         outputFile.parentFile?.mkdirs()
         if (outputFile.exists()) {
             outputFile.delete()
         }
 
-        val composition = buildTimelineComposition(parseTimelineClips(context, rawClips))
+        val composition = buildTimelineComposition(parsedClips, outputSize)
         val exportTransformer = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -227,6 +273,7 @@ internal class TimelineCompositionExporter(
                         exportResult: ExportResult
                     ) {
                         complete {
+                            callback.onProgress(1.0, "completed")
                             callback.onCompleted(outputFile.absolutePath)
                         }
                     }
@@ -238,6 +285,10 @@ internal class TimelineCompositionExporter(
                     ) {
                         outputFile.delete()
                         complete {
+                            callback.onProgress(
+                                progressHolder.progress.coerceIn(0, 100) / 100.0,
+                                "failed"
+                            )
                             callback.onError(exportException)
                         }
                     }
@@ -247,12 +298,15 @@ internal class TimelineCompositionExporter(
 
         transformer = exportTransformer
         exportTransformer.start(composition, outputFile.absolutePath)
+        mainHandler.post(progressRunnable)
     }
 
     fun cancel() {
         completed = true
+        mainHandler.removeCallbacks(progressRunnable)
         transformer?.cancel()
         transformer = null
+        progressCallback = null
     }
 
     private fun complete(block: () -> Unit) {
@@ -260,8 +314,10 @@ internal class TimelineCompositionExporter(
             return
         }
         completed = true
+        mainHandler.removeCallbacks(progressRunnable)
         mainHandler.post {
             transformer = null
+            progressCallback = null
             block()
         }
     }
@@ -278,6 +334,73 @@ internal class TimelineCompositionExporter(
     }
 }
 
+private fun buildTimelineComposition(
+    clips: List<TimelineClip>,
+    renderSize: TimelineRenderSize
+): Composition {
+    val items = clips.map { clip -> editedMediaItemFor(clip, renderSize) }
+    val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
+    return Composition.Builder(listOf(sequence)).build()
+}
+
+private fun editedMediaItemFor(
+    clip: TimelineClip,
+    renderSize: TimelineRenderSize
+): EditedMediaItem {
+    val mediaItemBuilder = MediaItem.Builder()
+        .setUri(Uri.fromFile(File(clip.path)))
+
+    if (clip.type == TimelineMediaType.IMAGE) {
+        mediaItemBuilder.setImageDurationMs(clip.resolvedDurationMs)
+    }
+
+    val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
+        .setDurationUs(clip.resolvedDurationMs * 1_000L)
+        .setEffects(effectsFor(clip, renderSize))
+
+    if (clip.type == TimelineMediaType.IMAGE) {
+        builder.setFrameRate(30)
+    }
+
+    return builder.build()
+}
+
+private fun effectsFor(
+    clip: TimelineClip,
+    renderSize: TimelineRenderSize
+): Effects {
+    val effects = mutableListOf<Effect>()
+    val scale = max(clip.scale, 1.0)
+    if (scale > 1.0001) {
+        val visibleSpan = (2.0 / scale).coerceIn(0.05, 2.0).toFloat()
+        val extraSpan = 2.0f - visibleSpan
+        val horizontalBias = ((clip.alignmentX + 1.0) / 2.0).toFloat()
+        val verticalBias = ((clip.alignmentY + 1.0) / 2.0).toFloat()
+        val left = -1.0f + extraSpan * horizontalBias
+        val right = left + visibleSpan
+        val top = 1.0f - extraSpan * verticalBias
+        val bottom = top - visibleSpan
+
+        effects.add(
+            Crop(
+                min(left, right - 0.01f),
+                max(right, left + 0.01f),
+                min(bottom, top - 0.01f),
+                max(top, bottom + 0.01f)
+            )
+        )
+    }
+
+    effects.add(
+        Presentation.createForWidthAndHeight(
+            renderSize.width,
+            renderSize.height,
+            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+        )
+    )
+    return Effects(emptyList(), effects)
+}
+
 private fun parseTimelineClips(
     context: Context,
     rawClips: List<*>
@@ -287,57 +410,13 @@ private fun parseTimelineClips(
     return rawClips.map { raw ->
         TimelineClip.from(raw as? Map<*, *> ?: error("Invalid timeline clip."))
     }.map { clip ->
-        clip.copy(resolvedDurationMs = resolveDurationMs(context, clip))
-    }
-}
-
-private fun buildTimelineComposition(clips: List<TimelineClip>): Composition {
-    val editedItems = clips.map { clip ->
-        val mediaItemBuilder = MediaItem.Builder()
-            .setUri(Uri.fromFile(File(clip.path)))
-
-        if (clip.type == TimelineMediaType.IMAGE) {
-            mediaItemBuilder.setImageDurationMs(clip.resolvedDurationMs)
-        }
-
-        val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
-            .setDurationUs(clip.resolvedDurationMs * 1_000L)
-            .setEffects(effectsFor(clip))
-
-        if (clip.type == TimelineMediaType.IMAGE) {
-            builder.setFrameRate(30)
-        }
-
-        builder.build()
-    }
-    val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
-    return Composition.Builder(listOf(sequence)).build()
-}
-
-private fun effectsFor(clip: TimelineClip): Effects {
-    val scale = max(clip.scale, 1.0)
-    if (scale <= 1.0001) {
-        return Effects.EMPTY
-    }
-
-    val visibleSpan = (2.0 / scale).coerceIn(0.05, 2.0).toFloat()
-    val extraSpan = 2.0f - visibleSpan
-    val horizontalBias = ((clip.alignmentX + 1.0) / 2.0).toFloat()
-    val verticalBias = ((clip.alignmentY + 1.0) / 2.0).toFloat()
-    val left = -1.0f + extraSpan * horizontalBias
-    val right = left + visibleSpan
-    val top = 1.0f - extraSpan * verticalBias
-    val bottom = top - visibleSpan
-
-    val effects = listOf<Effect>(
-        Crop(
-            min(left, right - 0.01f),
-            max(right, left + 0.01f),
-            min(bottom, top - 0.01f),
-            max(top, bottom + 0.01f)
+        val sourceSize = resolveSourceSize(context, clip)
+        clip.copy(
+            resolvedDurationMs = resolveDurationMs(context, clip),
+            sourceWidth = sourceSize.width,
+            sourceHeight = sourceSize.height
         )
-    )
-    return Effects(emptyList(), effects)
+    }
 }
 
 private fun resolveDurationMs(
@@ -365,9 +444,102 @@ private fun resolveDurationMs(
     }
 }
 
+private fun resolveSourceSize(
+    context: Context,
+    clip: TimelineClip
+): TimelineRenderSize {
+    if (clip.type == TimelineMediaType.IMAGE) {
+        val options = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(clip.path, options)
+        return TimelineRenderSize(
+            width = evenDimension(options.outWidth.takeIf { it > 0 } ?: DEFAULT_WIDTH),
+            height = evenDimension(options.outHeight.takeIf { it > 0 } ?: DEFAULT_HEIGHT)
+        )
+    }
+
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
+        val width = retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+            ?.toIntOrNull()
+            ?: DEFAULT_WIDTH
+        val height = retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+            ?.toIntOrNull()
+            ?: DEFAULT_HEIGHT
+        val rotation = retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+            ?.toIntOrNull()
+            ?: 0
+        if (rotation == 90 || rotation == 270) {
+            TimelineRenderSize(evenDimension(height), evenDimension(width))
+        } else {
+            TimelineRenderSize(evenDimension(width), evenDimension(height))
+        }
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun outputSizeFor(
+    config: TimelineCompositionConfig,
+    firstClip: TimelineClip
+): TimelineRenderSize {
+    val base = evenDimension(config.baseWidth)
+    return when (config.aspectRatio) {
+        OutputAspectRatio.RATIO_16X9 -> TimelineRenderSize(
+            width = base,
+            height = evenDimension(base * 9 / 16)
+        )
+        OutputAspectRatio.RATIO_9X16 -> TimelineRenderSize(
+            width = evenDimension(base * 9 / 16),
+            height = base
+        )
+        OutputAspectRatio.RATIO_1X1 -> TimelineRenderSize(width = base, height = base)
+        OutputAspectRatio.ORIGINAL -> TimelineRenderSize(
+            width = evenDimension(firstClip.sourceWidth),
+            height = evenDimension(firstClip.sourceHeight)
+        )
+    }
+}
+
+private fun evenDimension(value: Int): Int {
+    val safeValue = max(value, 2)
+    return if (safeValue % 2 == 0) safeValue else safeValue + 1
+}
+
 private data class TimelineSegment(
     val startMs: Long,
     val durationMs: Long
+)
+
+private data class TimelineCompositionConfig(
+    val aspectRatio: OutputAspectRatio = OutputAspectRatio.ORIGINAL,
+    val baseWidth: Int = 1080
+) {
+    companion object {
+        fun from(map: Map<*, *>?): TimelineCompositionConfig {
+            val aspectRatio = when (map?.get("aspectRatio") as? String) {
+                "ratio16x9" -> OutputAspectRatio.RATIO_16X9
+                "ratio9x16" -> OutputAspectRatio.RATIO_9X16
+                "ratio1x1" -> OutputAspectRatio.RATIO_1X1
+                else -> OutputAspectRatio.ORIGINAL
+            }
+            return TimelineCompositionConfig(
+                aspectRatio = aspectRatio,
+                baseWidth = ((map?.get("baseWidth") as? Number)?.toInt() ?: 1080)
+                    .coerceAtLeast(1)
+            )
+        }
+    }
+}
+
+private data class TimelineRenderSize(
+    val width: Int,
+    val height: Int
 )
 
 private data class TimelineClip(
@@ -377,7 +549,9 @@ private data class TimelineClip(
     val alignmentX: Double,
     val alignmentY: Double,
     val scale: Double,
-    var resolvedDurationMs: Long = 0L
+    var resolvedDurationMs: Long = 0L,
+    val sourceWidth: Int = DEFAULT_WIDTH,
+    val sourceHeight: Int = DEFAULT_HEIGHT
 ) {
     companion object {
         fun from(map: Map<*, *>): TimelineClip {
@@ -407,4 +581,11 @@ private data class TimelineClip(
 private enum class TimelineMediaType {
     VIDEO,
     IMAGE
+}
+
+private enum class OutputAspectRatio {
+    RATIO_16X9,
+    RATIO_9X16,
+    RATIO_1X1,
+    ORIGINAL
 }

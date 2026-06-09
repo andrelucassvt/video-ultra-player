@@ -12,6 +12,7 @@ class MockVideoUltraPlayerPlatform
     implements VideoUltraPlayerPlatform {
   final calls = <String>[];
   List<Map<String, dynamic>>? loadedClips;
+  Map<String, dynamic>? lastConfig;
   int? lastTextureId;
   Duration? lastSeekPosition;
   double? lastVolume;
@@ -19,11 +20,18 @@ class MockVideoUltraPlayerPlatform
   double? lastAlignmentX;
   double? lastAlignmentY;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
+  final exportProgressController =
+      StreamController<TimelineExportProgress>.broadcast();
+  Completer<String>? exportCompleter;
 
   @override
-  Future<int> load(List<Map<String, dynamic>> clips) async {
+  Future<int> load(
+    List<Map<String, dynamic>> clips, {
+    Map<String, dynamic>? config,
+  }) async {
     calls.add('load');
     loadedClips = clips;
+    lastConfig = config;
     return 42;
   }
 
@@ -31,9 +39,14 @@ class MockVideoUltraPlayerPlatform
   Future<String> exportTimeline(
     List<Map<String, dynamic>> clips, {
     String? outputPath,
+    Map<String, dynamic>? config,
   }) async {
     calls.add('exportTimeline');
     loadedClips = clips;
+    lastConfig = config;
+    if (exportCompleter != null) {
+      return exportCompleter!.future;
+    }
     return outputPath ?? '/tmp/exported.mp4';
   }
 
@@ -89,6 +102,12 @@ class MockVideoUltraPlayerPlatform
     lastTextureId = textureId;
     return stateController.stream;
   }
+
+  @override
+  Stream<TimelineExportProgress> exportProgress() {
+    calls.add('exportProgress');
+    return exportProgressController.stream;
+  }
 }
 
 void main() {
@@ -103,6 +122,7 @@ void main() {
 
   tearDown(() async {
     await fakePlatform.stateController.close();
+    await fakePlatform.exportProgressController.close();
     VideoUltraPlayerPlatform.instance = initialPlatform;
   });
 
@@ -134,6 +154,27 @@ void main() {
         'scale': 1.25,
       },
     ]);
+    expect(fakePlatform.lastConfig, {
+      'aspectRatio': 'original',
+      'baseWidth': 1080,
+    });
+  });
+
+  test('load forwards serialized composition config', () async {
+    final player = NativeTimelinePlayer();
+
+    await player.load(
+      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
+      config: TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio16x9,
+        baseWidth: 1920,
+      ),
+    );
+
+    expect(fakePlatform.lastConfig, {
+      'aspectRatio': 'ratio16x9',
+      'baseWidth': 1920,
+    });
   });
 
   test(
@@ -162,8 +203,61 @@ void main() {
           'scale': 1.5,
         },
       ]);
+      expect(fakePlatform.lastConfig, {
+        'aspectRatio': 'original',
+        'baseWidth': 1080,
+      });
     },
   );
+
+  test('exportTimeline forwards serialized composition config', () async {
+    final player = NativeTimelinePlayer();
+
+    await player.exportTimeline(
+      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
+      config: TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio1x1,
+        baseWidth: 1200,
+      ),
+    );
+
+    expect(fakePlatform.lastConfig, {
+      'aspectRatio': 'ratio1x1',
+      'baseWidth': 1200,
+    });
+  });
+
+  test('exportProgress requires export in progress', () async {
+    final player = NativeTimelinePlayer();
+
+    expect(() => player.exportProgress, throwsStateError);
+
+    fakePlatform.exportCompleter = Completer<String>();
+    final exportFuture = player.exportTimeline(const [
+      TimelineClip(path: '/tmp/a.mp4', type: MediaType.video),
+    ]);
+    final expectation = expectLater(
+      player.exportProgress,
+      emits(
+        const TimelineExportProgress(
+          progress: 0.5,
+          state: TimelineExportState.exporting,
+        ),
+      ),
+    );
+
+    fakePlatform.exportProgressController.add(
+      const TimelineExportProgress(
+        progress: 0.5,
+        state: TimelineExportState.exporting,
+      ),
+    );
+    fakePlatform.exportCompleter!.complete('/tmp/final.mp4');
+
+    await expectation;
+    await exportFuture;
+    expect(() => player.exportProgress, throwsStateError);
+  });
 
   test('exportTimeline rejects empty clip list', () {
     final player = NativeTimelinePlayer();

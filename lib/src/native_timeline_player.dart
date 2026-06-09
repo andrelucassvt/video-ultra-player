@@ -1,3 +1,5 @@
+import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
+import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
@@ -9,6 +11,8 @@ class NativeTimelinePlayer {
   final VideoUltraPlayerPlatform _platform;
   int? _textureId;
   Stream<TimelinePlayerState>? _stateStream;
+  Stream<TimelineExportProgress>? _exportProgressStream;
+  bool _exporting = false;
 
   int? get textureId => _textureId;
 
@@ -21,7 +25,21 @@ class NativeTimelinePlayer {
         .asBroadcastStream();
   }
 
-  Future<int> load(List<TimelineClip> clips) async {
+  Stream<TimelineExportProgress> get exportProgress {
+    if (!_exporting) {
+      throw StateError(
+        'NativeTimelinePlayer.exportTimeline must be in progress before this call.',
+      );
+    }
+    return _exportProgressStream ??= _platform
+        .exportProgress()
+        .asBroadcastStream();
+  }
+
+  Future<int> load(
+    List<TimelineClip> clips, {
+    TimelineCompositionConfig? config,
+  }) async {
     if (clips.isEmpty) {
       throw ArgumentError.value(
         clips,
@@ -32,6 +50,7 @@ class NativeTimelinePlayer {
 
     final textureId = await _platform.load(
       clips.map((clip) => clip.toJson()).toList(growable: false),
+      config: (config ?? TimelineCompositionConfig()).toJson(),
     );
     _textureId = textureId;
     _stateStream = null;
@@ -41,7 +60,8 @@ class NativeTimelinePlayer {
   Future<String> exportTimeline(
     List<TimelineClip> clips, {
     String? outputPath,
-  }) {
+    TimelineCompositionConfig? config,
+  }) async {
     if (clips.isEmpty) {
       throw ArgumentError.value(
         clips,
@@ -50,10 +70,21 @@ class NativeTimelinePlayer {
       );
     }
 
-    return _platform.exportTimeline(
-      clips.map((clip) => clip.toJson()).toList(growable: false),
-      outputPath: outputPath,
-    );
+    if (_exporting) {
+      throw StateError('Only one timeline export can run at a time.');
+    }
+
+    _exporting = true;
+    _exportProgressStream = null;
+    try {
+      return await _platform.exportTimeline(
+        clips.map((clip) => clip.toJson()).toList(growable: false),
+        outputPath: outputPath,
+        config: (config ?? TimelineCompositionConfig()).toJson(),
+      );
+    } finally {
+      _exporting = false;
+    }
   }
 
   Future<void> play() {
