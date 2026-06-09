@@ -1,7 +1,7 @@
 name: video_ultra_player
 description: Native gapless timeline player plugin backed by platform video composition and a single Flutter texture.
 version: 1.0.0
-homepage:
+homepage: https://pub.dev/packages/video_ultra_player
 
 environment:
   sdk: ^3.11.5

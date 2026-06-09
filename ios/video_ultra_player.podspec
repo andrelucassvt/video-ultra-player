@@ -4,14 +4,14 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'video_ultra_player'
-  s.version          = '0.0.1'
-  s.summary          = 'A new Flutter project.'
+  s.version          = '1.0.0'
+  s.summary          = 'Native gapless timeline preview and MP4 export for Flutter.'
   s.description      = <<-DESC
-A new Flutter project.
+Flutter plugin for previewing and exporting native media timelines built from local video and image files.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://pub.dev/packages/video_ultra_player'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = 'Andre Lucas'
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
   s.dependency 'Flutter'
