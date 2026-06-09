@@ -1,3 +1,8 @@
+## 1.1.0
+
+- Added `NativeTimelinePlayer.seekToClip(int clipIndex)` to seek directly to the start of a specific clip in the timeline (resolved natively on both iOS and Android).
+- Added clip-jump chips in the example app to demonstrate the new API.
+
 ## 1.0.2
 
 - Fixed image clips rendered upside-down in preview and export on iOS (`makePixelBuffer`: apply vertical flip to CGContext before drawing UIImage).
