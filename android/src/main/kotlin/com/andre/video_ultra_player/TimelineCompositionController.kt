@@ -1,5 +1,3 @@
-@file:OptIn(UnstableApi::class)
-
 package com.andre.video_ultra_player
 
 import android.content.Context
@@ -13,17 +11,19 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.Size
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Crop
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
+import androidx.media3.transformer.ExportException
+import androidx.media3.transformer.ExportResult
+import androidx.media3.transformer.Transformer
 import io.flutter.plugin.common.EventChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
-import kotlin.math.ceil
+import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
 
@@ -56,11 +56,7 @@ internal class TimelineCompositionController(
     }
 
     fun load(rawClips: List<*>): Long {
-        require(rawClips.isNotEmpty()) { "Timeline must contain at least one clip." }
-
-        clips = rawClips.map { raw ->
-            TimelineClip.from(raw as? Map<*, *> ?: error("Invalid timeline clip."))
-        }.toMutableList()
+        clips = parseTimelineClips(context, rawClips).toMutableList()
         rebuildSegments()
 
         val entry = textureRegistry.createSurfaceTexture()
@@ -88,7 +84,7 @@ internal class TimelineCompositionController(
                         }
                     }
                 )
-                compositionPlayer.setComposition(buildComposition())
+                compositionPlayer.setComposition(buildTimelineComposition(clips))
                 compositionPlayer.prepare()
             }
 
@@ -135,7 +131,7 @@ internal class TimelineCompositionController(
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
         // Media3 effects are immutable, so live pan/crop is applied by rebuilding the Composition.
-        currentPlayer.setComposition(buildComposition(), positionMs)
+        currentPlayer.setComposition(buildTimelineComposition(clips), positionMs)
         currentPlayer.prepare()
         if (wasPlaying) {
             currentPlayer.play()
@@ -155,59 +151,9 @@ internal class TimelineCompositionController(
         textureEntry = null
     }
 
-    private fun buildComposition(): Composition {
-        val editedItems = clips.map { clip ->
-            val mediaItemBuilder = MediaItem.Builder()
-                .setUri(Uri.fromFile(File(clip.path)))
-
-            if (clip.type == TimelineMediaType.IMAGE) {
-                mediaItemBuilder.setImageDurationMs(clip.resolvedDurationMs)
-            }
-
-            val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
-                .setDurationUs(clip.resolvedDurationMs * 1_000L)
-                .setEffects(effectsFor(clip))
-
-            if (clip.type == TimelineMediaType.IMAGE) {
-                builder.setFrameRate(30)
-            }
-
-            builder.build()
-        }
-        val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
-        return Composition.Builder(listOf(sequence)).build()
-    }
-
-    private fun effectsFor(clip: TimelineClip): Effects {
-        val scale = max(clip.scale, 1.0)
-        if (scale <= 1.0001) {
-            return Effects.EMPTY
-        }
-
-        val visibleSpan = (2.0 / scale).coerceIn(0.05, 2.0).toFloat()
-        val extraSpan = 2.0f - visibleSpan
-        val horizontalBias = ((clip.alignmentX + 1.0) / 2.0).toFloat()
-        val verticalBias = ((clip.alignmentY + 1.0) / 2.0).toFloat()
-        val left = -1.0f + extraSpan * horizontalBias
-        val right = left + visibleSpan
-        val top = 1.0f - extraSpan * verticalBias
-        val bottom = top - visibleSpan
-
-        val effects = listOf<Effect>(
-            Crop(
-                min(left, right - 0.01f),
-                max(right, left + 0.01f),
-                min(bottom, top - 0.01f),
-                max(top, bottom + 0.01f)
-            )
-        )
-        return Effects(emptyList(), effects)
-    }
-
     private fun rebuildSegments() {
         var startMs = 0L
         segments = clips.map { clip ->
-            clip.resolvedDurationMs = resolveDurationMs(clip)
             TimelineSegment(
                 startMs = startMs,
                 durationMs = clip.resolvedDurationMs
@@ -216,28 +162,6 @@ internal class TimelineCompositionController(
             }
         }
         totalDurationMs = startMs
-    }
-
-    private fun resolveDurationMs(clip: TimelineClip): Long {
-        clip.durationMs?.let {
-            return max(it, 1L)
-        }
-
-        if (clip.type == TimelineMediaType.IMAGE) {
-            return DEFAULT_IMAGE_DURATION_MS
-        }
-
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(clip.path)
-            retriever
-                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull()
-                ?.let { max(it, 1L) }
-                ?: DEFAULT_IMAGE_DURATION_MS
-        } finally {
-            retriever.release()
-        }
     }
 
     private fun emitState() {
@@ -267,6 +191,177 @@ internal class TimelineCompositionController(
             positionMs >= segment.startMs && positionMs < segment.startMs + segment.durationMs
         }
         return if (index >= 0) index else segments.lastIndex
+    }
+}
+
+internal interface TimelineExportCallback {
+    fun onCompleted(outputPath: String)
+
+    fun onError(error: Throwable)
+}
+
+internal class TimelineCompositionExporter(
+    private val context: Context
+) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var transformer: Transformer? = null
+    private var completed = false
+
+    fun export(
+        rawClips: List<*>,
+        outputPath: String?,
+        callback: TimelineExportCallback
+    ) {
+        val outputFile = exportOutputFile(outputPath)
+        outputFile.parentFile?.mkdirs()
+        if (outputFile.exists()) {
+            outputFile.delete()
+        }
+
+        val composition = buildTimelineComposition(parseTimelineClips(context, rawClips))
+        val exportTransformer = Transformer.Builder(context)
+            .addListener(
+                object : Transformer.Listener {
+                    override fun onCompleted(
+                        composition: Composition,
+                        exportResult: ExportResult
+                    ) {
+                        complete {
+                            callback.onCompleted(outputFile.absolutePath)
+                        }
+                    }
+
+                    override fun onError(
+                        composition: Composition,
+                        exportResult: ExportResult,
+                        exportException: ExportException
+                    ) {
+                        outputFile.delete()
+                        complete {
+                            callback.onError(exportException)
+                        }
+                    }
+                }
+            )
+            .build()
+
+        transformer = exportTransformer
+        exportTransformer.start(composition, outputFile.absolutePath)
+    }
+
+    fun cancel() {
+        completed = true
+        transformer?.cancel()
+        transformer = null
+    }
+
+    private fun complete(block: () -> Unit) {
+        if (completed) {
+            return
+        }
+        completed = true
+        mainHandler.post {
+            transformer = null
+            block()
+        }
+    }
+
+    private fun exportOutputFile(outputPath: String?): File {
+        if (!outputPath.isNullOrBlank()) {
+            return File(outputPath)
+        }
+
+        return File(
+            context.cacheDir,
+            "video_ultra_player_export_${UUID.randomUUID()}.mp4"
+        )
+    }
+}
+
+private fun parseTimelineClips(
+    context: Context,
+    rawClips: List<*>
+): List<TimelineClip> {
+    require(rawClips.isNotEmpty()) { "Timeline must contain at least one clip." }
+
+    return rawClips.map { raw ->
+        TimelineClip.from(raw as? Map<*, *> ?: error("Invalid timeline clip."))
+    }.map { clip ->
+        clip.copy(resolvedDurationMs = resolveDurationMs(context, clip))
+    }
+}
+
+private fun buildTimelineComposition(clips: List<TimelineClip>): Composition {
+    val editedItems = clips.map { clip ->
+        val mediaItemBuilder = MediaItem.Builder()
+            .setUri(Uri.fromFile(File(clip.path)))
+
+        if (clip.type == TimelineMediaType.IMAGE) {
+            mediaItemBuilder.setImageDurationMs(clip.resolvedDurationMs)
+        }
+
+        val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
+            .setDurationUs(clip.resolvedDurationMs * 1_000L)
+            .setEffects(effectsFor(clip))
+
+        if (clip.type == TimelineMediaType.IMAGE) {
+            builder.setFrameRate(30)
+        }
+
+        builder.build()
+    }
+    val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
+    return Composition.Builder(listOf(sequence)).build()
+}
+
+private fun effectsFor(clip: TimelineClip): Effects {
+    val scale = max(clip.scale, 1.0)
+    if (scale <= 1.0001) {
+        return Effects.EMPTY
+    }
+
+    val visibleSpan = (2.0 / scale).coerceIn(0.05, 2.0).toFloat()
+    val extraSpan = 2.0f - visibleSpan
+    val horizontalBias = ((clip.alignmentX + 1.0) / 2.0).toFloat()
+    val verticalBias = ((clip.alignmentY + 1.0) / 2.0).toFloat()
+    val left = -1.0f + extraSpan * horizontalBias
+    val right = left + visibleSpan
+    val top = 1.0f - extraSpan * verticalBias
+    val bottom = top - visibleSpan
+
+    val effects = listOf<Effect>(
+        Crop(
+            min(left, right - 0.01f),
+            max(right, left + 0.01f),
+            min(bottom, top - 0.01f),
+            max(top, bottom + 0.01f)
+        )
+    )
+    return Effects(emptyList(), effects)
+}
+
+private fun resolveDurationMs(
+    context: Context,
+    clip: TimelineClip
+): Long {
+    clip.durationMs?.let {
+        return max(it, 1L)
+    }
+
+    if (clip.type == TimelineMediaType.IMAGE) {
+        return DEFAULT_IMAGE_DURATION_MS
+    }
+
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
+        retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLongOrNull()
+            ?.let { max(it, 1L) }
+            ?: DEFAULT_IMAGE_DURATION_MS
+    } finally {
+        retriever.release()
     }
 }
 

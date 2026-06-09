@@ -37,6 +37,8 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     switch call.method {
     case "load":
       load(call, result: result)
+    case "exportTimeline":
+      exportTimeline(call, result: result)
     case "play":
       guard let controller = controller(for: call, result: result) else { return }
       controller.play()
@@ -120,31 +122,7 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       return
     }
 
-    guard
-      let args = call.arguments as? [String: Any],
-      let rawClips = args["clips"] as? [[String: Any]]
-    else {
-      result(
-        FlutterError(
-          code: "invalid_arguments",
-          message: "Expected clips list.",
-          details: nil
-        )
-      )
-      return
-    }
-
-    let clips = rawClips.compactMap(TimelineClipDescriptor.init(dictionary:))
-    guard clips.count == rawClips.count else {
-      result(
-        FlutterError(
-          code: "invalid_clip",
-          message: "One or more timeline clips are invalid.",
-          details: nil
-        )
-      )
-      return
-    }
+    guard let clips = clips(from: call.arguments, result: result) else { return }
 
     do {
       let controller = try TimelinePlayerController(
@@ -162,6 +140,114 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         )
       )
     }
+  }
+
+  private func exportTimeline(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard let clips = clips(from: call.arguments, result: result) else { return }
+    let outputPath = (call.arguments as? [String: Any])?["outputPath"] as? String
+    let outputURL = exportOutputURL(outputPath: outputPath)
+    let composition = TimelineComposition()
+
+    do {
+      try FileManager.default.createDirectory(
+        at: outputURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      if FileManager.default.fileExists(atPath: outputURL.path) {
+        try FileManager.default.removeItem(at: outputURL)
+      }
+
+      let exportAsset = try composition.buildExportAsset(clips: clips)
+      guard
+        let exporter = AVAssetExportSession(
+          asset: exportAsset.asset,
+          presetName: AVAssetExportPresetHighestQuality
+        )
+      else {
+        throw TimelineCompositionError.cannotCreateExporter
+      }
+
+      exporter.outputURL = outputURL
+      exporter.outputFileType = .mp4
+      exporter.shouldOptimizeForNetworkUse = true
+      exporter.videoComposition = exportAsset.videoComposition
+      exporter.exportAsynchronously {
+        DispatchQueue.main.async {
+          composition.dispose()
+          switch exporter.status {
+          case .completed:
+            result(outputURL.path)
+          case .failed, .cancelled:
+            result(
+              FlutterError(
+                code: "export_failed",
+                message: "Unable to export native timeline composition.",
+                details: exporter.error?.localizedDescription
+              )
+            )
+          default:
+            result(
+              FlutterError(
+                code: "export_failed",
+                message: "Timeline export ended in unexpected state.",
+                details: "\(exporter.status.rawValue)"
+              )
+            )
+          }
+        }
+      }
+    } catch {
+      composition.dispose()
+      result(
+        FlutterError(
+          code: "export_failed",
+          message: "Unable to export native timeline composition.",
+          details: "\(error)"
+        )
+      )
+    }
+  }
+
+  private func clips(from arguments: Any?, result: FlutterResult) -> [TimelineClipDescriptor]? {
+    guard
+      let args = arguments as? [String: Any],
+      let rawClips = args["clips"] as? [[String: Any]]
+    else {
+      result(
+        FlutterError(
+          code: "invalid_arguments",
+          message: "Expected clips list.",
+          details: nil
+        )
+      )
+      return nil
+    }
+
+    let clips = rawClips.compactMap(TimelineClipDescriptor.init(dictionary:))
+    guard clips.count == rawClips.count else {
+      result(
+        FlutterError(
+          code: "invalid_clip",
+          message: "One or more timeline clips are invalid.",
+          details: nil
+        )
+      )
+      return nil
+    }
+    return clips
+  }
+
+  private func exportOutputURL(outputPath: String?) -> URL {
+    if let outputPath, !outputPath.isEmpty {
+      return URL(fileURLWithPath: outputPath)
+    }
+
+    return FileManager.default.temporaryDirectory.appendingPathComponent(
+      "video_ultra_player_export_\(UUID().uuidString).mp4"
+    )
   }
 
   private func controller(

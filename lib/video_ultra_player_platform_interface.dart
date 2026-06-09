@@ -20,6 +20,13 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('load() has not been implemented.');
   }
 
+  Future<String> exportTimeline(
+    List<Map<String, dynamic>> clips, {
+    String? outputPath,
+  }) {
+    throw UnimplementedError('exportTimeline() has not been implemented.');
+  }
+
   Future<void> play(int textureId) {
     throw UnimplementedError('play() has not been implemented.');
   }

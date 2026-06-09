@@ -19,6 +19,7 @@ class VideoUltraPlayerPlugin :
     private var applicationContext: Context? = null
     private var textureRegistry: TextureRegistry? = null
     private val controllers = mutableMapOf<Long, TimelineCompositionController>()
+    private val activeExporters = mutableSetOf<TimelineCompositionExporter>()
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
@@ -39,6 +40,7 @@ class VideoUltraPlayerPlugin :
     ) {
         when (call.method) {
             "load" -> load(call, result)
+            "exportTimeline" -> exportTimeline(call, result)
             "play" -> withController(call, result) { controller ->
                 controller.play()
                 result.success(null)
@@ -96,6 +98,8 @@ class VideoUltraPlayerPlugin :
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel?.setMethodCallHandler(null)
         eventChannel?.setStreamHandler(null)
+        activeExporters.forEach { it.cancel() }
+        activeExporters.clear()
         controllers.values.forEach { it.dispose() }
         controllers.clear()
         methodChannel = null
@@ -149,6 +153,61 @@ class VideoUltraPlayerPlugin :
             result.error(
                 "load_failed",
                 "Unable to build native timeline composition.",
+                error.message
+            )
+        }
+    }
+
+    private fun exportTimeline(
+        call: MethodCall,
+        result: Result
+    ) {
+        val context = applicationContext
+        if (context == null) {
+            result.error(
+                "not_attached",
+                "VideoUltraPlayerPlugin is not attached to the Flutter engine.",
+                null
+            )
+            return
+        }
+
+        val args = call.arguments as? Map<*, *>
+        val clips = args?.get("clips") as? List<*>
+        val outputPath = args?.get("outputPath") as? String
+        if (clips == null) {
+            result.error("invalid_arguments", "Expected clips list.", null)
+            return
+        }
+
+        val exporter = TimelineCompositionExporter(context)
+        activeExporters.add(exporter)
+        try {
+            exporter.export(
+                rawClips = clips,
+                outputPath = outputPath,
+                callback = object : TimelineExportCallback {
+                    override fun onCompleted(outputPath: String) {
+                        activeExporters.remove(exporter)
+                        result.success(outputPath)
+                    }
+
+                    override fun onError(error: Throwable) {
+                        activeExporters.remove(exporter)
+                        result.error(
+                            "export_failed",
+                            "Unable to export native timeline composition.",
+                            error.message
+                        )
+                    }
+                }
+            )
+        } catch (error: Throwable) {
+            activeExporters.remove(exporter)
+            exporter.cancel()
+            result.error(
+                "export_failed",
+                "Unable to export native timeline composition.",
                 error.message
             )
         }

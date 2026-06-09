@@ -38,6 +38,24 @@ class NativeTimelinePlayer {
     return textureId;
   }
 
+  Future<String> exportTimeline(
+    List<TimelineClip> clips, {
+    String? outputPath,
+  }) {
+    if (clips.isEmpty) {
+      throw ArgumentError.value(
+        clips,
+        'clips',
+        'Must contain at least one clip.',
+      );
+    }
+
+    return _platform.exportTimeline(
+      clips.map((clip) => clip.toJson()).toList(growable: false),
+      outputPath: outputPath,
+    );
+  }
+
   Future<void> play() {
     return _platform.play(_requireTextureId());
   }

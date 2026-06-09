@@ -28,6 +28,16 @@ class MockVideoUltraPlayerPlatform
   }
 
   @override
+  Future<String> exportTimeline(
+    List<Map<String, dynamic>> clips, {
+    String? outputPath,
+  }) async {
+    calls.add('exportTimeline');
+    loadedClips = clips;
+    return outputPath ?? '/tmp/exported.mp4';
+  }
+
+  @override
   Future<void> play(int textureId) async {
     calls.add('play');
     lastTextureId = textureId;
@@ -124,6 +134,41 @@ void main() {
         'scale': 1.25,
       },
     ]);
+  });
+
+  test(
+    'exportTimeline forwards serialized clips without requiring load',
+    () async {
+      final player = NativeTimelinePlayer();
+
+      final outputPath = await player.exportTimeline(const [
+        TimelineClip(
+          path: '/tmp/a.mp4',
+          type: MediaType.video,
+          duration: Duration(seconds: 2),
+          alignment: Alignment.bottomRight,
+          scale: 1.5,
+        ),
+      ], outputPath: '/tmp/final.mp4');
+
+      expect(outputPath, '/tmp/final.mp4');
+      expect(fakePlatform.calls, ['exportTimeline']);
+      expect(fakePlatform.loadedClips, [
+        <String, dynamic>{
+          'path': '/tmp/a.mp4',
+          'type': 'video',
+          'durationMs': 2000,
+          'alignment': <String, double>{'x': 1, 'y': 1},
+          'scale': 1.5,
+        },
+      ]);
+    },
+  );
+
+  test('exportTimeline rejects empty clip list', () {
+    final player = NativeTimelinePlayer();
+
+    expect(() => player.exportTimeline(const []), throwsArgumentError);
   });
 
   test('commands forward texture id and arguments', () async {

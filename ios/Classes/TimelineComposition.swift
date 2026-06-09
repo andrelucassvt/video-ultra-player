@@ -7,6 +7,7 @@ enum TimelineCompositionError: Error {
   case missingVideoTrack(String)
   case cannotCreateCompositionTrack
   case cannotCreateImageVideo
+  case cannotCreateExporter
 }
 
 struct TimelineClipDescriptor {
@@ -50,6 +51,11 @@ struct TimelineSegment {
   let duration: CMTime
   let naturalSize: CGSize
   let preferredTransform: CGAffineTransform
+}
+
+struct TimelineExportAsset {
+  let asset: AVAsset
+  let videoComposition: AVVideoComposition?
 }
 
 final class TimelineComposition {
@@ -138,6 +144,14 @@ final class TimelineComposition {
     let playerItem = AVPlayerItem(asset: composition)
     playerItem.videoComposition = makeVideoComposition(compositionVideoTrack: compositionVideoTrack)
     return playerItem
+  }
+
+  func buildExportAsset(clips: [TimelineClipDescriptor]) throws -> TimelineExportAsset {
+    let playerItem = try build(clips: clips)
+    return TimelineExportAsset(
+      asset: playerItem.asset,
+      videoComposition: playerItem.videoComposition
+    )
   }
 
   func updateAlignment(clipIndex: Int, x: CGFloat, y: CGFloat) -> AVVideoComposition? {

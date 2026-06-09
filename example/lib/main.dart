@@ -22,11 +22,14 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
   final NativeTimelinePlayer _player = NativeTimelinePlayer();
   final ImagePicker _picker = ImagePicker();
   Stream<TimelinePlayerState>? _stateStream;
+  List<TimelineClip> _clips = <TimelineClip>[];
   int? _textureId;
   int _clipCount = 3;
   String _timelineSource = 'Sample timeline';
   bool _loading = false;
+  bool _exporting = false;
   String? _error;
+  String? _exportPath;
   double? _scrubValue;
 
   @override
@@ -154,11 +157,59 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     setState(() {
       _textureId = textureId;
       _stateStream = _player.stateStream;
+      _clips = List<TimelineClip>.of(clips);
       _clipCount = clips.length;
       _timelineSource = source;
       _scrubValue = null;
+      _exportPath = null;
       _loading = false;
     });
+  }
+
+  Future<void> _exportTimeline() async {
+    if (_loading || _exporting || _clips.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _exporting = true;
+      _error = null;
+      _exportPath = null;
+    });
+
+    try {
+      final directory = Directory(
+        '${Directory.systemTemp.path}/video_ultra_player_example_exports',
+      );
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
+      }
+
+      final outputPath =
+          '${directory.path}/timeline_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      final exportedPath = await _player.exportTimeline(
+        _clips,
+        outputPath: outputPath,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _exportPath = exportedPath;
+        _exporting = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = error.toString();
+        _exporting = false;
+      });
+    }
   }
 
   Future<String> _copyAssetToTempFile(String assetPath) async {
@@ -237,6 +288,13 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                                                       2 -
                                                   1)
                                               .clamp(-1.0, 1.0);
+                                      if (state.clipIndex >= 0 &&
+                                          state.clipIndex < _clips.length) {
+                                        _clips[state.clipIndex] =
+                                            _clips[state.clipIndex].copyWith(
+                                              alignment: Alignment(x, y),
+                                            );
+                                      }
                                       _player.setClipAlignment(
                                         state.clipIndex,
                                         x,
@@ -333,12 +391,35 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                                   : 'Reload sample',
                             ),
                           ),
+                          FilledButton.icon(
+                            onPressed: _loading || _exporting || _clips.isEmpty
+                                ? null
+                                : _exportTimeline,
+                            icon: _exporting
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.file_download_outlined),
+                            label: Text(
+                              _exporting ? 'Exporting' : 'Export MP4',
+                            ),
+                          ),
                           Text(
                             'Clip ${state.clipIndex + 1} of $_clipCount - $_timelineSource',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
                       ),
+                      if (_exportPath != null) ...[
+                        const SizedBox(height: 12),
+                        SelectableText(
+                          'Exported to $_exportPath',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                       if (_error != null) ...[
                         const SizedBox(height: 12),
                         Text(

@@ -27,6 +27,21 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<String> exportTimeline(
+    List<Map<String, dynamic>> clips, {
+    String? outputPath,
+  }) async {
+    final exportedPath = await methodChannel.invokeMethod<String>(
+      'exportTimeline',
+      <String, Object?>{'clips': clips, 'outputPath': outputPath},
+    );
+    if (exportedPath == null) {
+      throw StateError('Native timeline export did not return an output path.');
+    }
+    return exportedPath;
+  }
+
+  @override
   Future<void> play(int textureId) {
     return methodChannel.invokeMethod<void>('play', _textureArgs(textureId));
   }

@@ -18,6 +18,9 @@ void main() {
           if (methodCall.method == 'load') {
             return 77;
           }
+          if (methodCall.method == 'exportTimeline') {
+            return '/tmp/final.mp4';
+          }
           return null;
         });
   });
@@ -40,6 +43,24 @@ void main() {
       ],
     });
   });
+
+  test(
+    'exportTimeline invokes native export and returns output path',
+    () async {
+      final outputPath = await platform.exportTimeline([
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ], outputPath: '/tmp/final.mp4');
+
+      expect(outputPath, '/tmp/final.mp4');
+      expect(calls.single.method, 'exportTimeline');
+      expect(calls.single.arguments, {
+        'clips': [
+          <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+        ],
+        'outputPath': '/tmp/final.mp4',
+      });
+    },
+  );
 
   test('commands invoke native channel with arguments', () async {
     await platform.play(77);
