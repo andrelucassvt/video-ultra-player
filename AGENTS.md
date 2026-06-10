@@ -1,63 +1,62 @@
-# Base App Flutter — Codex Agent Instructions
+# video_ultra_player
 
-Este arquivo fornece contexto e regras obrigatórias para o agente ao trabalhar neste projeto Flutter.
+Plugin Flutter federado (Dart + iOS/Swift + Android/Kotlin) para um player de timeline com composição nativa única (gapless real, CapCut-like). Hoje é skeleton de `flutter create --template=plugin` — só `getPlatformVersion` existe; a arquitetura-alvo está em `plan/`.
 
----
+## Stack
 
-## Arquivos de instrução detalhados
+- Dart `^3.11.5` / Flutter `>=3.3.0`; runtime dep: `plugin_platform_interface`
+- iOS: Swift 5.0, deployment target 13.0, CocoaPods (`ios/video_ultra_player.podspec`)
+- Android: Kotlin 2.2.20, Gradle **Kotlin DSL** (`build.gradle.kts`), `compileSdk 36`, `minSdk 24`, JVM 17
+- Planejado: `androidx.media3` (`CompositionPlayer`) no Android e `AVFoundation` (`AVMutableComposition`) no iOS
 
-Antes de gerar ou modificar código, leia o arquivo de arquitetura **sempre** e depois a skill correspondente à camada modificada:
+## Arquitetura
 
-| Arquivo | Quando ler |
-|---|---|
-| `.github/instructions/architecture.instructions.md` | **Sempre** — regras gerais de arquitetura |
+Plugin federado: API pública Dart → platform interface (contrato abstrato) → method channel → implementação nativa por plataforma. A API nunca chama o channel direto; sempre passa por `VideoUltraPlayerPlatform.instance`.
 
-## 🛠️ Skills especializadas
+```
+VideoUltraPlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPlayer
+                                                 └→ iOS / Android (pluginClass)
+```
 
-Leia o arquivo da skill antes de executar a tarefa correspondente:
+## Estrutura
 
-| Skill | Arquivo | Quando usar |
-|---|---|---|
-| `implement-view` | `.agents/skills/implement-view/SKILL.md` | Ao criar ou modificar Views em `lib/presentation/**/view/**` |
-| `implement-view-model` | `.agents/skills/implement-view-model/SKILL.md` | Ao criar ou modificar Cubits/States em `lib/presentation/**/view_model/**` |
-| `implement-widget` | `.agents/skills/implement-widget/SKILL.md` | Ao criar ou modificar Widgets em `lib/presentation/**/widgets/**` ou `lib/common/widgets/**` |
-| `implement-domain` | `.agents/skills/implement-domain/SKILL.md` | Ao trabalhar em `lib/domain/**` |
-| `implement-data` | `.agents/skills/implement-data/SKILL.md` | Ao trabalhar em `lib/data/**` |
-| `configure-di` | `.agents/skills/configure-di/SKILL.md` | Ao trabalhar em `lib/config/inject/**` |
-| `configure-navigation` | `.agents/skills/configure-navigation/SKILL.md` | Ao trabalhar em `lib/config/routes/**` ou navegação |
-| `analyze-view` | `.agents/skills/analyze-view/SKILL.md` | Ao revisar, auditar ou refatorar arquivos de View |
-| `custom-paint` | `.agents/skills/custom-paint/SKILL.md` | Ao desenhar formas, gráficos, canvas ou animações 2D com CustomPaint |
-| `guideline-apple` | `.agents/skills/guideline-apple/SKILL.md` | Ao preparar ou auditar o app para submissão na App Store |
-| `implement-service` | `.agents/skills/implement-service/SKILL.md` | Ao criar ou modificar Services em `lib/common/services/**` — flags, contadores, gating, onboarding, premium check, ações únicas |
-| `implement-in-app-purchase` | `.agents/skills/implement-in-app-purchase/SKILL.md` | Ao implementar compras in-app, assinaturas ou paywall |
-| `implement-admob` | `.agents/skills/implement-admob/SKILL.md` | Ao trabalhar com anúncios AdMob |
-| `implement-auth-token-flow` | `.agents/skills/implement-auth-token-flow/SKILL.md` | Ao implementar autenticação com Bearer token, login, refresh token ou logout |
-| `implement-firebase-notifications` | `.agents/skills/implement-firebase-notifications/SKILL.md` | Ao implementar ou auditar push notifications via Firebase Cloud Messaging (iOS + Android) |
-| `flutter-isolates` | `.agents/skills/flutter-isolates/SKILL.md` | Ao trabalhar com paralelismo, concorrência, performance de UI, jank ou tarefas CPU-intensivas — compute(), Isolate.spawn, Isolate.run, SendPort, ReceivePort |
-| `flutter-animating-apps` | `.agents/skills/flutter-animating-apps/SKILL.md` | Ao implementar animações visuais, efeitos, transições de tela, hero animations, animações implícitas/explícitas ou physics-based animations |
-| `image-to-code` | `.agents/skills/image-to-code/SKILL.md` | Ao receber uma imagem de referência (mockup, screenshot, protótipo) e pedir para replicar o design em Flutter |
+- `lib/video_ultra_player.dart` — API pública (consumida pelo app)
+- `lib/video_ultra_player_platform_interface.dart` — contrato abstrato Dart↔nativo
+- `lib/video_ultra_player_method_channel.dart` — implementação default via MethodChannel
+- `ios/Classes/` — `FlutterPlugin` Swift
+- `android/src/main/kotlin/com/andre/video_ultra_player/` — `FlutterPlugin` Kotlin
+- `example/` — app que consome/demonstra o plugin
+- `test/` — testes Dart (espelham `lib/`)
+- `plan/` — arquitetura-alvo e plano de implementação (LEIA antes de implementar)
+- `flow/` — documentação de fluxos (ver seção no fim)
 
----
+## Comandos
 
-## ⚡ Regras Globais
+- `flutter analyze` — lint/análise estática
+- `flutter test` — testes unitários Dart
+- `cd example && flutter run` — roda o app de exemplo em device/simulador
+- `cd example && flutter run -d ios` / `-d android` — força a plataforma
 
-- **Arquitetura**: `presentation` → `domain` ← `data` (Clean Architecture)
-- **Imports**: SEMPRE absolutos — `package:base_app/...` — NUNCA relativos
-- **State management**: Cubit (BLoC) — `flutter_bloc`
-- **Error handling**: `Result<T>` (Ok/Error) — NUNCA relance exceções
-- **DI**: GetIt via `AppInjector` — Cubits → `registerFactory`; resto → `registerLazySingleton`
-- **Navegação**: GoRouter — SEMPRE na View ou `BlocListener`, NUNCA no Cubit
-- **Textos na UI**: SEMPRE `context.l10n.<chave>` — ZERO strings hardcoded
-- **Entities**: `@immutable`, `const`, `final`, `copyWith()`, `==`, `hashCode`
-- **SafeArea**: SEMPRE envolva o conteúdo principal da View com `SafeArea`
-- **Performance**: NUNCA crie `Widget _buildXxx()` nem classes privadas de widget dentro da View — extraia para `widgets/` (reutilizável) ou `content/` (auxiliar específico); dialog/bottomSheet são exceção
-- **Repositories**: SEMPRE envolva chamadas em `try/catch` e retorne `Result.error(...)`
-- **Cubit async**: SEMPRE emita `Loading` primeiro → chame o repository → use `result.when()`
-- **Nunca** crie arquivos `.md` para documentar mudanças de código
+## Convenções
 
-## 🧭 Fluxo para nova feature
+- Nome do channel = nome do pacote (`video_ultra_player`); para a timeline, `video_ultra_player/timeline_player`. **Nunca** `com.luma_vid/...` (resíduo de outro contexto).
+- Toda nova capacidade é federada: contrato em `platform_interface` → impl em `method_channel` → nativo iOS **e** Android. Não chame `MethodChannel` direto da API pública.
+- Android é **Kotlin DSL** (`build.gradle.kts`) — edite `dependencies {}` em sintaxe Kotlin, não Groovy.
+- Antes de criar/alterar features, a skill `brainstorming` é obrigatória (`.claude/rules/brainstorming.instructions.md`).
+- Não criar arquivos `.md` para documentar mudanças de código.
 
-1. **Mínimo obrigatório**: View + Cubit + State + rota + DI
-2. **Dados locais**: injete `StorageService` diretamente no Cubit
-3. **API externa**: crie também Entity + Repository Interface + Model + DataSource + RepositoryImpl
-4. Siga a estrutura de pastas descrita em `architecture.instructions.md`
+## Gotchas
+
+- O `CLAUDE.md` anterior descrevia uma arquitetura Clean Architecture de **app** (Cubits/GetIt/GoRouter) que **não existe** neste repo de plugin — foi descartada. Não recrie pastas `presentation/domain/data` aqui.
+- Os arquivos do app consumidor citados nos planos (`SequencePreviewPlayer`, `VideoEditorService`, `TimelinePlaybackModel`) **vivem no app, não neste pacote** — não podem ser validados aqui.
+- `AVPlayerLayer` (iOS) e `SurfaceView` (Android) **não são capturáveis** para textura; a timeline usa `AVPlayerItemVideoOutput.copyPixelBuffer` / `SurfaceTexture` do `TextureRegistry` (ver plano).
+
+## Não fazer
+
+- Não usar `print()` — use `log()` de `dart:developer`.
+- Não rodar `flutter pub upgrade` sem perguntar.
+- Não implementar a timeline em só uma plataforma sem alinhar — a paridade iOS/Android faz parte do contrato.
+
+## 📖 Documentação de Flows
+
+Para qualquer feature ou fluxo, verifique a pasta `./flow/`: leia os títulos dos arquivos `.md` disponíveis e, se algum for relevante para a tarefa atual, leia-o antes de implementar ou debugar. Use `/flow <nome>` para criar ou atualizar flows individuais.
