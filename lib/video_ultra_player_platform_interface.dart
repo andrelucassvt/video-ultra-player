@@ -3,6 +3,10 @@ import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 
+/// The platform interface contract for [NativeTimelinePlayer].
+///
+/// Platform implementations must extend this class and register themselves as
+/// [VideoUltraPlayerPlatform.instance] during plugin registration.
 abstract class VideoUltraPlayerPlatform extends PlatformInterface {
   VideoUltraPlayerPlatform() : super(token: _token);
 

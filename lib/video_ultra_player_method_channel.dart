@@ -5,6 +5,8 @@ import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
+/// The default [VideoUltraPlayerPlatform] implementation that communicates
+/// with native code via a Flutter [MethodChannel] and [EventChannel].
 class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   @visibleForTesting
   final methodChannel = const MethodChannel(

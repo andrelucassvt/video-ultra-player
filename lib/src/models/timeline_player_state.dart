@@ -1,7 +1,12 @@
 import 'package:flutter/foundation.dart';
 
+/// An immutable snapshot of [NativeTimelinePlayer] playback state.
+///
+/// Emitted on [NativeTimelinePlayer.stateStream] whenever the native layer
+/// reports a position update or a play/pause transition.
 @immutable
 class TimelinePlayerState {
+  /// Creates a fully-specified [TimelinePlayerState].
   const TimelinePlayerState({
     required this.globalPosition,
     required this.clipIndex,
@@ -10,6 +15,7 @@ class TimelinePlayerState {
     required this.totalDuration,
   });
 
+  /// A zero-position, paused state suitable as an initial value before [load].
   const TimelinePlayerState.initial()
     : globalPosition = Duration.zero,
       clipIndex = 0,
@@ -17,10 +23,19 @@ class TimelinePlayerState {
       isPlaying = false,
       totalDuration = Duration.zero;
 
+  /// Elapsed playback time measured from the very start of the timeline.
   final Duration globalPosition;
+
+  /// Zero-based index of the clip currently playing.
   final int clipIndex;
+
+  /// Elapsed playback time within the current clip.
   final Duration localPosition;
+
+  /// Whether the player is currently playing (`true`) or paused (`false`).
   final bool isPlaying;
+
+  /// Combined duration of all clips in the loaded timeline.
   final Duration totalDuration;
 
   factory TimelinePlayerState.fromMap(Map<dynamic, dynamic> map) {
