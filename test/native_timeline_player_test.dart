@@ -19,6 +19,13 @@ class MockVideoUltraPlayerPlatform
   int? lastClipIndex;
   double? lastAlignmentX;
   double? lastAlignmentY;
+  int? lastTrimStartMs;
+  int? lastTrimEndMs;
+  int? lastAtLocalPositionMs;
+  int? lastAtIndex;
+  Map<String, dynamic>? lastClipPayload;
+  int? lastFromIndex;
+  int? lastToIndex;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
   final exportProgressController =
       StreamController<TimelineExportProgress>.broadcast();
@@ -114,6 +121,84 @@ class MockVideoUltraPlayerPlatform
   Stream<TimelineExportProgress> exportProgress() {
     calls.add('exportProgress');
     return exportProgressController.stream;
+  }
+
+  @override
+  Future<String> exportCurrentTimeline(
+    int textureId, {
+    String? outputPath,
+  }) async {
+    calls.add('exportCurrentTimeline');
+    lastTextureId = textureId;
+    if (exportCompleter != null) {
+      return exportCompleter!.future;
+    }
+    return outputPath ?? '/tmp/exported_current.mp4';
+  }
+
+  @override
+  Future<void> trimClip(
+    int textureId,
+    int clipIndex, {
+    int? trimStartMs,
+    int? trimEndMs,
+  }) async {
+    calls.add('trimClip');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+    lastTrimStartMs = trimStartMs;
+    lastTrimEndMs = trimEndMs;
+  }
+
+  @override
+  Future<void> splitClip(
+    int textureId,
+    int clipIndex,
+    int atLocalPositionMs,
+  ) async {
+    calls.add('splitClip');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+    lastAtLocalPositionMs = atLocalPositionMs;
+  }
+
+  @override
+  Future<void> insertClip(
+    int textureId,
+    int atIndex,
+    Map<String, dynamic> clip,
+  ) async {
+    calls.add('insertClip');
+    lastTextureId = textureId;
+    lastAtIndex = atIndex;
+    lastClipPayload = clip;
+  }
+
+  @override
+  Future<void> removeClip(int textureId, int clipIndex) async {
+    calls.add('removeClip');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+  }
+
+  @override
+  Future<void> moveClip(int textureId, int fromIndex, int toIndex) async {
+    calls.add('moveClip');
+    lastTextureId = textureId;
+    lastFromIndex = fromIndex;
+    lastToIndex = toIndex;
+  }
+
+  @override
+  Future<void> replaceClip(
+    int textureId,
+    int clipIndex,
+    Map<String, dynamic> clip,
+  ) async {
+    calls.add('replaceClip');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+    lastClipPayload = clip;
   }
 }
 
@@ -365,5 +450,221 @@ void main() {
     expect(() => player.play(), throwsStateError);
     expect(() => player.seekToClip(0), throwsStateError);
     expect(() => player.stateStream, throwsStateError);
+  });
+
+  // ── Editing operations ────────────────────────────────────────────────
+
+  group('editing operations require load', () {
+    test('trimClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.trimClip(0), throwsStateError);
+    });
+
+    test('splitClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.splitClip(0, const Duration(seconds: 1)),
+        throwsStateError,
+      );
+    });
+
+    test('insertClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.insertClip(
+          0,
+          const TimelineClip(path: '/b.mp4', type: MediaType.video),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('removeClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.removeClip(0), throwsStateError);
+    });
+
+    test('moveClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.moveClip(0, 1), throwsStateError);
+    });
+
+    test('replaceClip throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.replaceClip(
+          0,
+          const TimelineClip(path: '/b.mp4', type: MediaType.video),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('exportCurrentTimeline throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.exportCurrentTimeline(), throwsStateError);
+    });
+  });
+
+  group('editing operations delegate to platform', () {
+    late NativeTimelinePlayer player;
+
+    setUp(() async {
+      player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+    });
+
+    test('trimClip forwards clipIndex and trim bounds', () async {
+      await player.trimClip(
+        2,
+        trimStart: const Duration(milliseconds: 500),
+        trimEnd: const Duration(seconds: 3),
+      );
+      expect(fakePlatform.calls, contains('trimClip'));
+      expect(fakePlatform.lastClipIndex, 2);
+      expect(fakePlatform.lastTrimStartMs, 500);
+      expect(fakePlatform.lastTrimEndMs, 3000);
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('trimClip with null args passes null to platform', () async {
+      await player.trimClip(1);
+      expect(fakePlatform.lastTrimStartMs, isNull);
+      expect(fakePlatform.lastTrimEndMs, isNull);
+    });
+
+    test('splitClip forwards clipIndex and position', () async {
+      await player.splitClip(1, const Duration(milliseconds: 1200));
+      expect(fakePlatform.calls, contains('splitClip'));
+      expect(fakePlatform.lastClipIndex, 1);
+      expect(fakePlatform.lastAtLocalPositionMs, 1200);
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('splitClip rejects atLocalPosition <= zero', () {
+      expect(
+        () => player.splitClip(0, Duration.zero),
+        throwsArgumentError,
+      );
+    });
+
+    test('insertClip forwards atIndex and serialized clip', () async {
+      const clip = TimelineClip(
+        path: '/b.mp4',
+        type: MediaType.image,
+        duration: Duration(seconds: 2),
+      );
+      await player.insertClip(1, clip);
+      expect(fakePlatform.calls, contains('insertClip'));
+      expect(fakePlatform.lastAtIndex, 1);
+      expect(fakePlatform.lastClipPayload?['path'], '/b.mp4');
+      expect(fakePlatform.lastClipPayload?['type'], 'image');
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('removeClip forwards clipIndex', () async {
+      await player.removeClip(2);
+      expect(fakePlatform.calls, contains('removeClip'));
+      expect(fakePlatform.lastClipIndex, 2);
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('moveClip forwards fromIndex and toIndex', () async {
+      await player.moveClip(0, 2);
+      expect(fakePlatform.calls, contains('moveClip'));
+      expect(fakePlatform.lastFromIndex, 0);
+      expect(fakePlatform.lastToIndex, 2);
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('moveClip is no-op when fromIndex == toIndex', () async {
+      await player.moveClip(1, 1);
+      expect(fakePlatform.calls, isNot(contains('moveClip')));
+    });
+
+    test('replaceClip forwards clipIndex and serialized clip', () async {
+      const clip = TimelineClip(
+        path: '/c.mp4',
+        type: MediaType.video,
+        trimStart: Duration(milliseconds: 500),
+      );
+      await player.replaceClip(0, clip);
+      expect(fakePlatform.calls, contains('replaceClip'));
+      expect(fakePlatform.lastClipIndex, 0);
+      expect(fakePlatform.lastClipPayload?['path'], '/c.mp4');
+      expect(fakePlatform.lastClipPayload?['trimStartMs'], 500);
+    });
+
+    test('exportCurrentTimeline delegates with textureId and outputPath', () async {
+      final path = await player.exportCurrentTimeline(outputPath: '/tmp/out.mp4');
+      expect(path, '/tmp/out.mp4');
+      expect(fakePlatform.calls, contains('exportCurrentTimeline'));
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('exportCurrentTimeline rejects concurrent export', () async {
+      fakePlatform.exportCompleter = Completer<String>();
+      final firstExport = player.exportCurrentTimeline();
+      expect(() => player.exportCurrentTimeline(), throwsStateError);
+      fakePlatform.exportCompleter!.complete('/tmp/out.mp4');
+      await firstExport;
+      fakePlatform.exportCompleter = null;
+    });
+  });
+
+  group('editing argument validation', () {
+    late NativeTimelinePlayer player;
+
+    setUp(() async {
+      player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+    });
+
+    test('trimClip rejects negative clipIndex', () {
+      expect(() => player.trimClip(-1), throwsArgumentError);
+    });
+
+    test('splitClip rejects negative clipIndex', () {
+      expect(
+        () => player.splitClip(-1, const Duration(seconds: 1)),
+        throwsArgumentError,
+      );
+    });
+
+    test('insertClip rejects negative atIndex', () {
+      expect(
+        () => player.insertClip(
+          -1,
+          const TimelineClip(path: '/b.mp4', type: MediaType.video),
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('removeClip rejects negative clipIndex', () {
+      expect(() => player.removeClip(-1), throwsArgumentError);
+    });
+
+    test('moveClip rejects negative fromIndex', () {
+      expect(() => player.moveClip(-1, 0), throwsArgumentError);
+    });
+
+    test('moveClip rejects negative toIndex', () {
+      expect(() => player.moveClip(0, -1), throwsArgumentError);
+    });
+
+    test('replaceClip rejects negative clipIndex', () {
+      expect(
+        () => player.replaceClip(
+          -1,
+          const TimelineClip(path: '/b.mp4', type: MediaType.video),
+        ),
+        throwsArgumentError,
+      );
+    });
   });
 }

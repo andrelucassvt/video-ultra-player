@@ -36,6 +36,17 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('exportTimeline() has not been implemented.');
   }
 
+  /// Exports the currently loaded (and edited) timeline without requiring
+  /// a separate clip list. Preview and export share the same native state.
+  Future<String> exportCurrentTimeline(
+    int textureId, {
+    String? outputPath,
+  }) {
+    throw UnimplementedError(
+      'exportCurrentTimeline() has not been implemented.',
+    );
+  }
+
   Future<void> play(int textureId) {
     throw UnimplementedError('play() has not been implemented.');
   }
@@ -75,5 +86,58 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
 
   Stream<TimelineExportProgress> exportProgress() {
     throw UnimplementedError('exportProgress() has not been implemented.');
+  }
+
+  // ── Editing operations ──────────────────────────────────────────────────
+
+  /// Adjusts the trim in/out points of the clip at [clipIndex].
+  ///
+  /// Pass `null` for [trimStartMs] or [trimEndMs] to leave the current value
+  /// unchanged.
+  Future<void> trimClip(
+    int textureId,
+    int clipIndex, {
+    int? trimStartMs,
+    int? trimEndMs,
+  }) {
+    throw UnimplementedError('trimClip() has not been implemented.');
+  }
+
+  /// Splits the clip at [clipIndex] at [atLocalPositionMs] milliseconds from
+  /// its trim-start, producing two clips in its place.
+  Future<void> splitClip(
+    int textureId,
+    int clipIndex,
+    int atLocalPositionMs,
+  ) {
+    throw UnimplementedError('splitClip() has not been implemented.');
+  }
+
+  /// Inserts [clip] at position [atIndex] in the timeline.
+  Future<void> insertClip(
+    int textureId,
+    int atIndex,
+    Map<String, dynamic> clip,
+  ) {
+    throw UnimplementedError('insertClip() has not been implemented.');
+  }
+
+  /// Removes the clip at [clipIndex] from the timeline.
+  Future<void> removeClip(int textureId, int clipIndex) {
+    throw UnimplementedError('removeClip() has not been implemented.');
+  }
+
+  /// Moves the clip at [fromIndex] to [toIndex].
+  Future<void> moveClip(int textureId, int fromIndex, int toIndex) {
+    throw UnimplementedError('moveClip() has not been implemented.');
+  }
+
+  /// Replaces the clip at [clipIndex] with [clip].
+  Future<void> replaceClip(
+    int textureId,
+    int clipIndex,
+    Map<String, dynamic> clip,
+  ) {
+    throw UnimplementedError('replaceClip() has not been implemented.');
   }
 }

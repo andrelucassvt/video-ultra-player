@@ -46,6 +46,8 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       load(call, result: result)
     case "exportTimeline":
       exportTimeline(call, result: result)
+    case "exportCurrentTimeline":
+      exportCurrentTimeline(call, result: result)
     case "play":
       guard let controller = controller(for: call, result: result) else { return }
       controller.play()
@@ -88,6 +90,80 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         y: CGFloat(y.doubleValue)
       )
       result(nil)
+    case "trimClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber
+      else { return }
+      let trimStartMs = (args["trimStartMs"] as? NSNumber)?.int64Value
+      let trimEndMs = (args["trimEndMs"] as? NSNumber)?.int64Value
+      do {
+        try controller.trimClip(at: clipIndex.intValue, trimStartMs: trimStartMs, trimEndMs: trimEndMs)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "trimClip failed", details: "\(error)"))
+      }
+    case "splitClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber,
+            let atLocalPositionMs = args["atLocalPositionMs"] as? NSNumber
+      else { return }
+      do {
+        try controller.splitClip(at: clipIndex.intValue, atLocalMs: atLocalPositionMs.int64Value)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "splitClip failed", details: "\(error)"))
+      }
+    case "insertClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipDict = args["clip"] as? [String: Any],
+            let clip = TimelineClipDescriptor(dictionary: clipDict),
+            let atIndex = args["atIndex"] as? NSNumber
+      else { return }
+      do {
+        try controller.insertClip(clip, at: atIndex.intValue)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "insertClip failed", details: "\(error)"))
+      }
+    case "removeClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber
+      else { return }
+      do {
+        try controller.removeClip(at: clipIndex.intValue)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "removeClip failed", details: "\(error)"))
+      }
+    case "moveClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let fromIndex = args["fromIndex"] as? NSNumber,
+            let toIndex = args["toIndex"] as? NSNumber
+      else { return }
+      do {
+        try controller.moveClip(from: fromIndex.intValue, to: toIndex.intValue)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "moveClip failed", details: "\(error)"))
+      }
+    case "replaceClip":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber,
+            let clipDict = args["clip"] as? [String: Any],
+            let clip = TimelineClipDescriptor(dictionary: clipDict)
+      else { return }
+      do {
+        try controller.replaceClip(at: clipIndex.intValue, with: clip)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "replaceClip failed", details: "\(error)"))
+      }
     case "dispose":
       guard let textureId = textureId(from: call.arguments, result: result),
             let controller = controllers.removeValue(forKey: textureId)
@@ -169,75 +245,15 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     let composition = TimelineComposition()
 
     do {
-      try FileManager.default.createDirectory(
-        at: outputURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      if FileManager.default.fileExists(atPath: outputURL.path) {
-        try FileManager.default.removeItem(at: outputURL)
-      }
+      try prepareOutputDirectory(at: outputURL)
 
       let exportAsset = try composition.buildExportAsset(clips: clips, config: config)
-      guard
-        let exporter = AVAssetExportSession(
-          asset: exportAsset.asset,
-          presetName: AVAssetExportPresetHighestQuality
-        )
-      else {
-        throw TimelineCompositionError.cannotCreateExporter
-      }
-
-      exporter.outputURL = outputURL
-      exporter.outputFileType = .mp4
-      exporter.shouldOptimizeForNetworkUse = true
-      exporter.videoComposition = exportAsset.videoComposition
-      exporter.audioMix = exportAsset.audioMix
-      exportProgressHandler.emit(progress: 0, state: "exporting")
-      let progressTimer = Timer.scheduledTimer(
-        withTimeInterval: 0.1,
-        repeats: true
-      ) { [weak exporter, weak exportProgressHandler] _ in
-        guard let exporter else { return }
-        exportProgressHandler?.emit(
-          progress: Double(exporter.progress),
-          state: "exporting"
-        )
-      }
-      exporter.exportAsynchronously {
-        DispatchQueue.main.async {
-          progressTimer.invalidate()
-          composition.dispose()
-          switch exporter.status {
-          case .completed:
-            self.exportProgressHandler.emit(progress: 1, state: "completed")
-            result(outputURL.path)
-          case .failed, .cancelled:
-            self.exportProgressHandler.emit(
-              progress: Double(exporter.progress),
-              state: "failed"
-            )
-            result(
-              FlutterError(
-                code: "export_failed",
-                message: "Unable to export native timeline composition.",
-                details: exporter.error?.localizedDescription
-              )
-            )
-          default:
-            self.exportProgressHandler.emit(
-              progress: Double(exporter.progress),
-              state: "failed"
-            )
-            result(
-              FlutterError(
-                code: "export_failed",
-                message: "Timeline export ended in unexpected state.",
-                details: "\(exporter.status.rawValue)"
-              )
-            )
-          }
-        }
-      }
+      runExportSession(
+        asset: exportAsset,
+        outputURL: outputURL,
+        onDispose: { composition.dispose() },
+        result: result
+      )
     } catch {
       composition.dispose()
       exportProgressHandler.emit(progress: 0, state: "failed")
@@ -248,6 +264,109 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
           details: "\(error)"
         )
       )
+    }
+  }
+
+  private func exportCurrentTimeline(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard let controller = controller(for: call, result: result) else { return }
+    let outputPath = (call.arguments as? [String: Any])?["outputPath"] as? String
+    let outputURL = exportOutputURL(outputPath: outputPath)
+
+    do {
+      try prepareOutputDirectory(at: outputURL)
+
+      let exportAsset = try controller.buildCurrentExportAsset()
+      runExportSession(asset: exportAsset, outputURL: outputURL, onDispose: nil, result: result)
+    } catch {
+      exportProgressHandler.emit(progress: 0, state: "failed")
+      result(
+        FlutterError(
+          code: "export_failed",
+          message: "Unable to export current timeline.",
+          details: "\(error)"
+        )
+      )
+    }
+  }
+
+  private func runExportSession(
+    asset: TimelineExportAsset,
+    outputURL: URL,
+    onDispose: (() -> Void)?,
+    result: @escaping FlutterResult
+  ) {
+    guard
+      let exporter = AVAssetExportSession(
+        asset: asset.asset,
+        presetName: AVAssetExportPresetHighestQuality
+      )
+    else {
+      onDispose?()
+      exportProgressHandler.emit(progress: 0, state: "failed")
+      result(
+        FlutterError(
+          code: "export_failed",
+          message: "Unable to create export session.",
+          details: nil
+        )
+      )
+      return
+    }
+
+    exporter.outputURL = outputURL
+    exporter.outputFileType = .mp4
+    exporter.shouldOptimizeForNetworkUse = true
+    exporter.videoComposition = asset.videoComposition
+    exporter.audioMix = asset.audioMix
+    exportProgressHandler.emit(progress: 0, state: "exporting")
+
+    let progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) {
+      [weak exporter, weak exportProgressHandler] _ in
+      guard let exporter else { return }
+      exportProgressHandler?.emit(progress: Double(exporter.progress), state: "exporting")
+    }
+
+    exporter.exportAsynchronously {
+      DispatchQueue.main.async {
+        progressTimer.invalidate()
+        onDispose?()
+        switch exporter.status {
+        case .completed:
+          self.exportProgressHandler.emit(progress: 1, state: "completed")
+          result(outputURL.path)
+        case .failed, .cancelled:
+          self.exportProgressHandler.emit(progress: Double(exporter.progress), state: "failed")
+          result(
+            FlutterError(
+              code: "export_failed",
+              message: "Export failed or was cancelled.",
+              details: exporter.error?.localizedDescription
+            )
+          )
+        default:
+          self.exportProgressHandler.emit(progress: Double(exporter.progress), state: "failed")
+          result(
+            FlutterError(
+              code: "export_failed",
+              message: "Timeline export ended in unexpected state.",
+              details: "\(exporter.status.rawValue)"
+            )
+          )
+        }
+      }
+    }
+  }
+
+  private func prepareOutputDirectory(at url: URL) throws {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    if FileManager.default.fileExists(atPath: url.path) {
+      try FileManager.default.removeItem(at: url)
     }
   }
 
@@ -350,6 +469,7 @@ private final class TimelinePlayerController {
   private let texture: TimelineTexture
   private let textureRegistry: FlutterTextureRegistry
   private var timeObserver: Any?
+  private var currentConfig: TimelineCompositionConfig
 
   init(
     clips: [TimelineClipDescriptor],
@@ -357,6 +477,7 @@ private final class TimelinePlayerController {
     textureRegistry: FlutterTextureRegistry
   ) throws {
     self.textureRegistry = textureRegistry
+    self.currentConfig = config
     let playerItem = try composition.build(clips: clips, config: config)
     player = AVPlayer(playerItem: playerItem)
     texture = TimelineTexture(
@@ -368,6 +489,8 @@ private final class TimelinePlayerController {
     texture.start()
     addObservers()
   }
+
+  // MARK: - Playback
 
   func play() {
     player.play()
@@ -420,6 +543,50 @@ private final class TimelinePlayerController {
     emitState()
   }
 
+  // MARK: - Editing
+
+  func trimClip(at index: Int, trimStartMs: Int64?, trimEndMs: Int64?) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.trimClip(at: index, trimStartMs: trimStartMs, trimEndMs: trimEndMs)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func splitClip(at index: Int, atLocalMs: Int64) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.splitClip(at: index, atLocalMs: atLocalMs)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func insertClip(_ clip: TimelineClipDescriptor, at index: Int) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.insertClip(clip, at: index)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func removeClip(at index: Int) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.removeClip(at: index)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func moveClip(from: Int, to: Int) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.moveClip(from: from, to: to)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func replaceClip(at index: Int, with clip: TimelineClipDescriptor) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.replaceClip(at: index, with: clip)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func buildCurrentExportAsset() throws -> TimelineExportAsset {
+    return try composition.buildCurrentExportAsset(config: currentConfig)
+  }
+
+  // MARK: - State
+
   func emitState() {
     guard let eventSink else {
       return
@@ -433,6 +600,7 @@ private final class TimelinePlayerController {
       "localPosition": segmentState.localPosition.timelineMilliseconds,
       "isPlaying": player.rate != 0,
       "totalDuration": composition.totalDuration.timelineMilliseconds,
+      "clipDurationsMs": composition.clipDurationsMs,
     ])
   }
 
@@ -445,6 +613,41 @@ private final class TimelinePlayerController {
     texture.dispose()
     textureRegistry.unregisterTexture(textureId)
     composition.dispose()
+  }
+
+  // MARK: - Private
+
+  private func rebuildPreservingPlayback(positionMs: Int64) throws {
+    let wasPlaying = player.rate != 0
+    let newItem = try composition.rebuildAsPlayerItem(config: currentConfig)
+
+    NotificationCenter.default.removeObserver(
+      self,
+      name: .AVPlayerItemDidPlayToEndTime,
+      object: player.currentItem
+    )
+
+    // AVPlayerItemVideoOutput can only belong to one item; adding it to newItem
+    // automatically detaches it from the old item.
+    texture.replacePlayerItem(newItem)
+    player.replaceCurrentItem(with: newItem)
+
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(didPlayToEnd),
+      name: .AVPlayerItemDidPlayToEndTime,
+      object: newItem
+    )
+
+    let position = CMTime(value: max(positionMs, 0), timescale: 1_000)
+    player.seek(
+      to: position,
+      toleranceBefore: .zero,
+      toleranceAfter: .zero
+    ) { [weak self] _ in
+      if wasPlaying { self?.player.play() }
+      self?.emitState()
+    }
   }
 
   private func addObservers() {

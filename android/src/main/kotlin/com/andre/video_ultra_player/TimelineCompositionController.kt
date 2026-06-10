@@ -152,19 +152,79 @@ internal class TimelineCompositionController(
             alignmentY = y.coerceIn(-1.0, 1.0)
         )
 
-        val currentPlayer = player ?: return
-        val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
-        val wasPlaying = currentPlayer.isPlaying
-        // Media3 effects are immutable, so live pan/crop is applied by rebuilding the Composition.
-        currentPlayer.setComposition(
-            buildTimelineComposition(clips, renderSize),
-            positionMs.coerceIn(0L, totalDurationMs)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    // MARK: - Editing
+
+    fun trimClip(clipIndex: Int, trimStartMs: Long?, trimEndMs: Long?) {
+        if (clipIndex !in clips.indices) return
+        var clip = clips[clipIndex]
+        if (trimStartMs != null) clip = clip.copy(trimStartMs = trimStartMs)
+        if (trimEndMs != null) clip = clip.copy(trimEndMs = trimEndMs)
+        clips[clipIndex] = clip
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun splitClip(clipIndex: Int, atLocalPositionMs: Long) {
+        if (clipIndex !in clips.indices || atLocalPositionMs <= 0) return
+        val clip = clips[clipIndex]
+        val effectiveTrimStart = clip.trimStartMs ?: 0L
+        val absSplitMs = effectiveTrimStart + atLocalPositionMs
+
+        val clipA = clip.copy(
+            trimStartMs = if (effectiveTrimStart == 0L) null else effectiveTrimStart,
+            trimEndMs = absSplitMs,
+            transitionToNextMs = null // hard cut at split boundary
         )
-        currentPlayer.prepare()
-        if (wasPlaying) {
-            currentPlayer.play()
+        val clipB = clip.copy(
+            trimStartMs = absSplitMs,
+            trimEndMs = clip.trimEndMs ?: (
+                if (clip.sourceDurationMs > 0) clip.sourceDurationMs else null
+            )
+        )
+
+        clips.removeAt(clipIndex)
+        clips.add(clipIndex, clipB)
+        clips.add(clipIndex, clipA)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun insertClip(atIndex: Int, rawClip: Map<*, *>) {
+        val resolved = resolveClip(context, TimelineClip.from(rawClip))
+        val safeIndex = atIndex.coerceIn(0, clips.size)
+        clips.add(safeIndex, resolved)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun removeClip(clipIndex: Int) {
+        if (clipIndex !in clips.indices) return
+        clips.removeAt(clipIndex)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun moveClip(fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in clips.indices || toIndex !in clips.indices || fromIndex == toIndex) return
+        val clip = clips.removeAt(fromIndex)
+        clips.add(toIndex.coerceIn(0, clips.size), clip)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun replaceClip(clipIndex: Int, rawClip: Map<*, *>) {
+        if (clipIndex !in clips.indices) return
+        clips[clipIndex] = resolveClip(context, TimelineClip.from(rawClip))
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun startExportCurrentTimeline(
+        outputPath: String?,
+        callback: TimelineExportCallback
+    ): TimelineCompositionExporter {
+        val currentClips = clips.toList()
+        val currentRenderSize = renderSize
+        return TimelineCompositionExporter(context).also { exporter ->
+            exporter.exportFromClips(currentClips, currentRenderSize, outputPath, callback)
         }
-        emitState()
     }
 
     fun dispose() {
@@ -189,6 +249,22 @@ internal class TimelineCompositionController(
         totalDurationMs = startMs
     }
 
+    private fun rebuildCompositionPreservingPlayback() {
+        rebuildSegments()
+        val currentPlayer = player ?: return
+        val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
+        val wasPlaying = currentPlayer.isPlaying
+        currentPlayer.setComposition(
+            buildTimelineComposition(clips, renderSize),
+            positionMs.coerceIn(0L, totalDurationMs)
+        )
+        currentPlayer.prepare()
+        if (wasPlaying) {
+            currentPlayer.play()
+        }
+        emitState()
+    }
+
     private fun emitState() {
         val currentPlayer = player
         val positionMs = currentPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
@@ -202,7 +278,8 @@ internal class TimelineCompositionController(
                     segment?.let { positionMs - it.startMs } ?: 0L
                     ).coerceAtLeast(0L),
                 "isPlaying" to (currentPlayer?.isPlaying == true),
-                "totalDuration" to totalDurationMs
+                "totalDuration" to totalDurationMs,
+                "clipDurationsMs" to segments.map { it.durationMs }
             )
         )
     }
@@ -259,18 +336,27 @@ internal class TimelineCompositionExporter(
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
-        progressCallback = callback
-        callback.onProgress(0.0, "exporting")
         val config = TimelineCompositionConfig.from(rawConfig)
         val parsedClips = parseTimelineClips(context, rawClips)
         val outputSize = outputSizeFor(config, parsedClips.first())
+        exportFromClips(parsedClips, outputSize, outputPath, callback)
+    }
+
+    fun exportFromClips(
+        clips: List<TimelineClip>,
+        renderSize: TimelineRenderSize,
+        outputPath: String?,
+        callback: TimelineExportCallback
+    ) {
+        progressCallback = callback
+        callback.onProgress(0.0, "exporting")
         val outputFile = exportOutputFile(outputPath)
         outputFile.parentFile?.mkdirs()
         if (outputFile.exists()) {
             outputFile.delete()
         }
 
-        val composition = buildTimelineComposition(parsedClips, outputSize)
+        val composition = buildTimelineComposition(clips, renderSize)
         val exportTransformer = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -358,6 +444,11 @@ private fun editedMediaItemFor(
 
     if (clip.type == TimelineMediaType.IMAGE) {
         mediaItemBuilder.setImageDurationMs(clip.resolvedDurationMs)
+    } else if (clip.trimStartMs != null || clip.trimEndMs != null) {
+        val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
+        clip.trimStartMs?.let { clippingBuilder.setStartPositionMs(it) }
+        clip.trimEndMs?.let { clippingBuilder.setEndPositionMs(it) }
+        mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
     }
 
     val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
@@ -416,27 +507,23 @@ private fun parseTimelineClips(
     return rawClips.map { raw ->
         TimelineClip.from(raw as? Map<*, *> ?: error("Invalid timeline clip."))
     }.map { clip ->
-        val sourceSize = resolveSourceSize(context, clip)
-        clip.copy(
-            resolvedDurationMs = resolveDurationMs(context, clip),
-            sourceWidth = sourceSize.width,
-            sourceHeight = sourceSize.height
-        )
+        resolveClip(context, clip)
     }
 }
 
-private fun resolveDurationMs(
-    context: Context,
-    clip: TimelineClip
-): Long {
-    clip.durationMs?.let {
-        return max(it, 1L)
-    }
+private fun resolveClip(context: Context, clip: TimelineClip): TimelineClip {
+    val sourceSize = resolveSourceSize(context, clip)
+    val sourceDurationMs = if (clip.type == TimelineMediaType.VIDEO) {
+        resolveSourceDurationMs(context, clip)
+    } else 0L
+    return clip.copy(
+        sourceDurationMs = sourceDurationMs,
+        sourceWidth = sourceSize.width,
+        sourceHeight = sourceSize.height
+    )
+}
 
-    if (clip.type == TimelineMediaType.IMAGE) {
-        return DEFAULT_IMAGE_DURATION_MS
-    }
-
+private fun resolveSourceDurationMs(context: Context, clip: TimelineClip): Long {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
@@ -543,22 +630,39 @@ private data class TimelineCompositionConfig(
     }
 }
 
-private data class TimelineRenderSize(
+internal data class TimelineRenderSize(
     val width: Int,
     val height: Int
 )
 
-private data class TimelineClip(
+internal data class TimelineClip(
     val path: String,
     val type: TimelineMediaType,
     val durationMs: Long?,
     val alignmentX: Double,
     val alignmentY: Double,
     val scale: Double,
-    var resolvedDurationMs: Long = 0L,
+    val trimStartMs: Long? = null,
+    val trimEndMs: Long? = null,
+    val transitionToNextMs: Long? = null,
+    val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = DEFAULT_WIDTH,
     val sourceHeight: Int = DEFAULT_HEIGHT
 ) {
+    val resolvedDurationMs: Long
+        get() {
+            if (type == TimelineMediaType.IMAGE) {
+                return max(durationMs ?: DEFAULT_IMAGE_DURATION_MS, 1L)
+            }
+            val effectiveTrimStart = trimStartMs ?: 0L
+            if (trimEndMs != null) {
+                return max(trimEndMs - effectiveTrimStart, 1L)
+            }
+            val effectiveSourceEnd = if (sourceDurationMs > 0) sourceDurationMs
+            else (durationMs ?: DEFAULT_IMAGE_DURATION_MS)
+            return max(effectiveSourceEnd - effectiveTrimStart, 1L)
+        }
+
     companion object {
         fun from(map: Map<*, *>): TimelineClip {
             val path = map["path"] as? String ?: error("Clip path is required.")
@@ -571,6 +675,10 @@ private data class TimelineClip(
             val alignmentX = (alignment?.get("x") as? Number)?.toDouble() ?: 0.0
             val alignmentY = (alignment?.get("y") as? Number)?.toDouble() ?: 0.0
             val scale = (map["scale"] as? Number)?.toDouble() ?: 1.0
+            val trimStartMs = (map["trimStartMs"] as? Number)?.toLong()
+            val trimEndMs = (map["trimEndMs"] as? Number)?.toLong()
+            val transitionToNextMs = (map["transitionToNext"] as? Map<*, *>)
+                ?.let { (it["durationMs"] as? Number)?.toLong() }
 
             return TimelineClip(
                 path = path,
@@ -578,13 +686,16 @@ private data class TimelineClip(
                 durationMs = durationMs,
                 alignmentX = alignmentX,
                 alignmentY = alignmentY,
-                scale = max(scale, 0.01)
+                scale = max(scale, 0.01),
+                trimStartMs = trimStartMs,
+                trimEndMs = trimEndMs,
+                transitionToNextMs = transitionToNextMs
             )
         }
     }
 }
 
-private enum class TimelineMediaType {
+internal enum class TimelineMediaType {
     VIDEO,
     IMAGE
 }

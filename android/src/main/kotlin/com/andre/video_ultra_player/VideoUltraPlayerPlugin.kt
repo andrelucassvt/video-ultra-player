@@ -97,6 +97,77 @@ class VideoUltraPlayerPlugin :
                 controller.setClipAlignment(clipIndex, x, y)
                 result.success(null)
             }
+            "trimClip" -> withController(call, result) { controller ->
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                if (clipIndex == null) {
+                    result.error("invalid_arguments", "Expected clipIndex.", null)
+                    return@withController
+                }
+                val trimStartMs = numberArg(call.arguments, "trimStartMs")?.toLong()
+                val trimEndMs = numberArg(call.arguments, "trimEndMs")?.toLong()
+                controller.trimClip(clipIndex, trimStartMs, trimEndMs)
+                result.success(null)
+            }
+            "splitClip" -> withController(call, result) { controller ->
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                val atLocalPositionMs = numberArg(call.arguments, "atLocalPositionMs")?.toLong()
+                if (clipIndex == null || atLocalPositionMs == null) {
+                    result.error("invalid_arguments", "Expected clipIndex and atLocalPositionMs.", null)
+                    return@withController
+                }
+                controller.splitClip(clipIndex, atLocalPositionMs)
+                result.success(null)
+            }
+            "insertClip" -> withController(call, result) { controller ->
+                val args = call.arguments as? Map<*, *>
+                val atIndex = numberArg(call.arguments, "atIndex")?.toInt()
+                val clipDict = args?.get("clip") as? Map<*, *>
+                if (atIndex == null || clipDict == null) {
+                    result.error("invalid_arguments", "Expected atIndex and clip.", null)
+                    return@withController
+                }
+                try {
+                    controller.insertClip(atIndex, clipDict)
+                    result.success(null)
+                } catch (e: Throwable) {
+                    result.error("edit_failed", "insertClip failed: ${e.message}", null)
+                }
+            }
+            "removeClip" -> withController(call, result) { controller ->
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                if (clipIndex == null) {
+                    result.error("invalid_arguments", "Expected clipIndex.", null)
+                    return@withController
+                }
+                controller.removeClip(clipIndex)
+                result.success(null)
+            }
+            "moveClip" -> withController(call, result) { controller ->
+                val fromIndex = numberArg(call.arguments, "fromIndex")?.toInt()
+                val toIndex = numberArg(call.arguments, "toIndex")?.toInt()
+                if (fromIndex == null || toIndex == null) {
+                    result.error("invalid_arguments", "Expected fromIndex and toIndex.", null)
+                    return@withController
+                }
+                controller.moveClip(fromIndex, toIndex)
+                result.success(null)
+            }
+            "replaceClip" -> withController(call, result) { controller ->
+                val args = call.arguments as? Map<*, *>
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                val clipDict = args?.get("clip") as? Map<*, *>
+                if (clipIndex == null || clipDict == null) {
+                    result.error("invalid_arguments", "Expected clipIndex and clip.", null)
+                    return@withController
+                }
+                try {
+                    controller.replaceClip(clipIndex, clipDict)
+                    result.success(null)
+                } catch (e: Throwable) {
+                    result.error("edit_failed", "replaceClip failed: ${e.message}", null)
+                }
+            }
+            "exportCurrentTimeline" -> exportCurrentTimeline(call, result)
             "dispose" -> {
                 val textureId = textureId(call.arguments)
                 if (textureId == null) {
@@ -239,6 +310,46 @@ class VideoUltraPlayerPlugin :
                 error.message
             )
         }
+    }
+
+    private fun exportCurrentTimeline(call: MethodCall, result: Result) {
+        val textureId = textureId(call.arguments)
+        if (textureId == null) {
+            result.error("invalid_arguments", "Expected textureId.", null)
+            return
+        }
+        val controller = controllers[textureId]
+        if (controller == null) {
+            result.error("not_found", "No native timeline player exists for textureId $textureId.", null)
+            return
+        }
+
+        val args = call.arguments as? Map<*, *>
+        val outputPath = args?.get("outputPath") as? String
+
+        // exporterRef allows the callback to remove itself from activeExporters
+        // even though the exporter is created inside startExportCurrentTimeline.
+        var exporterRef: TimelineCompositionExporter? = null
+        val exporter = controller.startExportCurrentTimeline(
+            outputPath = outputPath,
+            callback = object : TimelineExportCallback {
+                override fun onProgress(progress: Double, state: String) {
+                    exportProgressHandler.emit(progress, state)
+                }
+
+                override fun onCompleted(outputPath: String) {
+                    exporterRef?.let { activeExporters.remove(it) }
+                    result.success(outputPath)
+                }
+
+                override fun onError(error: Throwable) {
+                    exporterRef?.let { activeExporters.remove(it) }
+                    result.error("export_failed", "Unable to export current timeline.", error.message)
+                }
+            }
+        )
+        exporterRef = exporter
+        activeExporters.add(exporter)
     }
 
     private fun withController(

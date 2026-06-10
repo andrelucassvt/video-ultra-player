@@ -28,6 +28,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
   String _timelineSource = 'Sample timeline';
   bool _loading = false;
   bool _exporting = false;
+  bool _editBusy = false;
   String? _error;
   String? _exportPath;
   double? _scrubValue;
@@ -193,10 +194,8 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     }
   }
 
-  Future<void> _exportTimeline() async {
-    if (_loading || _exporting || _clips.isEmpty) {
-      return;
-    }
+  Future<void> _exportCurrentTimeline() async {
+    if (_loading || _exporting || _textureId == null) return;
 
     setState(() {
       _exporting = true;
@@ -215,33 +214,87 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
 
       final outputPath =
           '${directory.path}/timeline_${DateTime.now().millisecondsSinceEpoch}.mp4';
-      final exportFuture = _player.exportTimeline(
-        _clips,
-        outputPath: outputPath,
-        config: _compositionConfig,
-      );
+      final exportFuture = _player.exportCurrentTimeline(outputPath: outputPath);
       setState(() {
         _exportProgressStream = _player.exportProgress;
       });
       final exportedPath = await exportFuture;
 
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() {
         _exportPath = exportedPath;
         _exporting = false;
       });
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() {
         _error = error.toString();
         _exporting = false;
       });
+    }
+  }
+
+  Future<void> _splitAtPlayhead(TimelinePlayerState state) async {
+    if (_editBusy || _textureId == null) return;
+    if (state.localPosition <= Duration.zero) return;
+    setState(() => _editBusy = true);
+    try {
+      await _player.splitClip(state.clipIndex, state.localPosition);
+      if (mounted) setState(() => _clipCount = _clipCount + 1);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _editBusy = false);
+    }
+  }
+
+  Future<void> _removeCurrentClip(int clipIndex, int totalClips) async {
+    if (_editBusy || _textureId == null || totalClips <= 1) return;
+    setState(() => _editBusy = true);
+    try {
+      await _player.removeClip(clipIndex);
+      if (mounted) setState(() => _clipCount = totalClips - 1);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _editBusy = false);
+    }
+  }
+
+  Future<void> _moveClip(int fromIndex, int toIndex) async {
+    if (_editBusy || _textureId == null) return;
+    setState(() => _editBusy = true);
+    try {
+      await _player.moveClip(fromIndex, toIndex);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _editBusy = false);
+    }
+  }
+
+  Future<void> _trimIn(int clipIndex, Duration localPosition) async {
+    if (_editBusy || _textureId == null) return;
+    if (localPosition <= Duration.zero) return;
+    setState(() => _editBusy = true);
+    try {
+      await _player.trimClip(clipIndex, trimStart: localPosition);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _editBusy = false);
+    }
+  }
+
+  Future<void> _trimOut(int clipIndex, Duration localPosition) async {
+    if (_editBusy || _textureId == null) return;
+    setState(() => _editBusy = true);
+    try {
+      await _player.trimClip(clipIndex, trimEnd: localPosition);
+    } catch (error) {
+      if (mounted) setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _editBusy = false);
     }
   }
 
@@ -459,25 +512,97 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                           ),
                         ],
                       ),
-                      if (_clipCount > 1 && _textureId != null) ...[
+                      if (_textureId != null) ...[
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 4,
-                          children: [
-                            for (int i = 0; i < _clipCount; i++)
-                              ChoiceChip(
-                                label: Text('Clip ${i + 1}'),
-                                selected: state.clipIndex == i,
-                                onSelected: (_) {
-                                  setState(() {
-                                    _scrubValue = null;
-                                  });
-                                  _player.seekToClip(i);
-                                },
+                        Builder(builder: (context) {
+                          final liveCount = state.clipDurations.isNotEmpty
+                              ? state.clipDurations.length
+                              : _clipCount;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (liveCount > 1)
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 4,
+                                  children: [
+                                    for (int i = 0; i < liveCount; i++)
+                                      ChoiceChip(
+                                        label: Text('Clip ${i + 1}'),
+                                        selected: state.clipIndex == i,
+                                        onSelected: (_) {
+                                          setState(() => _scrubValue = null);
+                                          _player.seekToClip(i);
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  _EditButton(
+                                    icon: Icons.content_cut,
+                                    label: 'Split',
+                                    enabled: !_editBusy &&
+                                        state.localPosition > Duration.zero,
+                                    onPressed: () =>
+                                        _splitAtPlayhead(state),
+                                  ),
+                                  _EditButton(
+                                    icon: Icons.delete_outline,
+                                    label: 'Remove',
+                                    enabled: !_editBusy && liveCount > 1,
+                                    onPressed: () => _removeCurrentClip(
+                                      state.clipIndex,
+                                      liveCount,
+                                    ),
+                                  ),
+                                  _EditButton(
+                                    icon: Icons.arrow_back,
+                                    label: 'Move ◀',
+                                    enabled:
+                                        !_editBusy && state.clipIndex > 0,
+                                    onPressed: () => _moveClip(
+                                      state.clipIndex,
+                                      state.clipIndex - 1,
+                                    ),
+                                  ),
+                                  _EditButton(
+                                    icon: Icons.arrow_forward,
+                                    label: 'Move ▶',
+                                    enabled: !_editBusy &&
+                                        state.clipIndex < liveCount - 1,
+                                    onPressed: () => _moveClip(
+                                      state.clipIndex,
+                                      state.clipIndex + 1,
+                                    ),
+                                  ),
+                                  _EditButton(
+                                    icon: Icons.first_page,
+                                    label: 'Trim in',
+                                    enabled: !_editBusy &&
+                                        state.localPosition > Duration.zero,
+                                    onPressed: () => _trimIn(
+                                      state.clipIndex,
+                                      state.localPosition,
+                                    ),
+                                  ),
+                                  _EditButton(
+                                    icon: Icons.last_page,
+                                    label: 'Trim out',
+                                    enabled: !_editBusy,
+                                    onPressed: () => _trimOut(
+                                      state.clipIndex,
+                                      state.localPosition,
+                                    ),
+                                  ),
+                                ],
                               ),
-                          ],
-                        ),
+                            ],
+                          );
+                        }),
                       ],
                       const SizedBox(height: 12),
                       Wrap(
@@ -500,9 +625,9 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                             ),
                           ),
                           FilledButton.icon(
-                            onPressed: _loading || _exporting || _clips.isEmpty
+                            onPressed: _loading || _exporting || _textureId == null
                                 ? null
-                                : _exportTimeline,
+                                : _exportCurrentTimeline,
                             icon: _exporting
                                 ? const SizedBox.square(
                                     dimension: 18,
@@ -516,7 +641,7 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
                             ),
                           ),
                           Text(
-                            'Clip ${state.clipIndex + 1} of $_clipCount - $_timelineSource',
+                            'Clip ${state.clipIndex + 1} of ${state.clipDurations.isNotEmpty ? state.clipDurations.length : _clipCount} - $_timelineSource',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
@@ -582,5 +707,32 @@ class _TimelineDemoAppState extends State<TimelineDemoApp> {
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
     final milliseconds = duration.inMilliseconds.remainder(1000) ~/ 100;
     return '$minutes:$seconds.$milliseconds';
+  }
+}
+
+class _EditButton extends StatelessWidget {
+  const _EditButton({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: enabled ? onPressed : null,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      ),
+    );
   }
 }

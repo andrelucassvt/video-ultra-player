@@ -26,6 +26,13 @@ final class TimelineTexture: NSObject, FlutterTexture {
     displayLink?.add(to: .main, forMode: .common)
   }
 
+  /// Detaches the video output from the old player item and attaches it to
+  /// [newItem]. Call this before `AVPlayer.replaceCurrentItem` so frames from
+  /// the new composition are picked up immediately.
+  func replacePlayerItem(_ newItem: AVPlayerItem) {
+    newItem.add(videoOutput)
+  }
+
   func dispose() {
     displayLink?.invalidate()
     displayLink = nil

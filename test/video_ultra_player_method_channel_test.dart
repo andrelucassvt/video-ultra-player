@@ -163,4 +163,138 @@ void main() {
     expect(state.isPlaying, isTrue);
     expect(state.totalDuration, const Duration(milliseconds: 3000));
   });
+
+  test('TimelinePlayerState.fromMap parses clipDurationsMs', () {
+    final state = TimelinePlayerState.fromMap({
+      'globalPosition': 0,
+      'clipIndex': 0,
+      'localPosition': 0,
+      'isPlaying': false,
+      'totalDuration': 5000,
+      'clipDurationsMs': [2000, 3000],
+    });
+
+    expect(state.clipDurations, [
+      const Duration(milliseconds: 2000),
+      const Duration(milliseconds: 3000),
+    ]);
+  });
+
+  test('TimelinePlayerState.fromMap defaults clipDurations to empty', () {
+    final state = TimelinePlayerState.fromMap({
+      'globalPosition': 0,
+      'clipIndex': 0,
+      'localPosition': 0,
+      'isPlaying': false,
+      'totalDuration': 0,
+    });
+    expect(state.clipDurations, isEmpty);
+  });
+
+  group('editing method channel payloads', () {
+    setUp(() {
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+            calls.add(methodCall);
+            return null;
+          });
+    });
+
+    test('trimClip sends correct payload', () async {
+      await platform.trimClip(77, 2, trimStartMs: 500, trimEndMs: 3000);
+      expect(calls.single.method, 'trimClip');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'clipIndex': 2,
+        'trimStartMs': 500,
+        'trimEndMs': 3000,
+      });
+    });
+
+    test('trimClip sends null trim bounds when not specified', () async {
+      await platform.trimClip(77, 2);
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'clipIndex': 2,
+        'trimStartMs': null,
+        'trimEndMs': null,
+      });
+    });
+
+    test('splitClip sends correct payload', () async {
+      await platform.splitClip(77, 1, 1200);
+      expect(calls.single.method, 'splitClip');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'clipIndex': 1,
+        'atLocalPositionMs': 1200,
+      });
+    });
+
+    test('insertClip sends correct payload', () async {
+      await platform.insertClip(
+        77,
+        2,
+        <String, dynamic>{'path': '/b.mp4', 'type': 'video'},
+      );
+      expect(calls.single.method, 'insertClip');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'atIndex': 2,
+        'clip': {'path': '/b.mp4', 'type': 'video'},
+      });
+    });
+
+    test('removeClip sends correct payload', () async {
+      await platform.removeClip(77, 1);
+      expect(calls.single.method, 'removeClip');
+      expect(calls.single.arguments, {'textureId': 77, 'clipIndex': 1});
+    });
+
+    test('moveClip sends correct payload', () async {
+      await platform.moveClip(77, 0, 2);
+      expect(calls.single.method, 'moveClip');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'fromIndex': 0,
+        'toIndex': 2,
+      });
+    });
+
+    test('replaceClip sends correct payload', () async {
+      await platform.replaceClip(
+        77,
+        0,
+        <String, dynamic>{'path': '/c.mp4', 'type': 'video', 'trimStartMs': 500},
+      );
+      expect(calls.single.method, 'replaceClip');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'clipIndex': 0,
+        'clip': {'path': '/c.mp4', 'type': 'video', 'trimStartMs': 500},
+      });
+    });
+
+    test('exportCurrentTimeline sends correct payload', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+            calls.add(methodCall);
+            if (methodCall.method == 'exportCurrentTimeline') {
+              return '/tmp/out.mp4';
+            }
+            return null;
+          });
+      final path = await platform.exportCurrentTimeline(
+        77,
+        outputPath: '/tmp/out.mp4',
+      );
+      expect(path, '/tmp/out.mp4');
+      expect(calls.single.method, 'exportCurrentTimeline');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'outputPath': '/tmp/out.mp4',
+      });
+    });
+  });
 }

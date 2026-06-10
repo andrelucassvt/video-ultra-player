@@ -22,6 +22,13 @@ struct TimelineClipDescriptor {
   var alignmentX: CGFloat
   var alignmentY: CGFloat
   var scale: CGFloat
+  /// Trim start offset within the source file (milliseconds).
+  var trimStartMs: Int64?
+  /// Trim end point within the source file (milliseconds). Takes precedence
+  /// over `durationMs` for video clips.
+  var trimEndMs: Int64?
+  /// Duration of the transition to the next clip (nil = hard cut).
+  var transitionToNextMs: Int64?
 
   init?(dictionary: [String: Any]) {
     guard
@@ -42,6 +49,11 @@ struct TimelineClipDescriptor {
     self.alignmentX = CGFloat((alignment?["x"] as? NSNumber)?.doubleValue ?? 0)
     self.alignmentY = CGFloat((alignment?["y"] as? NSNumber)?.doubleValue ?? 0)
     self.scale = max(CGFloat(scaleValue?.doubleValue ?? 1), 0.01)
+    self.trimStartMs = (dictionary["trimStartMs"] as? NSNumber)?.int64Value
+    self.trimEndMs = (dictionary["trimEndMs"] as? NSNumber)?.int64Value
+    if let transition = dictionary["transitionToNext"] as? [String: Any] {
+      self.transitionToNextMs = (transition["durationMs"] as? NSNumber)?.int64Value
+    }
   }
 }
 
@@ -86,18 +98,24 @@ final class TimelineComposition {
     let asset: AVURLAsset
     let videoTrack: AVAssetTrack
     let audioTrack: AVAssetTrack?
+    let sourceStart: CMTime
     let duration: CMTime
     let renderableSize: CGSize
+    let naturalSize: CGSize
+    let preferredTransform: CGAffineTransform
   }
 
   private var clips: [TimelineClipDescriptor] = []
   private var segments: [TimelineSegment] = []
   private var composition: AVMutableComposition?
+  private var imageVideoCache: [String: URL] = [:]
   private var generatedImageVideoURLs: [URL] = []
   private var renderSize = CGSize(width: 1280, height: 720)
   private var audioMix: AVAudioMix?
 
   private(set) var totalDuration = CMTime.zero
+
+  // MARK: - Build
 
   func build(
     clips: [TimelineClipDescriptor],
@@ -113,26 +131,29 @@ final class TimelineComposition {
     audioMix = nil
 
     let preparedClips = try clips.map { clip -> PreparedClip in
-      let asset = try asset(for: clip)
+      let asset = try resolvedAsset(for: clip)
       guard let sourceVideoTrack = asset.tracks(withMediaType: .video).first else {
         throw TimelineCompositionError.missingVideoTrack(clip.path)
       }
-
+      let (sourceStart, effectiveDuration) = effectiveRange(for: clip, asset: asset)
       return PreparedClip(
         asset: asset,
         videoTrack: sourceVideoTrack,
         audioTrack: asset.tracks(withMediaType: .audio).first,
-        duration: duration(for: clip, asset: asset),
+        sourceStart: sourceStart,
+        duration: effectiveDuration,
         renderableSize: normalizedSize(
           naturalSize: sourceVideoTrack.naturalSize,
           preferredTransform: sourceVideoTrack.preferredTransform
-        )
+        ),
+        naturalSize: sourceVideoTrack.naturalSize,
+        preferredTransform: sourceVideoTrack.preferredTransform
       )
     }
 
-    let composition = AVMutableComposition()
+    let mutableComposition = AVMutableComposition()
     guard
-      let videoTrack = composition.addMutableTrack(
+      let videoTrack = mutableComposition.addMutableTrack(
         withMediaType: .video,
         preferredTrackID: kCMPersistentTrackID_Invalid
       )
@@ -140,7 +161,7 @@ final class TimelineComposition {
       throw TimelineCompositionError.cannotCreateCompositionTrack
     }
 
-    let audioTrack = composition.addMutableTrack(
+    let audioTrack = mutableComposition.addMutableTrack(
       withMediaType: .audio,
       preferredTrackID: kCMPersistentTrackID_Invalid
     )
@@ -149,41 +170,49 @@ final class TimelineComposition {
     renderSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
 
     var startTime = CMTime.zero
-    for (index, preparedClip) in preparedClips.enumerated() {
-      let timeRange = CMTimeRange(start: .zero, duration: preparedClip.duration)
-      try videoTrack.insertTimeRange(timeRange, of: preparedClip.videoTrack, at: startTime)
+    for (index, prepared) in preparedClips.enumerated() {
+      let sourceRange = CMTimeRange(start: prepared.sourceStart, duration: prepared.duration)
+      try videoTrack.insertTimeRange(sourceRange, of: prepared.videoTrack, at: startTime)
 
-      if let sourceAudioTrack = preparedClip.audioTrack, let audioTrack {
-        let audioDuration = CMTimeMinimum(preparedClip.duration, preparedClip.asset.duration)
-        try audioTrack.insertTimeRange(
-          CMTimeRange(start: .zero, duration: audioDuration),
-          of: sourceAudioTrack,
-          at: startTime
-        )
+      if let sourceAudioTrack = prepared.audioTrack, let audioTrack {
+        let maxAudioDuration = CMTimeSubtract(prepared.asset.duration, prepared.sourceStart)
+        let audioDuration = CMTimeMinimum(prepared.duration, maxAudioDuration)
+        if isPositive(audioDuration) {
+          try audioTrack.insertTimeRange(
+            CMTimeRange(start: prepared.sourceStart, duration: audioDuration),
+            of: sourceAudioTrack,
+            at: startTime
+          )
+        }
       }
 
       segments.append(
         TimelineSegment(
           clipIndex: index,
           startTime: startTime,
-          duration: preparedClip.duration,
-          naturalSize: preparedClip.videoTrack.naturalSize,
-          preferredTransform: preparedClip.videoTrack.preferredTransform,
+          duration: prepared.duration,
+          naturalSize: prepared.naturalSize,
+          preferredTransform: prepared.preferredTransform,
           videoTrack: videoTrack,
           audioTrack: audioTrack
         )
       )
-      startTime = CMTimeAdd(startTime, preparedClip.duration)
+      startTime = CMTimeAdd(startTime, prepared.duration)
     }
 
     totalDuration = startTime
     audioMix = makeAudioMix()
-    self.composition = composition
+    self.composition = mutableComposition
 
-    let playerItem = AVPlayerItem(asset: composition)
+    let playerItem = AVPlayerItem(asset: mutableComposition)
     playerItem.videoComposition = makeVideoComposition()
     playerItem.audioMix = audioMix
     return playerItem
+  }
+
+  /// Rebuilds from the current `clips` list without accepting new clips.
+  func rebuildAsPlayerItem(config: TimelineCompositionConfig) throws -> AVPlayerItem {
+    return try build(clips: clips, config: config)
   }
 
   func buildExportAsset(
@@ -197,6 +226,73 @@ final class TimelineComposition {
       audioMix: playerItem.audioMix
     )
   }
+
+  /// Builds an export asset from the current (edited) clips list.
+  func buildCurrentExportAsset(config: TimelineCompositionConfig) throws -> TimelineExportAsset {
+    return try buildExportAsset(clips: clips, config: config)
+  }
+
+  // MARK: - Mutation
+
+  func trimClip(at index: Int, trimStartMs: Int64?, trimEndMs: Int64?) {
+    guard clips.indices.contains(index) else { return }
+    if let start = trimStartMs { clips[index].trimStartMs = start }
+    if let end = trimEndMs { clips[index].trimEndMs = end }
+    clips[index].durationMs = nil  // trimEnd takes precedence
+  }
+
+  /// Splits the clip at `index` at `atLocalMs` milliseconds from its trim-start.
+  /// Returns false if the index is out of range or the split position is invalid.
+  @discardableResult
+  func splitClip(at index: Int, atLocalMs: Int64) -> Bool {
+    guard clips.indices.contains(index), atLocalMs > 0 else { return false }
+    let clip = clips[index]
+    let effectiveTrimStart: Int64 = clip.trimStartMs ?? 0
+    let absSplitMs = effectiveTrimStart + atLocalMs
+
+    var clipA = clip
+    clipA.trimStartMs = effectiveTrimStart == 0 ? nil : effectiveTrimStart
+    clipA.trimEndMs = absSplitMs
+    clipA.durationMs = nil
+    clipA.transitionToNextMs = nil  // hard cut at split boundary
+
+    var clipB = clip
+    clipB.trimStartMs = absSplitMs
+    // Keep original trimEnd; if only durationMs was set, compute explicit end
+    if clipB.trimEndMs == nil, let durMs = clip.durationMs {
+      clipB.trimEndMs = effectiveTrimStart + durMs
+    }
+    clipB.durationMs = nil
+
+    clips.remove(at: index)
+    clips.insert(clipB, at: index)
+    clips.insert(clipA, at: index)
+    return true
+  }
+
+  func insertClip(_ descriptor: TimelineClipDescriptor, at index: Int) {
+    let safeIndex = max(0, min(index, clips.count))
+    clips.insert(descriptor, at: safeIndex)
+  }
+
+  func removeClip(at index: Int) {
+    guard clips.indices.contains(index) else { return }
+    clips.remove(at: index)
+  }
+
+  func moveClip(from: Int, to: Int) {
+    guard clips.indices.contains(from), to >= 0, to <= clips.count - 1,
+          from != to else { return }
+    let clip = clips.remove(at: from)
+    clips.insert(clip, at: min(to, clips.count))
+  }
+
+  func replaceClip(at index: Int, with descriptor: TimelineClipDescriptor) {
+    guard clips.indices.contains(index) else { return }
+    clips[index] = descriptor
+  }
+
+  // MARK: - Queries
 
   func updateAlignment(clipIndex: Int, x: CGFloat, y: CGFloat) -> AVVideoComposition? {
     guard clips.indices.contains(clipIndex), composition != nil else {
@@ -233,12 +329,19 @@ final class TimelineComposition {
     return (lastSegment.clipIndex, lastSegment.duration)
   }
 
+  var clipDurationsMs: [Int64] {
+    return segments.map { Int64((CMTimeGetSeconds($0.duration) * 1_000).rounded()) }
+  }
+
   func dispose() {
     for url in generatedImageVideoURLs {
       try? FileManager.default.removeItem(at: url)
     }
     generatedImageVideoURLs.removeAll()
+    imageVideoCache.removeAll()
   }
+
+  // MARK: - Private
 
   private func makeVideoComposition() -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
@@ -356,9 +459,16 @@ final class TimelineComposition {
     }
   }
 
-  private func asset(for clip: TimelineClipDescriptor) throws -> AVURLAsset {
+  /// Returns the source `AVURLAsset` for a clip, generating a temporary MP4 for images.
+  private func resolvedAsset(for clip: TimelineClipDescriptor) throws -> AVURLAsset {
     if clip.type == .video {
       return AVURLAsset(url: URL(fileURLWithPath: clip.path))
+    }
+
+    // For images, use cached MP4 if the path hasn't changed
+    if let cachedURL = imageVideoCache[clip.path],
+       FileManager.default.fileExists(atPath: cachedURL.path) {
+      return AVURLAsset(url: cachedURL)
     }
 
     guard let image = UIImage(contentsOfFile: clip.path) else {
@@ -368,23 +478,49 @@ final class TimelineComposition {
     let duration = cmTime(fromMilliseconds: clip.durationMs ?? 2_000)
     let url = try makeImageVideo(from: image, duration: duration)
     generatedImageVideoURLs.append(url)
+    imageVideoCache[clip.path] = url
     return AVURLAsset(url: url)
   }
 
-  private func duration(for clip: TimelineClipDescriptor, asset: AVURLAsset) -> CMTime {
+  /// Computes the (sourceStart, effectiveDuration) for a clip given trim fields.
+  private func effectiveRange(
+    for clip: TimelineClipDescriptor,
+    asset: AVURLAsset
+  ) -> (start: CMTime, duration: CMTime) {
+    // Image clips ignore trim; use durationMs or fallback
+    if clip.type == .image {
+      let dur = cmTime(fromMilliseconds: clip.durationMs ?? 2_000)
+      return (.zero, dur)
+    }
+
+    let trimStart: CMTime
+    if let trimStartMs = clip.trimStartMs, trimStartMs > 0 {
+      trimStart = cmTime(fromMilliseconds: trimStartMs)
+    } else {
+      trimStart = .zero
+    }
+
+    let assetDuration = asset.duration.isNumeric ? asset.duration : .zero
+
+    if let trimEndMs = clip.trimEndMs {
+      let trimEnd = cmTime(fromMilliseconds: trimEndMs)
+      let rawDuration = CMTimeSubtract(trimEnd, trimStart)
+      let clampedDuration = CMTimeMinimum(rawDuration, CMTimeSubtract(assetDuration, trimStart))
+      return (trimStart, isPositive(clampedDuration) ? clampedDuration : cmTime(fromMilliseconds: 100))
+    }
+
     if let durationMs = clip.durationMs {
-      let requestedDuration = cmTime(fromMilliseconds: durationMs)
-      if clip.type == .video, asset.duration.isNumeric {
-        return CMTimeMinimum(requestedDuration, asset.duration)
-      }
-      return requestedDuration
+      let requested = cmTime(fromMilliseconds: durationMs)
+      let available = CMTimeSubtract(assetDuration, trimStart)
+      return (trimStart, isPositive(available) ? CMTimeMinimum(requested, available) : requested)
     }
 
-    if asset.duration.isNumeric && CMTimeCompare(asset.duration, .zero) > 0 {
-      return asset.duration
+    let available = CMTimeSubtract(assetDuration, trimStart)
+    if isPositive(available) {
+      return (trimStart, available)
     }
 
-    return cmTime(fromMilliseconds: 2_000)
+    return (trimStart, cmTime(fromMilliseconds: 2_000))
   }
 
   private func makeImageVideo(from image: UIImage, duration: CMTime) throws -> URL {

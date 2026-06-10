@@ -13,6 +13,7 @@ class TimelinePlayerState {
     required this.localPosition,
     required this.isPlaying,
     required this.totalDuration,
+    this.clipDurations = const [],
   });
 
   /// A zero-position, paused state suitable as an initial value before [load].
@@ -21,7 +22,8 @@ class TimelinePlayerState {
       clipIndex = 0,
       localPosition = Duration.zero,
       isPlaying = false,
-      totalDuration = Duration.zero;
+      totalDuration = Duration.zero,
+      clipDurations = const [];
 
   /// Elapsed playback time measured from the very start of the timeline.
   final Duration globalPosition;
@@ -38,13 +40,30 @@ class TimelinePlayerState {
   /// Combined duration of all clips in the loaded timeline.
   final Duration totalDuration;
 
+  /// Resolved duration of each clip in the current timeline, in order.
+  ///
+  /// Updated after every mutation (split, insert, remove, etc.). Empty when
+  /// the native layer has not yet reported clip boundaries.
+  final List<Duration> clipDurations;
+
   factory TimelinePlayerState.fromMap(Map<dynamic, dynamic> map) {
+    final rawClipDurations = map['clipDurationsMs'];
+    final clipDurations = <Duration>[];
+    if (rawClipDurations is List) {
+      for (final item in rawClipDurations) {
+        if (item is num) {
+          clipDurations.add(Duration(milliseconds: item.round()));
+        }
+      }
+    }
+
     return TimelinePlayerState(
       globalPosition: Duration(milliseconds: _readInt(map, 'globalPosition')),
       clipIndex: _readInt(map, 'clipIndex'),
       localPosition: Duration(milliseconds: _readInt(map, 'localPosition')),
       isPlaying: map['isPlaying'] == true,
       totalDuration: Duration(milliseconds: _readInt(map, 'totalDuration')),
+      clipDurations: clipDurations,
     );
   }
 
@@ -54,6 +73,7 @@ class TimelinePlayerState {
     Duration? localPosition,
     bool? isPlaying,
     Duration? totalDuration,
+    List<Duration>? clipDurations,
   }) {
     return TimelinePlayerState(
       globalPosition: globalPosition ?? this.globalPosition,
@@ -61,6 +81,7 @@ class TimelinePlayerState {
       localPosition: localPosition ?? this.localPosition,
       isPlaying: isPlaying ?? this.isPlaying,
       totalDuration: totalDuration ?? this.totalDuration,
+      clipDurations: clipDurations ?? this.clipDurations,
     );
   }
 
@@ -77,12 +98,17 @@ class TimelinePlayerState {
 
   @override
   bool operator ==(Object other) {
-    return other is TimelinePlayerState &&
-        other.globalPosition == globalPosition &&
-        other.clipIndex == clipIndex &&
-        other.localPosition == localPosition &&
-        other.isPlaying == isPlaying &&
-        other.totalDuration == totalDuration;
+    if (other is! TimelinePlayerState) return false;
+    if (other.globalPosition != globalPosition) return false;
+    if (other.clipIndex != clipIndex) return false;
+    if (other.localPosition != localPosition) return false;
+    if (other.isPlaying != isPlaying) return false;
+    if (other.totalDuration != totalDuration) return false;
+    if (other.clipDurations.length != clipDurations.length) return false;
+    for (var i = 0; i < clipDurations.length; i++) {
+      if (other.clipDurations[i] != clipDurations[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -93,6 +119,7 @@ class TimelinePlayerState {
       localPosition,
       isPlaying,
       totalDuration,
+      Object.hashAll(clipDurations),
     );
   }
 }

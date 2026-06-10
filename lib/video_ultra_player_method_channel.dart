@@ -60,6 +60,23 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<String> exportCurrentTimeline(
+    int textureId, {
+    String? outputPath,
+  }) async {
+    final exportedPath = await methodChannel.invokeMethod<String>(
+      'exportCurrentTimeline',
+      <String, Object?>{'textureId': textureId, 'outputPath': outputPath},
+    );
+    if (exportedPath == null) {
+      throw StateError(
+        'Native exportCurrentTimeline did not return an output path.',
+      );
+    }
+    return exportedPath;
+  }
+
+  @override
   Future<void> play(int textureId) {
     return methodChannel.invokeMethod<void>('play', _textureArgs(textureId));
   }
@@ -131,6 +148,75 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
     return exportEventChannel.receiveBroadcastStream().map(
       (event) => TimelineExportProgress.fromMap(event as Map<dynamic, dynamic>),
     );
+  }
+
+  // ── Editing operations ──────────────────────────────────────────────────
+
+  @override
+  Future<void> trimClip(
+    int textureId,
+    int clipIndex, {
+    int? trimStartMs,
+    int? trimEndMs,
+  }) {
+    return methodChannel.invokeMethod<void>('trimClip', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+      'trimStartMs': trimStartMs,
+      'trimEndMs': trimEndMs,
+    });
+  }
+
+  @override
+  Future<void> splitClip(int textureId, int clipIndex, int atLocalPositionMs) {
+    return methodChannel.invokeMethod<void>('splitClip', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+      'atLocalPositionMs': atLocalPositionMs,
+    });
+  }
+
+  @override
+  Future<void> insertClip(
+    int textureId,
+    int atIndex,
+    Map<String, dynamic> clip,
+  ) {
+    return methodChannel.invokeMethod<void>('insertClip', <String, Object?>{
+      'textureId': textureId,
+      'atIndex': atIndex,
+      'clip': clip,
+    });
+  }
+
+  @override
+  Future<void> removeClip(int textureId, int clipIndex) {
+    return methodChannel.invokeMethod<void>('removeClip', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+    });
+  }
+
+  @override
+  Future<void> moveClip(int textureId, int fromIndex, int toIndex) {
+    return methodChannel.invokeMethod<void>('moveClip', <String, Object?>{
+      'textureId': textureId,
+      'fromIndex': fromIndex,
+      'toIndex': toIndex,
+    });
+  }
+
+  @override
+  Future<void> replaceClip(
+    int textureId,
+    int clipIndex,
+    Map<String, dynamic> clip,
+  ) {
+    return methodChannel.invokeMethod<void>('replaceClip', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+      'clip': clip,
+    });
   }
 
   Map<String, Object?> _textureArgs(int textureId) {

@@ -1,3 +1,34 @@
+## 1.2.0
+
+### Timeline editing
+
+- Added `NativeTimelinePlayer.trimClip(int clipIndex, {Duration? trimStart, Duration? trimEnd})` to non-destructively adjust the in/out points of a clip.
+- Added `NativeTimelinePlayer.splitClip(int clipIndex, Duration atLocalPosition)` to cut a clip in two at a given position; the split point is always a hard cut.
+- Added `NativeTimelinePlayer.insertClip(int atIndex, TimelineClip clip)` to insert a new clip at any position in the timeline.
+- Added `NativeTimelinePlayer.removeClip(int clipIndex)` to remove a clip from the timeline.
+- Added `NativeTimelinePlayer.moveClip(int fromIndex, int toIndex)` to reorder clips without a full reload.
+- Added `NativeTimelinePlayer.replaceClip(int clipIndex, TimelineClip clip)` to swap a clip while preserving playback position.
+- All editing operations rebuild the native composition in-place and preserve the current playback position and play/pause state.
+
+### Export from edited state
+
+- Added `NativeTimelinePlayer.exportCurrentTimeline({String? outputPath})` to export the timeline as it currently exists in the native compositor — including all edits applied since `load`. This is the correct export method to call after any editing operation.
+
+### Model changes
+
+- Added `TimelineClip.trimStart` and `TimelineClip.trimEnd` (`Duration?`) to declare source trim bounds when constructing a clip.
+- Added `TimelineClip.transitionToNext` (`ClipTransition?`) for per-boundary transitions.
+- Added `ClipTransition` model (`TransitionType.none` / `TransitionType.crossfade`, `Duration duration`).
+- Added `TimelinePlayerState.clipDurations` (`List<Duration>`) — emitted after every mutation so the UI can re-sync the timeline bar without a reload.
+
+### Example app
+
+- Added editing toolbar: Split at playhead, Remove clip, Move ◀/▶, Trim in/Trim out.
+- Export button now uses `exportCurrentTimeline()` so the exported MP4 matches the edited preview.
+- Clip chip count now derived from `state.clipDurations` for immediate accuracy after splits and removes.
+
+---
+
 ## 1.1.0
 
 - Added `NativeTimelinePlayer.seekToClip(int clipIndex)` to seek directly to the start of a specific clip in the timeline (resolved natively on both iOS and Android).

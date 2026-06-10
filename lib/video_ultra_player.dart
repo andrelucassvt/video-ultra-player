@@ -13,6 +13,7 @@
 /// ```
 library;
 
+export 'package:video_ultra_player/src/models/clip_transition.dart';
 export 'package:video_ultra_player/src/models/timeline_clip.dart';
 export 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 export 'package:video_ultra_player/src/models/timeline_export_progress.dart';

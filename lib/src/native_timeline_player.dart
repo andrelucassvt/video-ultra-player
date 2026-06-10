@@ -1,6 +1,6 @@
+import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
-import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
@@ -12,16 +12,16 @@ import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 /// [pause], [seekTo], and [seekToClip] to control playback. Listen to
 /// [stateStream] for position and playback-state updates.
 ///
+/// ## Editing
+///
+/// After [load], the timeline can be mutated without a full dispose/reload:
+/// [trimClip], [splitClip], [insertClip], [removeClip], [moveClip], and
+/// [replaceClip] all preserve the active texture ID and seek position. Use
+/// [exportCurrentTimeline] to export the edited result — this ensures the
+/// exported MP4 matches exactly what the preview shows.
+///
 /// Always call [dispose] when the player is no longer needed to release the
 /// underlying native texture and compositor resources.
-///
-/// ```dart
-/// final player = NativeTimelinePlayer();
-/// final textureId = await player.load(clips);
-/// await player.play();
-/// // …
-/// await player.dispose();
-/// ```
 class NativeTimelinePlayer {
   /// Creates a [NativeTimelinePlayer].
   ///
@@ -56,13 +56,13 @@ class NativeTimelinePlayer {
   }
 
   /// A broadcast stream of [TimelineExportProgress] events emitted during an
-  /// active [exportTimeline] call.
+  /// active [exportTimeline] or [exportCurrentTimeline] call.
   ///
-  /// Throws a [StateError] if [exportTimeline] is not currently in progress.
+  /// Throws a [StateError] if neither export is currently in progress.
   Stream<TimelineExportProgress> get exportProgress {
     if (!_exporting) {
       throw StateError(
-        'NativeTimelinePlayer.exportTimeline must be in progress before this call.',
+        'An export must be in progress before accessing exportProgress.',
       );
     }
     return _exportProgressStream ??= _platform
@@ -131,6 +131,31 @@ class NativeTimelinePlayer {
     }
   }
 
+  /// Exports the currently loaded, edited timeline and returns the output path.
+  ///
+  /// Unlike [exportTimeline], this method uses the native compositor's current
+  /// state so the exported MP4 matches exactly what the preview shows after
+  /// any editing operations.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] if another export
+  /// is already running.
+  Future<String> exportCurrentTimeline({String? outputPath}) async {
+    if (_exporting) {
+      throw StateError('Only one timeline export can run at a time.');
+    }
+
+    _exporting = true;
+    _exportProgressStream = null;
+    try {
+      return await _platform.exportCurrentTimeline(
+        _requireTextureId(),
+        outputPath: outputPath,
+      );
+    } finally {
+      _exporting = false;
+    }
+  }
+
   /// Starts or resumes playback of the loaded timeline.
   Future<void> play() {
     return _platform.play(_requireTextureId());
@@ -167,6 +192,90 @@ class NativeTimelinePlayer {
   /// `(-1, -1)` is top-left, `(0, 0)` is center, `(1, 1)` is bottom-right.
   Future<void> setClipAlignment(int clipIndex, double x, double y) {
     return _platform.setClipAlignment(_requireTextureId(), clipIndex, x, y);
+  }
+
+  // ── Editing operations ──────────────────────────────────────────────────
+
+  /// Adjusts the trim in/out of the clip at [clipIndex].
+  ///
+  /// Pass `null` for [trimStart] or [trimEnd] to leave the current value
+  /// unchanged. Ignored for image clips.
+  Future<void> trimClip(
+    int clipIndex, {
+    Duration? trimStart,
+    Duration? trimEnd,
+  }) {
+    if (clipIndex < 0) {
+      throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
+    }
+    return _platform.trimClip(
+      _requireTextureId(),
+      clipIndex,
+      trimStartMs: trimStart?.inMilliseconds,
+      trimEndMs: trimEnd?.inMilliseconds,
+    );
+  }
+
+  /// Splits the clip at [clipIndex] at [atLocalPosition] from its trim-start,
+  /// replacing it with two clips.
+  ///
+  /// [atLocalPosition] must be > zero.
+  Future<void> splitClip(int clipIndex, Duration atLocalPosition) {
+    if (clipIndex < 0) {
+      throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
+    }
+    if (atLocalPosition <= Duration.zero) {
+      throw ArgumentError.value(
+        atLocalPosition,
+        'atLocalPosition',
+        'Must be > zero.',
+      );
+    }
+    return _platform.splitClip(
+      _requireTextureId(),
+      clipIndex,
+      atLocalPosition.inMilliseconds,
+    );
+  }
+
+  /// Inserts [clip] at position [atIndex] in the timeline.
+  Future<void> insertClip(int atIndex, TimelineClip clip) {
+    if (atIndex < 0) {
+      throw ArgumentError.value(atIndex, 'atIndex', 'Must be >= 0.');
+    }
+    return _platform.insertClip(_requireTextureId(), atIndex, clip.toJson());
+  }
+
+  /// Removes the clip at [clipIndex] from the timeline.
+  Future<void> removeClip(int clipIndex) {
+    if (clipIndex < 0) {
+      throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
+    }
+    return _platform.removeClip(_requireTextureId(), clipIndex);
+  }
+
+  /// Moves the clip at [fromIndex] to [toIndex]. No-op when they are equal.
+  Future<void> moveClip(int fromIndex, int toIndex) {
+    if (fromIndex < 0) {
+      throw ArgumentError.value(fromIndex, 'fromIndex', 'Must be >= 0.');
+    }
+    if (toIndex < 0) {
+      throw ArgumentError.value(toIndex, 'toIndex', 'Must be >= 0.');
+    }
+    if (fromIndex == toIndex) return Future<void>.value();
+    return _platform.moveClip(_requireTextureId(), fromIndex, toIndex);
+  }
+
+  /// Replaces the clip at [clipIndex] with [clip].
+  Future<void> replaceClip(int clipIndex, TimelineClip clip) {
+    if (clipIndex < 0) {
+      throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
+    }
+    return _platform.replaceClip(
+      _requireTextureId(),
+      clipIndex,
+      clip.toJson(),
+    );
   }
 
   /// Releases the native compositor and Flutter texture resources.
