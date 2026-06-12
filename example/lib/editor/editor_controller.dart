@@ -32,7 +32,7 @@ class EditorController extends ChangeNotifier {
   final bool _editBusy = false;
   String? _error;
   String? _exportPath;
-  OutputAspectRatio _aspectRatio = OutputAspectRatio.original;
+  OutputAspectRatio _aspectRatio = OutputAspectRatio.ratio9x16;
   int _baseWidth = 1080;
   double _pixelsPerSecond = 72;
   Timer? _seekThrottleTimer;
