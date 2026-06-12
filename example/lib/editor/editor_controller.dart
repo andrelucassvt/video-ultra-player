@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -27,6 +28,7 @@ class EditorController extends ChangeNotifier {
   String _timelineSource = 'Sample timeline';
   bool _loading = false;
   bool _exporting = false;
+  bool _isPicking = false;
   final bool _editBusy = false;
   String? _error;
   String? _exportPath;
@@ -449,18 +451,33 @@ class EditorController extends ChangeNotifier {
   }
 
   Future<void> addAudioTrack() async {
-    if (_textureId == null || _loading) return;
+    if (_textureId == null || _loading || _isPicking) return;
 
+    log('[EditorController] addAudioTrack: opening picker');
+    _isPicking = true;
     try {
       final result = await FilePicker.pickFiles(
-        type: FileType.audio,
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'aac', 'm4a', 'wav', 'flac', 'ogg', 'opus'],
         allowMultiple: false,
+      );
+      log(
+        '[EditorController] addAudioTrack: result=${result?.files.single.path}',
       );
       final path = result?.files.single.path;
       if (path == null) return;
       await setAudioTrack(AudioTrack(path: path, volume: 0.8));
+    } on PlatformException catch (error) {
+      log(
+        '[EditorController] addAudioTrack: PlatformException code=${error.code} message=${error.message}',
+      );
+      if (error.code == 'multiple_request') return;
+      _setError(error.message ?? error.code);
     } catch (error) {
+      log('[EditorController] addAudioTrack: error=$error');
       _setError(error);
+    } finally {
+      _isPicking = false;
     }
   }
 
