@@ -1,3 +1,4 @@
+import 'package:video_ultra_player/src/models/audio_track.dart';
 import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
@@ -276,6 +277,81 @@ class NativeTimelinePlayer {
       clipIndex,
       clip.toJson(),
     );
+  }
+
+  /// Sets the playback speed of the clip at [clipIndex] to [speed].
+  ///
+  /// [speed] must be in the range `[0.5, 2.0]`. Throws [ArgumentError] for
+  /// negative [clipIndex] and [RangeError] for speed outside the valid range.
+  Future<void> setClipSpeed(int clipIndex, double speed) {
+    if (clipIndex < 0) {
+      throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
+    }
+    if (speed < 0.5 || speed > 2.0) {
+      throw RangeError.value(speed, 'speed', 'speed must be in [0.5, 2.0].');
+    }
+    return _platform.setClipSpeed(_requireTextureId(), clipIndex, speed);
+  }
+
+  /// Restores the previous edit snapshot in the native compositor.
+  ///
+  /// Requires [load] to have completed. If the native undo stack is empty, the
+  /// native layer treats this as a safe no-op.
+  Future<void> undo() {
+    return _platform.undo(_requireTextureId());
+  }
+
+  /// Reapplies the next edit snapshot after [undo].
+  ///
+  /// Requires [load] to have completed. If the native redo stack is empty, the
+  /// native layer treats this as a safe no-op.
+  Future<void> redo() {
+    return _platform.redo(_requireTextureId());
+  }
+
+  // ── Audio track ──────────────────────────────────────────────────────────
+
+  /// Overlays an external [track] on the loaded timeline.
+  ///
+  /// The [track] starts at [AudioTrack.offset] within the timeline and its
+  /// audio content is mixed on top of the clip audio at [AudioTrack.volume].
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> setAudioTrack(AudioTrack track) {
+    _requireTextureId();
+    return _platform.setAudioTrack(textureId!, track.toJson());
+  }
+
+  /// Removes any external audio track previously set via [setAudioTrack].
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> removeAudioTrack() {
+    _requireTextureId();
+    return _platform.removeAudioTrack(textureId!);
+  }
+
+  // ── Thumbnail generation ────────────────────────────────────────────────
+
+  /// Extracts thumbnail frames from [videoPath] at each timestamp in
+  /// [timestamps] and returns the absolute file-system paths of the cached
+  /// JPEG images.
+  ///
+  /// This is a **standalone utility** — it does not require [load] to have
+  /// been called first. It can be used independently of any active player.
+  ///
+  /// [width] controls the pixel width of each thumbnail (height is scaled
+  /// proportionally). Defaults to 120 px.
+  ///
+  /// Results are cached by `(videoPath, timestamp, width)` on the native
+  /// side — a second identical call is served from cache without re-extraction.
+  Future<List<String>> generateThumbnails(
+    String videoPath,
+    List<Duration> timestamps, {
+    int width = 120,
+  }) {
+    final timestampsMs =
+        timestamps.map((d) => d.inMilliseconds).toList(growable: false);
+    return _platform.generateThumbnails(videoPath, timestampsMs, width: width);
   }
 
   /// Releases the native compositor and Flutter texture resources.

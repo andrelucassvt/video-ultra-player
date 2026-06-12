@@ -7,10 +7,13 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
+import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.audio.GainProcessor
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.Size
 import androidx.media3.effect.Crop
 import androidx.media3.effect.Presentation
@@ -45,6 +48,8 @@ internal class TimelineCompositionController(
     private var compositionConfig = TimelineCompositionConfig()
     private var renderSize = TimelineRenderSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     private var totalDurationMs: Long = 0L
+    private var audioTrack: AudioTrackDescriptor? = null
+    private val editHistory = TimelineEditModel()
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
     private var player: CompositionPlayer? = null
@@ -103,7 +108,9 @@ internal class TimelineCompositionController(
                         }
                     }
                 )
-                compositionPlayer.setComposition(buildTimelineComposition(clips, renderSize))
+                compositionPlayer.setComposition(
+                    buildTimelineComposition(clips, renderSize, audioTrack)
+                )
                 compositionPlayer.prepare()
             }
 
@@ -147,6 +154,7 @@ internal class TimelineCompositionController(
             return
         }
 
+        pushEditSnapshot()
         clips[clipIndex] = clips[clipIndex].copy(
             alignmentX = x.coerceIn(-1.0, 1.0),
             alignmentY = y.coerceIn(-1.0, 1.0)
@@ -159,6 +167,7 @@ internal class TimelineCompositionController(
 
     fun trimClip(clipIndex: Int, trimStartMs: Long?, trimEndMs: Long?) {
         if (clipIndex !in clips.indices) return
+        pushEditSnapshot()
         var clip = clips[clipIndex]
         if (trimStartMs != null) clip = clip.copy(trimStartMs = trimStartMs)
         if (trimEndMs != null) clip = clip.copy(trimEndMs = trimEndMs)
@@ -168,6 +177,7 @@ internal class TimelineCompositionController(
 
     fun splitClip(clipIndex: Int, atLocalPositionMs: Long) {
         if (clipIndex !in clips.indices || atLocalPositionMs <= 0) return
+        pushEditSnapshot()
         val clip = clips[clipIndex]
         val effectiveTrimStart = clip.trimStartMs ?: 0L
         val absSplitMs = effectiveTrimStart + atLocalPositionMs
@@ -192,6 +202,7 @@ internal class TimelineCompositionController(
 
     fun insertClip(atIndex: Int, rawClip: Map<*, *>) {
         val resolved = resolveClip(context, TimelineClip.from(rawClip))
+        pushEditSnapshot()
         val safeIndex = atIndex.coerceIn(0, clips.size)
         clips.add(safeIndex, resolved)
         rebuildCompositionPreservingPlayback()
@@ -199,12 +210,14 @@ internal class TimelineCompositionController(
 
     fun removeClip(clipIndex: Int) {
         if (clipIndex !in clips.indices) return
+        pushEditSnapshot()
         clips.removeAt(clipIndex)
         rebuildCompositionPreservingPlayback()
     }
 
     fun moveClip(fromIndex: Int, toIndex: Int) {
         if (fromIndex !in clips.indices || toIndex !in clips.indices || fromIndex == toIndex) return
+        pushEditSnapshot()
         val clip = clips.removeAt(fromIndex)
         clips.add(toIndex.coerceIn(0, clips.size), clip)
         rebuildCompositionPreservingPlayback()
@@ -212,8 +225,58 @@ internal class TimelineCompositionController(
 
     fun replaceClip(clipIndex: Int, rawClip: Map<*, *>) {
         if (clipIndex !in clips.indices) return
+        pushEditSnapshot()
         clips[clipIndex] = resolveClip(context, TimelineClip.from(rawClip))
         rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Updates the playback speed of the clip at [clipIndex] and rebuilds the
+     * composition. This is a full rebuild (Media3 effects are immutable) — call
+     * only on commit (release of the speed control), not on every drag tick.
+     */
+    fun setClipSpeed(clipIndex: Int, speed: Float) {
+        if (clipIndex !in clips.indices) return
+        pushEditSnapshot()
+        clips[clipIndex] = clips[clipIndex].copy(speed = speed.coerceIn(0.5f, 2.0f))
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Sets a single external audio track over the current timeline. Rebuilding
+     * the Media3 Composition is unavoidable, so callers should invoke this only
+     * on commit/release of UI controls, not on every drag tick.
+     */
+    fun setAudioTrack(rawTrack: Map<*, *>) {
+        pushEditSnapshot()
+        audioTrack = resolveAudioTrack(context, AudioTrackDescriptor.from(rawTrack))
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun removeAudioTrack() {
+        if (audioTrack == null) {
+            emitState()
+            return
+        }
+        pushEditSnapshot()
+        audioTrack = null
+        rebuildCompositionPreservingPlayback()
+    }
+
+    fun undo() {
+        val snapshot = editHistory.undo(currentEditSnapshot()) ?: run {
+            emitState()
+            return
+        }
+        restoreEditSnapshot(snapshot)
+    }
+
+    fun redo() {
+        val snapshot = editHistory.redo(currentEditSnapshot()) ?: run {
+            emitState()
+            return
+        }
+        restoreEditSnapshot(snapshot)
     }
 
     fun startExportCurrentTimeline(
@@ -222,8 +285,15 @@ internal class TimelineCompositionController(
     ): TimelineCompositionExporter {
         val currentClips = clips.toList()
         val currentRenderSize = renderSize
+        val currentAudioTrack = audioTrack
         return TimelineCompositionExporter(context).also { exporter ->
-            exporter.exportFromClips(currentClips, currentRenderSize, outputPath, callback)
+            exporter.exportFromClips(
+                currentClips,
+                currentRenderSize,
+                currentAudioTrack,
+                outputPath,
+                callback
+            )
         }
     }
 
@@ -242,8 +312,8 @@ internal class TimelineCompositionController(
     private fun rebuildSegments() {
         var startMs = 0L
         segments = clips.map { clip ->
-            TimelineSegment(startMs = startMs, durationMs = clip.resolvedDurationMs).also {
-                startMs += clip.resolvedDurationMs
+            TimelineSegment(startMs = startMs, durationMs = clip.scaledDurationMs).also {
+                startMs += clip.scaledDurationMs
             }
         }
         totalDurationMs = startMs
@@ -255,7 +325,7 @@ internal class TimelineCompositionController(
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
         currentPlayer.setComposition(
-            buildTimelineComposition(clips, renderSize),
+            buildTimelineComposition(clips, renderSize, audioTrack),
             positionMs.coerceIn(0L, totalDurationMs)
         )
         currentPlayer.prepare()
@@ -279,7 +349,9 @@ internal class TimelineCompositionController(
                     ).coerceAtLeast(0L),
                 "isPlaying" to (currentPlayer?.isPlaying == true),
                 "totalDuration" to totalDurationMs,
-                "clipDurationsMs" to segments.map { it.durationMs }
+                "clipDurationsMs" to segments.map { it.durationMs },
+                "canUndo" to editHistory.canUndo,
+                "canRedo" to editHistory.canRedo
             )
         )
     }
@@ -296,6 +368,23 @@ internal class TimelineCompositionController(
             }
         }
         return segments.lastIndex
+    }
+
+    private fun pushEditSnapshot() {
+        editHistory.pushSnapshot(currentEditSnapshot())
+    }
+
+    private fun currentEditSnapshot(): TimelineEditSnapshot {
+        return TimelineEditSnapshot(
+            clips = clips.toList(),
+            audioTrack = audioTrack
+        )
+    }
+
+    private fun restoreEditSnapshot(snapshot: TimelineEditSnapshot) {
+        clips = snapshot.clips.toMutableList()
+        audioTrack = snapshot.audioTrack
+        rebuildCompositionPreservingPlayback()
     }
 }
 
@@ -339,12 +428,19 @@ internal class TimelineCompositionExporter(
         val config = TimelineCompositionConfig.from(rawConfig)
         val parsedClips = parseTimelineClips(context, rawClips)
         val outputSize = outputSizeFor(config, parsedClips.first())
-        exportFromClips(parsedClips, outputSize, outputPath, callback)
+        exportFromClips(
+            parsedClips,
+            outputSize,
+            null,
+            outputPath,
+            callback
+        )
     }
 
     fun exportFromClips(
         clips: List<TimelineClip>,
         renderSize: TimelineRenderSize,
+        audioTrack: AudioTrackDescriptor?,
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
@@ -356,7 +452,7 @@ internal class TimelineCompositionExporter(
             outputFile.delete()
         }
 
-        val composition = buildTimelineComposition(clips, renderSize)
+        val composition = buildTimelineComposition(clips, renderSize, audioTrack)
         val exportTransformer = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -428,11 +524,16 @@ internal class TimelineCompositionExporter(
 
 private fun buildTimelineComposition(
     clips: List<TimelineClip>,
-    renderSize: TimelineRenderSize
+    renderSize: TimelineRenderSize,
+    audioTrack: AudioTrackDescriptor? = null
 ): Composition {
     val items = clips.map { clip -> editedMediaItemFor(clip, renderSize) }
-    val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
-    return Composition.Builder(listOf(sequence)).build()
+    val sequences = mutableListOf(EditedMediaItemSequence.withAudioAndVideoFrom(items))
+    val timelineDurationMs = clips.sumOf { it.scaledDurationMs }
+    if (audioTrack != null && audioTrack.offsetMs < timelineDurationMs) {
+        sequences.add(audioSequenceFor(audioTrack, timelineDurationMs))
+    }
+    return Composition.Builder(sequences).build()
 }
 
 private fun editedMediaItemFor(
@@ -451,9 +552,14 @@ private fun editedMediaItemFor(
         mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
     }
 
+    // setDurationUs is the source (pre-speed) duration for Media3 compositing.
     val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
         .setDurationUs(clip.resolvedDurationMs * 1_000L)
         .setEffects(effectsFor(clip, renderSize))
+
+    if (clip.speed != 1.0f) {
+        builder.setSpeed(constantSpeedProvider(clip.speed))
+    }
 
     if (clip.type == TimelineMediaType.IMAGE) {
         builder.setFrameRate(30)
@@ -462,11 +568,56 @@ private fun editedMediaItemFor(
     return builder.build()
 }
 
+private fun audioSequenceFor(
+    track: AudioTrackDescriptor,
+    timelineDurationMs: Long
+): EditedMediaItemSequence {
+    val mediaItemBuilder = MediaItem.Builder()
+        .setUri(Uri.fromFile(File(track.path)))
+
+    val trimStartMs = track.effectiveTrimStartMs
+    val trimEndMs = track.effectiveTrimEndMs
+    if (trimStartMs > 0L || trimEndMs != null) {
+        val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
+        if (trimStartMs > 0L) {
+            clippingBuilder.setStartPositionMs(trimStartMs)
+        }
+        trimEndMs?.let { clippingBuilder.setEndPositionMs(it) }
+        mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
+    }
+
+    val maxDurationMs = (timelineDurationMs - track.offsetMs).coerceAtLeast(1L)
+    val durationUs = min(track.trimmedDurationMs, maxDurationMs) * 1_000L
+    val audioEffects = listOf(
+        GainProcessor(
+            AudioTrackGainProvider(
+                volume = track.volume,
+                fadeInUs = (track.fadeInMs ?: 0L).coerceAtLeast(0L) * 1_000L,
+                fadeOutUs = (track.fadeOutMs ?: 0L).coerceAtLeast(0L) * 1_000L,
+                durationUs = durationUs
+            )
+        )
+    )
+    val audioItem = EditedMediaItem.Builder(mediaItemBuilder.build())
+        .setRemoveVideo(true)
+        .setDurationUs(durationUs)
+        .setEffects(Effects(audioEffects, emptyList()))
+        .build()
+
+    val sequenceBuilder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
+    if (track.offsetMs > 0L) {
+        sequenceBuilder.addGap(track.offsetMs * 1_000L)
+    }
+    return sequenceBuilder.addItem(audioItem).build()
+}
+
 private fun effectsFor(
     clip: TimelineClip,
     renderSize: TimelineRenderSize
 ): Effects {
-    val effects = mutableListOf<Effect>()
+    val audioEffects = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
+    val videoEffects = mutableListOf<Effect>()
+
     val scale = max(clip.scale, 1.0)
     if (scale > 1.0001) {
         val visibleSpan = (2.0 / scale).coerceIn(0.05, 2.0).toFloat()
@@ -478,7 +629,7 @@ private fun effectsFor(
         val top = 1.0f - extraSpan * verticalBias
         val bottom = top - visibleSpan
 
-        effects.add(
+        videoEffects.add(
             Crop(
                 min(left, right - 0.01f),
                 max(right, left + 0.01f),
@@ -488,14 +639,22 @@ private fun effectsFor(
         )
     }
 
-    effects.add(
+    videoEffects.add(
         Presentation.createForWidthAndHeight(
             renderSize.width,
             renderSize.height,
             Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
         )
     )
-    return Effects(emptyList(), effects)
+    return Effects(audioEffects, videoEffects)
+}
+
+private fun constantSpeedProvider(speed: Float): SpeedProvider {
+    val safeSpeed = speed.coerceIn(0.5f, 2.0f)
+    return object : SpeedProvider {
+        override fun getSpeed(timeUs: Long): Float = safeSpeed
+        override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+    }
 }
 
 private fun parseTimelineClips(
@@ -523,10 +682,31 @@ private fun resolveClip(context: Context, clip: TimelineClip): TimelineClip {
     )
 }
 
+private fun resolveAudioTrack(
+    context: Context,
+    track: AudioTrackDescriptor
+): AudioTrackDescriptor {
+    return track.copy(sourceDurationMs = resolveAudioSourceDurationMs(context, track.path))
+}
+
 private fun resolveSourceDurationMs(context: Context, clip: TimelineClip): Long {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
+        retriever
+            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            ?.toLongOrNull()
+            ?.let { max(it, 1L) }
+            ?: DEFAULT_IMAGE_DURATION_MS
+    } finally {
+        retriever.release()
+    }
+}
+
+private fun resolveAudioSourceDurationMs(context: Context, path: String): Long {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, Uri.fromFile(File(path)))
         retriever
             .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             ?.toLongOrNull()
@@ -642,6 +822,7 @@ internal data class TimelineClip(
     val alignmentX: Double,
     val alignmentY: Double,
     val scale: Double,
+    val speed: Float = 1.0f,
     val trimStartMs: Long? = null,
     val trimEndMs: Long? = null,
     val transitionToNextMs: Long? = null,
@@ -649,6 +830,7 @@ internal data class TimelineClip(
     val sourceWidth: Int = DEFAULT_WIDTH,
     val sourceHeight: Int = DEFAULT_HEIGHT
 ) {
+    /** Duration of the source media after trim (before speed is applied), in ms. */
     val resolvedDurationMs: Long
         get() {
             if (type == TimelineMediaType.IMAGE) {
@@ -663,6 +845,10 @@ internal data class TimelineClip(
             return max(effectiveSourceEnd - effectiveTrimStart, 1L)
         }
 
+    /** Effective display duration after applying playback speed, in ms. */
+    val scaledDurationMs: Long
+        get() = max((resolvedDurationMs / speed).toLong(), 1L)
+
     companion object {
         fun from(map: Map<*, *>): TimelineClip {
             val path = map["path"] as? String ?: error("Clip path is required.")
@@ -675,6 +861,7 @@ internal data class TimelineClip(
             val alignmentX = (alignment?.get("x") as? Number)?.toDouble() ?: 0.0
             val alignmentY = (alignment?.get("y") as? Number)?.toDouble() ?: 0.0
             val scale = (map["scale"] as? Number)?.toDouble() ?: 1.0
+            val speed = (map["speed"] as? Number)?.toFloat() ?: 1.0f
             val trimStartMs = (map["trimStartMs"] as? Number)?.toLong()
             val trimEndMs = (map["trimEndMs"] as? Number)?.toLong()
             val transitionToNextMs = (map["transitionToNext"] as? Map<*, *>)
@@ -687,12 +874,96 @@ internal data class TimelineClip(
                 alignmentX = alignmentX,
                 alignmentY = alignmentY,
                 scale = max(scale, 0.01),
+                speed = speed.coerceIn(0.5f, 2.0f),
                 trimStartMs = trimStartMs,
                 trimEndMs = trimEndMs,
                 transitionToNextMs = transitionToNextMs
             )
         }
     }
+}
+
+internal data class AudioTrackDescriptor(
+    val path: String,
+    val offsetMs: Long = 0L,
+    val volume: Float = 1.0f,
+    val trimStartMs: Long? = null,
+    val trimEndMs: Long? = null,
+    val fadeInMs: Long? = null,
+    val fadeOutMs: Long? = null,
+    val sourceDurationMs: Long = 0L
+) {
+    val effectiveTrimStartMs: Long
+        get() = (trimStartMs ?: 0L).coerceAtLeast(0L)
+
+    val effectiveTrimEndMs: Long?
+        get() {
+            val start = effectiveTrimStartMs
+            val requestedEnd = trimEndMs?.takeIf { it > start }
+            val sourceEnd = sourceDurationMs.takeIf { it > start }
+            return when {
+                requestedEnd != null && sourceEnd != null -> min(requestedEnd, sourceEnd)
+                requestedEnd != null -> requestedEnd
+                else -> sourceEnd
+            }
+        }
+
+    val trimmedDurationMs: Long
+        get() {
+            val start = effectiveTrimStartMs
+            val end = effectiveTrimEndMs ?: (start + DEFAULT_IMAGE_DURATION_MS)
+            return max(end - start, 1L)
+        }
+
+    companion object {
+        fun from(map: Map<*, *>): AudioTrackDescriptor {
+            val path = map["path"] as? String ?: error("Audio track path is required.")
+            return AudioTrackDescriptor(
+                path = path,
+                offsetMs = ((map["offsetMs"] as? Number)?.toLong() ?: 0L).coerceAtLeast(0L),
+                volume = ((map["volume"] as? Number)?.toFloat() ?: 1.0f).coerceIn(0.0f, 1.0f),
+                trimStartMs = (map["trimStartMs"] as? Number)?.toLong()?.coerceAtLeast(0L),
+                trimEndMs = (map["trimEndMs"] as? Number)?.toLong()?.coerceAtLeast(0L),
+                fadeInMs = (map["fadeInMs"] as? Number)?.toLong()?.coerceAtLeast(0L),
+                fadeOutMs = (map["fadeOutMs"] as? Number)?.toLong()?.coerceAtLeast(0L)
+            )
+        }
+    }
+}
+
+private class AudioTrackGainProvider(
+    private val volume: Float,
+    private val fadeInUs: Long,
+    private val fadeOutUs: Long,
+    private val durationUs: Long
+) : GainProcessor.GainProvider {
+    override fun getGainFactorAtSamplePosition(
+        samplePosition: Long,
+        sampleRate: Int
+    ): Float {
+        if (sampleRate <= 0) return volume
+        val timeUs = samplePosition * 1_000_000L / sampleRate
+        var gain = volume.coerceIn(0.0f, 1.0f)
+
+        if (fadeInUs > 0L && timeUs < fadeInUs) {
+            gain *= (timeUs.toDouble() / fadeInUs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        }
+
+        if (fadeOutUs > 0L && durationUs > 0L) {
+            val fadeOutStartUs = (durationUs - fadeOutUs).coerceAtLeast(0L)
+            if (timeUs >= fadeOutStartUs) {
+                val remainingUs = (durationUs - timeUs).coerceAtLeast(0L)
+                gain *= (remainingUs.toDouble() / fadeOutUs.toDouble()).coerceIn(0.0, 1.0).toFloat()
+            }
+        }
+
+        return gain
+    }
+
+    override fun isUnityUntil(
+        samplePosition: Long,
+        sampleRate: Int
+    ): Long = C.TIME_UNSET
 }
 
 internal enum class TimelineMediaType {

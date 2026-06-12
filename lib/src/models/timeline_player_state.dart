@@ -14,6 +14,8 @@ class TimelinePlayerState {
     required this.isPlaying,
     required this.totalDuration,
     this.clipDurations = const [],
+    this.canUndo = false,
+    this.canRedo = false,
   });
 
   /// A zero-position, paused state suitable as an initial value before [load].
@@ -23,7 +25,9 @@ class TimelinePlayerState {
       localPosition = Duration.zero,
       isPlaying = false,
       totalDuration = Duration.zero,
-      clipDurations = const [];
+      clipDurations = const [],
+      canUndo = false,
+      canRedo = false;
 
   /// Elapsed playback time measured from the very start of the timeline.
   final Duration globalPosition;
@@ -46,6 +50,12 @@ class TimelinePlayerState {
   /// the native layer has not yet reported clip boundaries.
   final List<Duration> clipDurations;
 
+  /// Whether the native edit history currently has an undo snapshot.
+  final bool canUndo;
+
+  /// Whether the native edit history currently has a redo snapshot.
+  final bool canRedo;
+
   factory TimelinePlayerState.fromMap(Map<dynamic, dynamic> map) {
     final rawClipDurations = map['clipDurationsMs'];
     final clipDurations = <Duration>[];
@@ -64,6 +74,8 @@ class TimelinePlayerState {
       isPlaying: map['isPlaying'] == true,
       totalDuration: Duration(milliseconds: _readInt(map, 'totalDuration')),
       clipDurations: clipDurations,
+      canUndo: map['canUndo'] == true,
+      canRedo: map['canRedo'] == true,
     );
   }
 
@@ -74,6 +86,8 @@ class TimelinePlayerState {
     bool? isPlaying,
     Duration? totalDuration,
     List<Duration>? clipDurations,
+    bool? canUndo,
+    bool? canRedo,
   }) {
     return TimelinePlayerState(
       globalPosition: globalPosition ?? this.globalPosition,
@@ -82,6 +96,8 @@ class TimelinePlayerState {
       isPlaying: isPlaying ?? this.isPlaying,
       totalDuration: totalDuration ?? this.totalDuration,
       clipDurations: clipDurations ?? this.clipDurations,
+      canUndo: canUndo ?? this.canUndo,
+      canRedo: canRedo ?? this.canRedo,
     );
   }
 
@@ -104,6 +120,8 @@ class TimelinePlayerState {
     if (other.localPosition != localPosition) return false;
     if (other.isPlaying != isPlaying) return false;
     if (other.totalDuration != totalDuration) return false;
+    if (other.canUndo != canUndo) return false;
+    if (other.canRedo != canRedo) return false;
     if (other.clipDurations.length != clipDurations.length) return false;
     for (var i = 0; i < clipDurations.length; i++) {
       if (other.clipDurations[i] != clipDurations[i]) return false;
@@ -120,6 +138,8 @@ class TimelinePlayerState {
       isPlaying,
       totalDuration,
       Object.hashAll(clipDurations),
+      canUndo,
+      canRedo,
     );
   }
 }

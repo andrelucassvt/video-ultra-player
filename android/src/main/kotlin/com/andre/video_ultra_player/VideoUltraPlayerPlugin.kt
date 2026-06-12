@@ -1,6 +1,8 @@
 package com.andre.video_ultra_player
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -8,6 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.view.TextureRegistry
+import java.util.concurrent.Executors
 
 /** VideoUltraPlayerPlugin */
 class VideoUltraPlayerPlugin :
@@ -22,6 +25,10 @@ class VideoUltraPlayerPlugin :
     private val controllers = mutableMapOf<Long, TimelineCompositionController>()
     private val activeExporters = mutableSetOf<TimelineCompositionExporter>()
     private val exportProgressHandler = ExportProgressStreamHandler()
+
+    // Background executor and main-thread handler used for thumbnail generation.
+    private val thumbnailExecutor = Executors.newCachedThreadPool()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
@@ -167,6 +174,43 @@ class VideoUltraPlayerPlugin :
                     result.error("edit_failed", "replaceClip failed: ${e.message}", null)
                 }
             }
+            "setClipSpeed" -> withController(call, result) { controller ->
+                val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
+                val speed = numberArg(call.arguments, "speed")?.toFloat()
+                if (clipIndex == null || speed == null) {
+                    result.error("invalid_arguments", "Expected clipIndex and speed.", null)
+                    return@withController
+                }
+                controller.setClipSpeed(clipIndex, speed)
+                result.success(null)
+            }
+            "setAudioTrack" -> withController(call, result) { controller ->
+                val args = call.arguments as? Map<*, *>
+                val track = args?.get("track") as? Map<*, *>
+                if (track == null) {
+                    result.error("invalid_arguments", "Expected track.", null)
+                    return@withController
+                }
+                try {
+                    controller.setAudioTrack(track)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    result.error("edit_failed", "setAudioTrack failed: ${error.message}", null)
+                }
+            }
+            "removeAudioTrack" -> withController(call, result) { controller ->
+                controller.removeAudioTrack()
+                result.success(null)
+            }
+            "undo" -> withController(call, result) { controller ->
+                controller.undo()
+                result.success(null)
+            }
+            "redo" -> withController(call, result) { controller ->
+                controller.redo()
+                result.success(null)
+            }
+            "generateThumbnails" -> generateThumbnails(call, result)
             "exportCurrentTimeline" -> exportCurrentTimeline(call, result)
             "dispose" -> {
                 val textureId = textureId(call.arguments)
@@ -189,6 +233,7 @@ class VideoUltraPlayerPlugin :
         activeExporters.clear()
         controllers.values.forEach { it.dispose() }
         controllers.clear()
+        thumbnailExecutor.shutdown()
         methodChannel = null
         eventChannel = null
         exportEventChannel = null
@@ -350,6 +395,35 @@ class VideoUltraPlayerPlugin :
         )
         exporterRef = exporter
         activeExporters.add(exporter)
+    }
+
+    private fun generateThumbnails(call: MethodCall, result: Result) {
+        val context = applicationContext
+        if (context == null) {
+            result.error(
+                "not_attached",
+                "VideoUltraPlayerPlugin is not attached to the Flutter engine.",
+                null
+            )
+            return
+        }
+
+        val args = call.arguments as? Map<*, *>
+        val videoPath = args?.get("videoPath") as? String
+        if (videoPath == null) {
+            result.error("invalid_arguments", "generateThumbnails requires videoPath.", null)
+            return
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val rawTimestamps = args?.get("timestampsMs") as? List<*>
+        val timestampsMs = rawTimestamps?.mapNotNull { (it as? Number)?.toInt() } ?: emptyList()
+        val width = (args?.get("width") as? Number)?.toInt() ?: 120
+
+        thumbnailExecutor.execute {
+            val paths = ThumbnailGenerator(context).generate(videoPath, timestampsMs, width)
+            mainHandler.post { result.success(paths) }
+        }
     }
 
     private fun withController(

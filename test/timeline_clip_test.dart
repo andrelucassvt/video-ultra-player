@@ -218,6 +218,102 @@ void main() {
     });
   });
 
+  // ── speed field ──────────────────────────────────────────────────────────
+
+  group('TimelineClip.speed', () {
+    test('default speed is 1.0', () {
+      const clip = TimelineClip(path: '/a.mp4', type: MediaType.video);
+      expect(clip.speed, 1.0);
+    });
+
+    test('toJson includes speed key', () {
+      const clip = TimelineClip(path: '/a.mp4', type: MediaType.video);
+      final json = clip.toJson();
+      expect(json.containsKey('speed'), isTrue);
+      expect(json['speed'], 1.0);
+    });
+
+    test('toJson includes non-default speed', () {
+      const clip = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 1.5,
+      );
+      expect(clip.toJson()['speed'], 1.5);
+    });
+
+    test('constructor assert throws when speed < 0.5', () {
+      expect(
+        // ignore: prefer_const_constructors — must be non-const so assert runs at runtime
+        () => TimelineClip(path: '/a.mp4', type: MediaType.video, speed: 0.3),
+        throwsAssertionError,
+      );
+    });
+
+    test('constructor assert throws when speed > 2.0', () {
+      expect(
+        () => TimelineClip(path: '/a.mp4', type: MediaType.video, speed: 2.5),
+        throwsAssertionError,
+      );
+    });
+
+    test('boundary speed 0.5 is accepted', () {
+      const clip = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 0.5,
+      );
+      expect(clip.speed, 0.5);
+    });
+
+    test('boundary speed 2.0 is accepted', () {
+      const clip = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 2.0,
+      );
+      expect(clip.speed, 2.0);
+    });
+
+    test('copyWith(speed: ...) updates speed', () {
+      const original = TimelineClip(path: '/a.mp4', type: MediaType.video);
+      final copy = original.copyWith(speed: 1.5);
+      expect(copy.speed, 1.5);
+      expect(copy.path, '/a.mp4');
+    });
+
+    test('copyWith preserves speed when not specified', () {
+      const original = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 2.0,
+      );
+      final copy = original.copyWith(scale: 1.5);
+      expect(copy.speed, 2.0);
+    });
+
+    test('equality considers speed', () {
+      const a = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 1.5,
+      );
+      const b = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 1.5,
+      );
+      const c = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        speed: 2.0,
+      );
+      expect(a, b);
+      expect(a.hashCode, b.hashCode);
+      expect(a, isNot(c));
+    });
+  });
+
   group('ClipTransition equality', () {
     test('equal transitions with same type and duration', () {
       const a = ClipTransition(

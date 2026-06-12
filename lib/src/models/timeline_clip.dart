@@ -42,10 +42,15 @@ class TimelineClip {
     this.duration,
     this.alignment = Alignment.center,
     this.scale = 1.0,
+    this.speed = 1.0,
     this.trimStart,
     this.trimEnd,
     this.transitionToNext,
-  }) : assert(scale > 0, 'scale must be greater than zero');
+  })  : assert(scale > 0, 'scale must be greater than zero'),
+        assert(
+          speed >= 0.5 && speed <= 2.0,
+          'speed must be in the range [0.5, 2.0]',
+        );
 
   /// Absolute path to the media file.
   final String path;
@@ -65,6 +70,13 @@ class TimelineClip {
 
   /// Uniform scale factor applied to the clip before compositing. Must be > 0.
   final double scale;
+
+  /// Playback speed multiplier for this clip. Must be in the range [0.5, 2.0].
+  ///
+  /// A value of `1.0` (the default) plays at normal speed. Values below 1.0
+  /// slow the clip down; values above 1.0 speed it up. The effective clip
+  /// duration is `originalDuration / speed`.
+  final double speed;
 
   /// Offset from the beginning of the source to start playback.
   ///
@@ -91,6 +103,7 @@ class TimelineClip {
       'durationMs': duration?.inMilliseconds,
       'alignment': <String, double>{'x': alignment.x, 'y': alignment.y},
       'scale': scale,
+      'speed': speed,
       if (trimStart != null) 'trimStartMs': trimStart!.inMilliseconds,
       if (trimEnd != null) 'trimEndMs': trimEnd!.inMilliseconds,
       if (transitionToNext != null) 'transitionToNext': transitionToNext!.toJson(),
@@ -103,6 +116,7 @@ class TimelineClip {
     Duration? duration,
     Alignment? alignment,
     double? scale,
+    double? speed,
     Duration? trimStart,
     Duration? trimEnd,
     ClipTransition? transitionToNext,
@@ -113,6 +127,7 @@ class TimelineClip {
       duration: duration ?? this.duration,
       alignment: alignment ?? this.alignment,
       scale: scale ?? this.scale,
+      speed: speed ?? this.speed,
       trimStart: trimStart ?? this.trimStart,
       trimEnd: trimEnd ?? this.trimEnd,
       transitionToNext: transitionToNext ?? this.transitionToNext,
@@ -127,6 +142,7 @@ class TimelineClip {
         other.duration == duration &&
         other.alignment == alignment &&
         other.scale == scale &&
+        other.speed == speed &&
         other.trimStart == trimStart &&
         other.trimEnd == trimEnd &&
         other.transitionToNext == transitionToNext;
@@ -140,6 +156,7 @@ class TimelineClip {
       duration,
       alignment,
       scale,
+      speed,
       trimStart,
       trimEnd,
       transitionToNext,

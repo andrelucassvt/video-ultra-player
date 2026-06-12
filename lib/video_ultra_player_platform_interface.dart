@@ -140,4 +140,54 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
   ) {
     throw UnimplementedError('replaceClip() has not been implemented.');
   }
+
+  /// Sets the playback speed of the clip at [clipIndex] to [speed].
+  ///
+  /// [speed] must be in the range `[0.5, 2.0]`.
+  Future<void> setClipSpeed(int textureId, int clipIndex, double speed) {
+    throw UnimplementedError('setClipSpeed() has not been implemented.');
+  }
+
+  /// Restores the previous edit-model snapshot for the loaded timeline.
+  Future<void> undo(int textureId) {
+    throw UnimplementedError('undo() has not been implemented.');
+  }
+
+  /// Reapplies the next edit-model snapshot after an undo.
+  Future<void> redo(int textureId) {
+    throw UnimplementedError('redo() has not been implemented.');
+  }
+
+  // ── Thumbnail generation ────────────────────────────────────────────────
+
+  // ── Audio track ──────────────────────────────────────────────────────────
+
+  /// Overlays an external audio track on the loaded timeline.
+  ///
+  /// [track] is a JSON-compatible map produced by [AudioTrack.toJson].
+  Future<void> setAudioTrack(int textureId, Map<String, dynamic> track) {
+    throw UnimplementedError('setAudioTrack() has not been implemented.');
+  }
+
+  /// Removes the external audio track from the loaded timeline.
+  Future<void> removeAudioTrack(int textureId) {
+    throw UnimplementedError('removeAudioTrack() has not been implemented.');
+  }
+
+  /// Extracts and caches thumbnail frames from [videoPath] at each timestamp
+  /// in [timestampsMs] (milliseconds) and returns a list of absolute
+  /// file-system paths to the cached JPEG images.
+  ///
+  /// [width] controls the pixel width of the output thumbnails (height is
+  /// scaled proportionally). Defaults to 120 px.
+  ///
+  /// Results are cached by `(videoPath, timestampMs, width)` — a second
+  /// identical call is served from cache without re-extraction.
+  Future<List<String>> generateThumbnails(
+    String videoPath,
+    List<int> timestampsMs, {
+    int width = 120,
+  }) {
+    throw UnimplementedError('generateThumbnails() has not been implemented.');
+  }
 }

@@ -22,6 +22,8 @@ struct TimelineClipDescriptor {
   var alignmentX: CGFloat
   var alignmentY: CGFloat
   var scale: CGFloat
+  /// Playback speed multiplier in the range [0.5, 2.0]. Default 1.0 (normal speed).
+  var speed: Double
   /// Trim start offset within the source file (milliseconds).
   var trimStartMs: Int64?
   /// Trim end point within the source file (milliseconds). Takes precedence
@@ -42,6 +44,7 @@ struct TimelineClipDescriptor {
     let alignment = dictionary["alignment"] as? [String: Any]
     let scaleValue = dictionary["scale"] as? NSNumber
     let durationValue = dictionary["durationMs"] as? NSNumber
+    let speedValue = (dictionary["speed"] as? NSNumber)?.doubleValue ?? 1.0
 
     self.path = path
     self.type = type
@@ -49,6 +52,7 @@ struct TimelineClipDescriptor {
     self.alignmentX = CGFloat((alignment?["x"] as? NSNumber)?.doubleValue ?? 0)
     self.alignmentY = CGFloat((alignment?["y"] as? NSNumber)?.doubleValue ?? 0)
     self.scale = max(CGFloat(scaleValue?.doubleValue ?? 1), 0.01)
+    self.speed = min(max(speedValue, 0.5), 2.0)
     self.trimStartMs = (dictionary["trimStartMs"] as? NSNumber)?.int64Value
     self.trimEndMs = (dictionary["trimEndMs"] as? NSNumber)?.int64Value
     if let transition = dictionary["transitionToNext"] as? [String: Any] {
@@ -93,6 +97,30 @@ struct TimelineExportAsset {
   let audioMix: AVAudioMix?
 }
 
+/// Describes an external audio track overlaid on the timeline.
+struct AudioTrackDescriptor {
+  let path: String
+  let offsetMs: Int64
+  let volume: Float
+  let trimStartMs: Int64?
+  let trimEndMs: Int64?
+  let fadeInMs: Int64?
+  let fadeOutMs: Int64?
+
+  init?(dictionary: [String: Any]) {
+    guard let path = dictionary["path"] as? String else {
+      return nil
+    }
+    self.path = path
+    self.offsetMs = (dictionary["offsetMs"] as? NSNumber)?.int64Value ?? 0
+    self.volume = (dictionary["volume"] as? NSNumber)?.floatValue ?? 1.0
+    self.trimStartMs = (dictionary["trimStartMs"] as? NSNumber)?.int64Value
+    self.trimEndMs = (dictionary["trimEndMs"] as? NSNumber)?.int64Value
+    self.fadeInMs = (dictionary["fadeInMs"] as? NSNumber)?.int64Value
+    self.fadeOutMs = (dictionary["fadeOutMs"] as? NSNumber)?.int64Value
+  }
+}
+
 final class TimelineComposition {
   private struct PreparedClip {
     let asset: AVURLAsset
@@ -112,6 +140,8 @@ final class TimelineComposition {
   private var generatedImageVideoURLs: [URL] = []
   private var renderSize = CGSize(width: 1280, height: 720)
   private var audioMix: AVAudioMix?
+  /// Currently set external audio track descriptor (nil = no external audio).
+  private(set) var currentAudioTrack: AudioTrackDescriptor?
 
   private(set) var totalDuration = CMTime.zero
 
@@ -119,13 +149,15 @@ final class TimelineComposition {
 
   func build(
     clips: [TimelineClipDescriptor],
-    config: TimelineCompositionConfig = TimelineCompositionConfig()
+    config: TimelineCompositionConfig = TimelineCompositionConfig(),
+    audioTrack: AudioTrackDescriptor? = nil
   ) throws -> AVPlayerItem {
     guard !clips.isEmpty else {
       throw TimelineCompositionError.emptyClips
     }
 
     self.clips = clips
+    if let audioTrack { self.currentAudioTrack = audioTrack }
     segments = []
     totalDuration = .zero
     audioMix = nil
@@ -171,8 +203,17 @@ final class TimelineComposition {
 
     var startTime = CMTime.zero
     for (index, prepared) in preparedClips.enumerated() {
+      let clip = clips[index]
+      let speed = max(clip.speed, 0.5)
       let sourceRange = CMTimeRange(start: prepared.sourceStart, duration: prepared.duration)
       try videoTrack.insertTimeRange(sourceRange, of: prepared.videoTrack, at: startTime)
+
+      // Scale the inserted video segment to achieve the desired playback speed.
+      // scaleTimeRange operates on composition-track time (from startTime),
+      // shrinking or stretching the media to fit the scaled duration.
+      let scaledVideoDuration = CMTimeMultiplyByFloat64(prepared.duration, multiplier: 1.0 / speed)
+      let compositionVideoRange = CMTimeRange(start: startTime, duration: prepared.duration)
+      videoTrack.scaleTimeRange(compositionVideoRange, toDuration: scaledVideoDuration)
 
       if let sourceAudioTrack = prepared.audioTrack, let audioTrack {
         let maxAudioDuration = CMTimeSubtract(prepared.asset.duration, prepared.sourceStart)
@@ -183,25 +224,75 @@ final class TimelineComposition {
             of: sourceAudioTrack,
             at: startTime
           )
+          // Scale audio independently — its source duration may differ from video.
+          let scaledAudioDuration = CMTimeMultiplyByFloat64(audioDuration, multiplier: 1.0 / speed)
+          let compositionAudioRange = CMTimeRange(start: startTime, duration: audioDuration)
+          audioTrack.scaleTimeRange(compositionAudioRange, toDuration: scaledAudioDuration)
         }
       }
 
+      // TimelineSegment uses the scaled (display) duration so that totalDuration,
+      // seekToClip, clipDurationsMs, and playbackState all stay correct.
       segments.append(
         TimelineSegment(
           clipIndex: index,
           startTime: startTime,
-          duration: prepared.duration,
+          duration: scaledVideoDuration,
           naturalSize: prepared.naturalSize,
           preferredTransform: prepared.preferredTransform,
           videoTrack: videoTrack,
           audioTrack: audioTrack
         )
       )
-      startTime = CMTimeAdd(startTime, prepared.duration)
+      startTime = CMTimeAdd(startTime, scaledVideoDuration)
     }
 
     totalDuration = startTime
-    audioMix = makeAudioMix()
+
+    // Insert external audio track (if set) as a separate composition track.
+    var externalAudioCompositionTrack: AVCompositionTrack? = nil
+    if let extTrack = currentAudioTrack {
+      let extAudioAsset = AVURLAsset(url: URL(fileURLWithPath: extTrack.path))
+      if let sourceAudioTrack = extAudioAsset.tracks(withMediaType: .audio).first,
+         let extTrackMutable = mutableComposition.addMutableTrack(
+           withMediaType: .audio,
+           preferredTrackID: kCMPersistentTrackID_Invalid
+         ) {
+        let assetDuration = extAudioAsset.duration.isNumeric
+          ? extAudioAsset.duration
+          : .zero
+        let offsetTime = cmTime(fromMilliseconds: extTrack.offsetMs)
+        let sourceStart: CMTime
+        if let trimStartMs = extTrack.trimStartMs {
+          sourceStart = cmTime(fromMilliseconds: trimStartMs)
+        } else {
+          sourceStart = .zero
+        }
+        let sourceDuration: CMTime
+        if let trimEndMs = extTrack.trimEndMs {
+          let trimEnd = cmTime(fromMilliseconds: trimEndMs)
+          let raw = CMTimeSubtract(trimEnd, sourceStart)
+          sourceDuration = isPositive(raw) ? raw : assetDuration
+        } else {
+          let available = CMTimeSubtract(assetDuration, sourceStart)
+          sourceDuration = isPositive(available) ? available : assetDuration
+        }
+        let timelineRemaining = CMTimeSubtract(totalDuration, offsetTime)
+        let clampedSourceDuration = CMTimeMinimum(sourceDuration, timelineRemaining)
+        if isPositive(clampedSourceDuration) {
+          try? extTrackMutable.insertTimeRange(
+            CMTimeRange(start: sourceStart, duration: clampedSourceDuration),
+            of: sourceAudioTrack,
+            at: offsetTime
+          )
+          externalAudioCompositionTrack = extTrackMutable
+        }
+      }
+    }
+
+    audioMix = makeAudioMix(externalAudioTrack: externalAudioCompositionTrack,
+                             externalDescriptor: currentAudioTrack,
+                             timelineEnd: totalDuration)
     self.composition = mutableComposition
 
     let playerItem = AVPlayerItem(asset: mutableComposition)
@@ -211,7 +302,16 @@ final class TimelineComposition {
   }
 
   /// Rebuilds from the current `clips` list without accepting new clips.
-  func rebuildAsPlayerItem(config: TimelineCompositionConfig) throws -> AVPlayerItem {
+  ///
+  /// Pass `clearAudioTrack: true` to rebuild without any external audio track
+  /// (used by `removeAudioTrack`).
+  func rebuildAsPlayerItem(
+    config: TimelineCompositionConfig,
+    clearAudioTrack: Bool = false
+  ) throws -> AVPlayerItem {
+    if clearAudioTrack {
+      currentAudioTrack = nil
+    }
     return try build(clips: clips, config: config)
   }
 
@@ -227,9 +327,38 @@ final class TimelineComposition {
     )
   }
 
-  /// Builds an export asset from the current (edited) clips list.
+  /// Builds an export asset from the current (edited) clips list, including
+  /// any active external audio track.
   func buildCurrentExportAsset(config: TimelineCompositionConfig) throws -> TimelineExportAsset {
     return try buildExportAsset(clips: clips, config: config)
+  }
+
+  /// Sets the external audio track and marks it as current for subsequent
+  /// rebuild calls. Does NOT trigger a rebuild — the caller is responsible.
+  func setAudioTrack(_ descriptor: AudioTrackDescriptor) {
+    currentAudioTrack = descriptor
+  }
+
+  /// Clears the external audio track. Does NOT trigger a rebuild.
+  func clearAudioTrack() {
+    currentAudioTrack = nil
+  }
+
+  func makeEditSnapshot() -> TimelineEditSnapshot {
+    return TimelineEditSnapshot(clips: clips, audioTrack: currentAudioTrack)
+  }
+
+  func restoreEditSnapshot(_ snapshot: TimelineEditSnapshot) {
+    clips = snapshot.clips
+    currentAudioTrack = snapshot.audioTrack
+  }
+
+  var clipCount: Int {
+    return clips.count
+  }
+
+  var hasAudioTrack: Bool {
+    return currentAudioTrack != nil
   }
 
   // MARK: - Mutation
@@ -290,6 +419,15 @@ final class TimelineComposition {
   func replaceClip(at index: Int, with descriptor: TimelineClipDescriptor) {
     guard clips.indices.contains(index) else { return }
     clips[index] = descriptor
+  }
+
+  /// Updates the speed of the clip at `index` and marks the composition dirty.
+  ///
+  /// The caller must call `rebuildAsPlayerItem(config:)` afterwards to apply
+  /// the change to the active `AVPlayer`.
+  func setClipSpeed(at index: Int, speed: Double) {
+    guard clips.indices.contains(index) else { return }
+    clips[index].speed = min(max(speed, 0.5), 2.0)
   }
 
   // MARK: - Queries
@@ -386,9 +524,14 @@ final class TimelineComposition {
     return layerInstruction
   }
 
-  private func makeAudioMix() -> AVAudioMix? {
+  private func makeAudioMix(
+    externalAudioTrack: AVCompositionTrack? = nil,
+    externalDescriptor: AudioTrackDescriptor? = nil,
+    timelineEnd: CMTime = .zero
+  ) -> AVAudioMix? {
     var parametersByTrackId: [CMPersistentTrackID: AVMutableAudioMixInputParameters] = [:]
 
+    // Clip audio tracks — set full volume at each segment's start time.
     for segment in segments {
       guard let audioTrack = segment.audioTrack else {
         continue
@@ -398,6 +541,55 @@ final class TimelineComposition {
         AVMutableAudioMixInputParameters(track: audioTrack)
       parameters.setVolume(1, at: segment.startTime)
       parametersByTrackId[audioTrack.trackID] = parameters
+    }
+
+    // External audio track — apply volume, fade-in, and fade-out ramps.
+    if let extTrack = externalAudioTrack, let descriptor = externalDescriptor {
+      let parameters = AVMutableAudioMixInputParameters(track: extTrack)
+      let volume = descriptor.volume.isNaN ? 1.0 : max(0, min(descriptor.volume, 1))
+      let offsetTime = cmTime(fromMilliseconds: descriptor.offsetMs)
+
+      // Determine the end of the external audio region in composition time.
+      var extDuration: CMTime
+      if let trimEndMs = descriptor.trimEndMs {
+        let trimEnd = cmTime(fromMilliseconds: trimEndMs)
+        let trimStart = descriptor.trimStartMs.map { cmTime(fromMilliseconds: $0) } ?? .zero
+        extDuration = CMTimeSubtract(trimEnd, trimStart)
+      } else {
+        // Duration is whatever fits before the timeline end.
+        extDuration = CMTimeSubtract(timelineEnd, offsetTime)
+      }
+      let timelineRemaining = CMTimeSubtract(timelineEnd, offsetTime)
+      extDuration = CMTimeMinimum(extDuration, timelineRemaining)
+      let extEnd = CMTimeAdd(offsetTime, isPositive(extDuration) ? extDuration : .zero)
+
+      if let fadeInMs = descriptor.fadeInMs, fadeInMs > 0 {
+        let fadeInDuration = cmTime(fromMilliseconds: fadeInMs)
+        parameters.setVolumeRamp(
+          fromStartVolume: 0,
+          toEndVolume: volume,
+          timeRange: CMTimeRange(start: offsetTime, duration: fadeInDuration)
+        )
+        // Hold volume after fade-in
+        let afterFadeIn = CMTimeAdd(offsetTime, fadeInDuration)
+        parameters.setVolume(volume, at: afterFadeIn)
+      } else {
+        parameters.setVolume(volume, at: offsetTime)
+      }
+
+      if let fadeOutMs = descriptor.fadeOutMs, fadeOutMs > 0, isPositive(extEnd) {
+        let fadeOutDuration = cmTime(fromMilliseconds: fadeOutMs)
+        let fadeOutStart = CMTimeSubtract(extEnd, fadeOutDuration)
+        if isPositive(fadeOutStart) {
+          parameters.setVolumeRamp(
+            fromStartVolume: volume,
+            toEndVolume: 0,
+            timeRange: CMTimeRange(start: fadeOutStart, duration: fadeOutDuration)
+          )
+        }
+      }
+
+      parametersByTrackId[extTrack.trackID] = parameters
     }
 
     guard !parametersByTrackId.isEmpty else {

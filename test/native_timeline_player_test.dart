@@ -26,6 +26,11 @@ class MockVideoUltraPlayerPlatform
   Map<String, dynamic>? lastClipPayload;
   int? lastFromIndex;
   int? lastToIndex;
+  double? lastSpeed;
+  String? lastGenerateThumbnailsPath;
+  List<int>? lastGenerateThumbnailsTimestampsMs;
+  int? lastGenerateThumbnailsWidth;
+  Map<String, dynamic>? lastAudioTrackPayload;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
   final exportProgressController =
       StreamController<TimelineExportProgress>.broadcast();
@@ -200,6 +205,54 @@ class MockVideoUltraPlayerPlatform
     lastClipIndex = clipIndex;
     lastClipPayload = clip;
   }
+
+  @override
+  Future<void> setClipSpeed(int textureId, int clipIndex, double speed) async {
+    calls.add('setClipSpeed');
+    lastTextureId = textureId;
+    lastClipIndex = clipIndex;
+    lastSpeed = speed;
+  }
+
+  @override
+  Future<void> undo(int textureId) async {
+    calls.add('undo');
+    lastTextureId = textureId;
+  }
+
+  @override
+  Future<void> redo(int textureId) async {
+    calls.add('redo');
+    lastTextureId = textureId;
+  }
+
+  @override
+  Future<List<String>> generateThumbnails(
+    String videoPath,
+    List<int> timestampsMs, {
+    int width = 120,
+  }) async {
+    calls.add('generateThumbnails');
+    lastGenerateThumbnailsPath = videoPath;
+    lastGenerateThumbnailsTimestampsMs = timestampsMs;
+    lastGenerateThumbnailsWidth = width;
+    return timestampsMs
+        .map((ts) => '/tmp/thumb_${ts}_$width.jpg')
+        .toList();
+  }
+
+  @override
+  Future<void> setAudioTrack(int textureId, Map<String, dynamic> track) async {
+    calls.add('setAudioTrack');
+    lastTextureId = textureId;
+    lastAudioTrackPayload = track;
+  }
+
+  @override
+  Future<void> removeAudioTrack(int textureId) async {
+    calls.add('removeAudioTrack');
+    lastTextureId = textureId;
+  }
 }
 
 void main() {
@@ -244,6 +297,7 @@ void main() {
         'durationMs': 2000,
         'alignment': <String, double>{'x': -1, 'y': -1},
         'scale': 1.25,
+        'speed': 1.0,
       },
     ]);
     expect(fakePlatform.lastConfig, {
@@ -293,6 +347,7 @@ void main() {
           'durationMs': 2000,
           'alignment': <String, double>{'x': 1, 'y': 1},
           'scale': 1.5,
+          'speed': 1.0,
         },
       ]);
       expect(fakePlatform.lastConfig, {
@@ -449,6 +504,8 @@ void main() {
 
     expect(() => player.play(), throwsStateError);
     expect(() => player.seekToClip(0), throwsStateError);
+    expect(() => player.undo(), throwsStateError);
+    expect(() => player.redo(), throwsStateError);
     expect(() => player.stateStream, throwsStateError);
   });
 
@@ -612,6 +669,22 @@ void main() {
       await firstExport;
       fakePlatform.exportCompleter = null;
     });
+
+    test('setClipSpeed forwards clipIndex and speed to platform', () async {
+      await player.setClipSpeed(0, 1.5);
+      expect(fakePlatform.calls, contains('setClipSpeed'));
+      expect(fakePlatform.lastClipIndex, 0);
+      expect(fakePlatform.lastSpeed, 1.5);
+      expect(fakePlatform.lastTextureId, 42);
+    });
+
+    test('undo and redo delegate to platform with textureId', () async {
+      await player.undo();
+      await player.redo();
+
+      expect(fakePlatform.calls, containsAllInOrder(['undo', 'redo']));
+      expect(fakePlatform.lastTextureId, 42);
+    });
   });
 
   group('editing argument validation', () {
@@ -665,6 +738,106 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+
+    test('setClipSpeed rejects negative clipIndex', () {
+      expect(() => player.setClipSpeed(-1, 1.0), throwsArgumentError);
+    });
+
+    test('setClipSpeed rejects speed below 0.5', () {
+      expect(() => player.setClipSpeed(0, 0.3), throwsRangeError);
+    });
+
+    test('setClipSpeed rejects speed above 2.0', () {
+      expect(() => player.setClipSpeed(0, 2.5), throwsRangeError);
+    });
+  });
+
+  group('generateThumbnails', () {
+    test(
+        'delegates to platform with converted milliseconds and default width',
+        () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+
+      final paths = await player.generateThumbnails(
+        '/path/video.mp4',
+        [Duration.zero, const Duration(seconds: 1)],
+      );
+
+      expect(fakePlatform.calls, contains('generateThumbnails'));
+      expect(fakePlatform.lastGenerateThumbnailsPath, '/path/video.mp4');
+      expect(fakePlatform.lastGenerateThumbnailsTimestampsMs, [0, 1000]);
+      expect(fakePlatform.lastGenerateThumbnailsWidth, 120);
+      expect(paths, ['/tmp/thumb_0_120.jpg', '/tmp/thumb_1000_120.jpg']);
+    });
+
+    test('forwards custom width to platform', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+
+      await player.generateThumbnails(
+        '/path/video.mp4',
+        [const Duration(milliseconds: 500)],
+        width: 240,
+      );
+
+      expect(fakePlatform.lastGenerateThumbnailsWidth, 240);
+    });
+
+    test('returns empty list for empty timestamp list', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+
+      final paths = await player.generateThumbnails('/path/video.mp4', []);
+
+      expect(paths, isEmpty);
+    });
+  });
+
+  // ── Audio track ──────────────────────────────────────────────────────────
+
+  group('setAudioTrack', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      const track = AudioTrack(path: '/music/bg.mp3');
+      expect(() => player.setAudioTrack(track), throwsStateError);
+    });
+
+    test('calls platform.setAudioTrack with textureId and serialized track after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+
+      const track = AudioTrack(
+        path: '/music/bg.mp3',
+        offset: Duration(seconds: 1),
+        volume: 0.8,
+      );
+      await player.setAudioTrack(track);
+
+      expect(fakePlatform.calls, contains('setAudioTrack'));
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastAudioTrackPayload?['path'], '/music/bg.mp3');
+      expect(fakePlatform.lastAudioTrackPayload?['offsetMs'], 1000);
+      expect(fakePlatform.lastAudioTrackPayload?['volume'], 0.8);
+    });
+  });
+
+  group('removeAudioTrack', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.removeAudioTrack(), throwsStateError);
+    });
+
+    test('calls platform.removeAudioTrack with textureId after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+
+      await player.removeAudioTrack();
+
+      expect(fakePlatform.calls, contains('removeAudioTrack'));
+      expect(fakePlatform.lastTextureId, 42);
     });
   });
 }

@@ -164,6 +164,75 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       } catch {
         result(FlutterError(code: "edit_failed", message: "replaceClip failed", details: "\(error)"))
       }
+    case "setClipSpeed":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let clipIndex = args["clipIndex"] as? NSNumber,
+            let speed = args["speed"] as? NSNumber
+      else { return }
+      do {
+        try controller.setClipSpeed(at: clipIndex.intValue, speed: speed.doubleValue)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "setClipSpeed failed", details: "\(error)"))
+      }
+    case "undo":
+      guard let controller = controller(for: call, result: result) else { return }
+      do {
+        try controller.undo()
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "undo failed", details: "\(error)"))
+      }
+    case "redo":
+      guard let controller = controller(for: call, result: result) else { return }
+      do {
+        try controller.redo()
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "redo failed", details: "\(error)"))
+      }
+    case "setAudioTrack":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let trackDict = args["track"] as? [String: Any],
+            let descriptor = AudioTrackDescriptor(dictionary: trackDict)
+      else { return }
+      do {
+        try controller.setAudioTrack(descriptor)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "setAudioTrack failed", details: "\(error)"))
+      }
+    case "removeAudioTrack":
+      guard let controller = controller(for: call, result: result) else { return }
+      do {
+        try controller.removeAudioTrack()
+        result(nil)
+      } catch {
+        result(FlutterError(code: "edit_failed", message: "removeAudioTrack failed", details: "\(error)"))
+      }
+    case "generateThumbnails":
+      guard let args = call.arguments as? [String: Any],
+            let videoPath = args["videoPath"] as? String,
+            let timestampsMs = args["timestampsMs"] as? [Int],
+            let width = args["width"] as? Int else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "generateThumbnails requires videoPath (String), timestampsMs ([Int]), width (Int)",
+          details: nil
+        ))
+        return
+      }
+      ThumbnailGenerator.shared.generate(
+        videoPath: videoPath,
+        timestampsMs: timestampsMs,
+        width: width
+      ) { paths in
+        DispatchQueue.main.async {
+          result(paths)
+        }
+      }
     case "dispose":
       guard let textureId = textureId(from: call.arguments, result: result),
             let controller = controllers.removeValue(forKey: textureId)
@@ -468,6 +537,7 @@ private final class TimelinePlayerController {
   private let player: AVPlayer
   private let texture: TimelineTexture
   private let textureRegistry: FlutterTextureRegistry
+  private let editHistory = TimelineEditModel()
   private var timeObserver: Any?
   private var currentConfig: TimelineCompositionConfig
 
@@ -532,6 +602,10 @@ private final class TimelinePlayerController {
   }
 
   func setClipAlignment(clipIndex: Int, x: CGFloat, y: CGFloat) {
+    guard clipIndex >= 0, clipIndex < composition.clipCount else {
+      return
+    }
+    pushEditSnapshot()
     guard let videoComposition = composition.updateAlignment(
       clipIndex: clipIndex,
       x: x,
@@ -546,38 +620,100 @@ private final class TimelinePlayerController {
   // MARK: - Editing
 
   func trimClip(at index: Int, trimStartMs: Int64?, trimEndMs: Int64?) throws {
+    guard index >= 0, index < composition.clipCount else { return }
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.trimClip(at: index, trimStartMs: trimStartMs, trimEndMs: trimEndMs)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
   func splitClip(at index: Int, atLocalMs: Int64) throws {
+    guard index >= 0, index < composition.clipCount, atLocalMs > 0 else { return }
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.splitClip(at: index, atLocalMs: atLocalMs)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
   func insertClip(_ clip: TimelineClipDescriptor, at index: Int) throws {
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.insertClip(clip, at: index)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
   func removeClip(at index: Int) throws {
+    guard index >= 0, index < composition.clipCount else { return }
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.removeClip(at: index)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
   func moveClip(from: Int, to: Int) throws {
+    guard from >= 0, from < composition.clipCount,
+          to >= 0, to < composition.clipCount,
+          from != to
+    else { return }
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.moveClip(from: from, to: to)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
   func replaceClip(at index: Int, with clip: TimelineClipDescriptor) throws {
+    guard index >= 0, index < composition.clipCount else { return }
     let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
     composition.replaceClip(at: index, with: clip)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func setClipSpeed(at index: Int, speed: Double) throws {
+    guard index >= 0, index < composition.clipCount else { return }
+    let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
+    composition.setClipSpeed(at: index, speed: speed)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func setAudioTrack(_ descriptor: AudioTrackDescriptor) throws {
+    let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
+    composition.setAudioTrack(descriptor)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func removeAudioTrack() throws {
+    guard composition.hasAudioTrack else {
+      emitState()
+      return
+    }
+    let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
+    composition.clearAudioTrack()
+    try rebuildPreservingPlayback(positionMs: positionMs, clearAudioTrack: true)
+  }
+
+  func undo() throws {
+    let current = composition.makeEditSnapshot()
+    guard let snapshot = editHistory.undo(current: current) else {
+      emitState()
+      return
+    }
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.restoreEditSnapshot(snapshot)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
+  func redo() throws {
+    let current = composition.makeEditSnapshot()
+    guard let snapshot = editHistory.redo(current: current) else {
+      emitState()
+      return
+    }
+    let positionMs = player.currentTime().timelineMilliseconds
+    composition.restoreEditSnapshot(snapshot)
     try rebuildPreservingPlayback(positionMs: positionMs)
   }
 
@@ -601,6 +737,8 @@ private final class TimelinePlayerController {
       "isPlaying": player.rate != 0,
       "totalDuration": composition.totalDuration.timelineMilliseconds,
       "clipDurationsMs": composition.clipDurationsMs,
+      "canUndo": editHistory.canUndo,
+      "canRedo": editHistory.canRedo,
     ])
   }
 
@@ -617,9 +755,15 @@ private final class TimelinePlayerController {
 
   // MARK: - Private
 
-  private func rebuildPreservingPlayback(positionMs: Int64) throws {
+  private func rebuildPreservingPlayback(
+    positionMs: Int64,
+    clearAudioTrack: Bool = false
+  ) throws {
     let wasPlaying = player.rate != 0
-    let newItem = try composition.rebuildAsPlayerItem(config: currentConfig)
+    let newItem = try composition.rebuildAsPlayerItem(
+      config: currentConfig,
+      clearAudioTrack: clearAudioTrack
+    )
 
     NotificationCenter.default.removeObserver(
       self,
@@ -648,6 +792,10 @@ private final class TimelinePlayerController {
       if wasPlaying { self?.player.play() }
       self?.emitState()
     }
+  }
+
+  private func pushEditSnapshot() {
+    editHistory.pushSnapshot(composition.makeEditSnapshot())
   }
 
   private func addObservers() {

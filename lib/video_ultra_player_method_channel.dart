@@ -219,6 +219,62 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
     });
   }
 
+  @override
+  Future<void> setClipSpeed(int textureId, int clipIndex, double speed) {
+    return methodChannel.invokeMethod<void>('setClipSpeed', <String, Object?>{
+      'textureId': textureId,
+      'clipIndex': clipIndex,
+      'speed': speed,
+    });
+  }
+
+  @override
+  Future<void> undo(int textureId) {
+    return methodChannel.invokeMethod<void>('undo', _textureArgs(textureId));
+  }
+
+  @override
+  Future<void> redo(int textureId) {
+    return methodChannel.invokeMethod<void>('redo', _textureArgs(textureId));
+  }
+
+  // ── Audio track ──────────────────────────────────────────────────────────
+
+  @override
+  Future<void> setAudioTrack(int textureId, Map<String, dynamic> track) {
+    return methodChannel.invokeMethod<void>(
+      'setAudioTrack',
+      <String, Object?>{'textureId': textureId, 'track': track},
+    );
+  }
+
+  @override
+  Future<void> removeAudioTrack(int textureId) {
+    return methodChannel.invokeMethod<void>(
+      'removeAudioTrack',
+      <String, Object?>{'textureId': textureId},
+    );
+  }
+
+  // ── Thumbnail generation ────────────────────────────────────────────────
+
+  @override
+  Future<List<String>> generateThumbnails(
+    String videoPath,
+    List<int> timestampsMs, {
+    int width = 120,
+  }) async {
+    final result = await methodChannel.invokeMethod<List<dynamic>>(
+      'generateThumbnails',
+      <String, Object?>{
+        'videoPath': videoPath,
+        'timestampsMs': timestampsMs,
+        'width': width,
+      },
+    );
+    return result?.cast<String>() ?? [];
+  }
+
   Map<String, Object?> _textureArgs(int textureId) {
     return <String, Object?>{'textureId': textureId};
   }

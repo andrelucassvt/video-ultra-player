@@ -155,6 +155,8 @@ void main() {
       'localPosition': 400,
       'isPlaying': true,
       'totalDuration': 3000,
+      'canUndo': true,
+      'canRedo': false,
     });
 
     expect(state.globalPosition, const Duration(milliseconds: 1200));
@@ -162,6 +164,8 @@ void main() {
     expect(state.localPosition, const Duration(milliseconds: 400));
     expect(state.isPlaying, isTrue);
     expect(state.totalDuration, const Duration(milliseconds: 3000));
+    expect(state.canUndo, isTrue);
+    expect(state.canRedo, isFalse);
   });
 
   test('TimelinePlayerState.fromMap parses clipDurationsMs', () {
@@ -295,6 +299,79 @@ void main() {
         'textureId': 77,
         'outputPath': '/tmp/out.mp4',
       });
+    });
+
+    test('setClipSpeed sends correct payload', () async {
+      await platform.setClipSpeed(77, 2, 1.5);
+      expect(calls.single.method, 'setClipSpeed');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'clipIndex': 2,
+        'speed': 1.5,
+      });
+    });
+
+    test('undo sends correct payload', () async {
+      await platform.undo(77);
+      expect(calls.single.method, 'undo');
+      expect(calls.single.arguments, {'textureId': 77});
+    });
+
+    test('redo sends correct payload', () async {
+      await platform.redo(77);
+      expect(calls.single.method, 'redo');
+      expect(calls.single.arguments, {'textureId': 77});
+    });
+
+    test('generateThumbnails sends correct payload', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+            calls.add(methodCall);
+            if (methodCall.method == 'generateThumbnails') {
+              return <String>['/tmp/t0.jpg', '/tmp/t1000.jpg'];
+            }
+            return null;
+          });
+
+      final paths = await platform.generateThumbnails(
+        '/path/video.mp4',
+        [0, 1000],
+        width: 120,
+      );
+
+      expect(calls.single.method, 'generateThumbnails');
+      expect(calls.single.arguments, {
+        'videoPath': '/path/video.mp4',
+        'timestampsMs': [0, 1000],
+        'width': 120,
+      });
+      expect(paths, ['/tmp/t0.jpg', '/tmp/t1000.jpg']);
+    });
+
+    test('setAudioTrack sends correct payload', () async {
+      await platform.setAudioTrack(
+        77,
+        <String, dynamic>{
+          'path': '/music/bg.mp3',
+          'offsetMs': 1000,
+          'volume': 0.8,
+        },
+      );
+      expect(calls.single.method, 'setAudioTrack');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'track': {
+          'path': '/music/bg.mp3',
+          'offsetMs': 1000,
+          'volume': 0.8,
+        },
+      });
+    });
+
+    test('removeAudioTrack sends correct payload', () async {
+      await platform.removeAudioTrack(77);
+      expect(calls.single.method, 'removeAudioTrack');
+      expect(calls.single.arguments, {'textureId': 77});
     });
   });
 }

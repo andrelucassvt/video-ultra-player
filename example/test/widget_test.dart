@@ -4,12 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_ultra_player_example/main.dart';
 
 void main() {
-  testWidgets('renders timeline demo controls', (WidgetTester tester) async {
-    await tester.pumpWidget(const TimelineDemoApp(autoLoad: false));
+  testWidgets('renders editor shell controls', (WidgetTester tester) async {
+    await tester.pumpWidget(const TimelineEditorApp(autoLoad: false));
 
-    expect(find.text('Native Timeline Player'), findsOneWidget);
-    expect(find.text('Choose videos'), findsOneWidget);
-    expect(find.text('Load sample'), findsOneWidget);
+    expect(find.text('Meu vídeo'), findsOneWidget);
+    expect(find.text('1080p'), findsOneWidget);
+    expect(find.text('Exportar'), findsOneWidget);
+    expect(find.text('Dividir'), findsOneWidget);
+    expect(find.text('Velocidade'), findsOneWidget);
+    expect(find.text('Proporção'), findsOneWidget);
+    expect(find.text('Excluir'), findsOneWidget);
     expect(find.byIcon(Icons.video_library_outlined), findsOneWidget);
   });
 }
