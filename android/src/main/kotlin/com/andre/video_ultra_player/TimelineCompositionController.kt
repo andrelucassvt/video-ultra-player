@@ -576,18 +576,21 @@ private fun audioSequenceFor(
         .setUri(Uri.fromFile(File(track.path)))
 
     val trimStartMs = track.effectiveTrimStartMs
-    val trimEndMs = track.effectiveTrimEndMs
-    if (trimStartMs > 0L || trimEndMs != null) {
+    val maxDurationMs = (timelineDurationMs - track.offsetMs).coerceAtLeast(1L)
+    // Cap to what the timeline can actually fit so durationUs == clipping range (Media3 requires this).
+    val effectiveDurationMs = min(track.trimmedDurationMs, maxDurationMs)
+    val durationUs = effectiveDurationMs * 1_000L
+
+    // The end position in the source file that matches our effective duration.
+    val clippingEndMs = trimStartMs + effectiveDurationMs
+    if (trimStartMs > 0L || clippingEndMs < track.sourceDurationMs) {
         val clippingBuilder = MediaItem.ClippingConfiguration.Builder()
         if (trimStartMs > 0L) {
             clippingBuilder.setStartPositionMs(trimStartMs)
         }
-        trimEndMs?.let { clippingBuilder.setEndPositionMs(it) }
+        clippingBuilder.setEndPositionMs(clippingEndMs)
         mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
     }
-
-    val maxDurationMs = (timelineDurationMs - track.offsetMs).coerceAtLeast(1L)
-    val durationUs = min(track.trimmedDurationMs, maxDurationMs) * 1_000L
     val audioEffects = listOf(
         GainProcessor(
             AudioTrackGainProvider(

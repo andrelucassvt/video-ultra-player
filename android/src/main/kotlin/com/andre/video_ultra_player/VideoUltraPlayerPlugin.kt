@@ -3,6 +3,7 @@ package com.andre.video_ultra_player
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -195,7 +196,12 @@ class VideoUltraPlayerPlugin :
                     controller.setAudioTrack(track)
                     result.success(null)
                 } catch (error: Throwable) {
-                    result.error("edit_failed", "setAudioTrack failed: ${error.message}", null)
+                    Log.e("VideoUltraPlayer", "setAudioTrack failed", error)
+                    result.error(
+                        "edit_failed",
+                        "setAudioTrack failed: ${error.message ?: error.toString()}",
+                        Log.getStackTraceString(error)
+                    )
                 }
             }
             "removeAudioTrack" -> withController(call, result) { controller ->
