@@ -2,7 +2,7 @@
 
 A Flutter plugin for previewing and exporting a native gapless media timeline made from local video and image files. Renders into a single Flutter `Texture` backed by AVFoundation (iOS) and AndroidX Media3 (Android).
 
-![Editor wireframe](https://raw.githubusercontent.com/andrelucassvt/video-ultra-player/master/wireframe-en.png)
+<img src="https://raw.githubusercontent.com/andrelucassvt/video-ultra-player/master/wireframe-en.png" width="480" alt="Editor wireframe">
 
 ## Features
 

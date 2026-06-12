@@ -1,3 +1,7 @@
+## 2.0.3
+
+- Constrained wireframe image to 480 px wide in README.
+
 ## 2.0.2
 
 - Trimmed README to reduce size on pub.dev (552 → 183 lines).
