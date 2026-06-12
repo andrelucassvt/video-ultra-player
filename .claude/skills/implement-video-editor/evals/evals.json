@@ -1,0 +1,48 @@
+{
+  "skill_name": "implement-video-editor",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Acabei de adicionar o video_ultra_player como dependência de path no meu app Flutter. Quero que você monte o editor de vídeo igual ao do example, com o mesmo design escuro, e uma tela antes pra eu escolher os vídeos e imagens da galeria que vão pro editor.",
+      "expected_output": "Editor scaffolded into lib/editor (theme, controller, screen, widgets) + lib/media (media_picker_screen, media_clip), package token rewritten, main wired to MediaPickerScreen, deps + iOS/Android permissions added, flutter analyze clean.",
+      "files": [],
+      "assertions": [
+        "lib/editor/editor_screen.dart, lib/editor/editor_controller.dart, lib/editor/theme/editor_theme.dart and lib/editor/widgets/*.dart exist",
+        "lib/media/media_picker_screen.dart and lib/media/media_clip.dart exist",
+        "no occurrence of the token 'video_ultra_player_example' remains under lib/",
+        "editor_controller.dart defines loadClips( and no longer references loadSample or _copyAssetToTempFile",
+        "media_picker_screen.dart calls pickMultipleMedia and navigates to EditorScreen(clips:",
+        "editor_theme.dart contains the accent color 0xfff5c518",
+        "pubspec.yaml lists image_picker, file_picker, gal and video_ultra_player",
+        "ios/Runner/Info.plist contains NSPhotoLibraryUsageDescription",
+        "android AndroidManifest.xml contains WRITE_EXTERNAL_STORAGE",
+        "flutter analyze reports no issues"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Build me the CapCut-style timeline editor like in the plugin's example app, keeping the exact same look. Users must first land on a screen to pick the videos and photos they want, then go into the editor where they can split, trim, change speed, add an audio track and export.",
+      "expected_output": "Same as eval 1: full editor + media-picker screen scaffolded, design preserved, all editor features intact, analyze clean.",
+      "files": [],
+      "assertions": [
+        "the media-picker screen is the entry point and pushes the editor with the selected clips",
+        "the editor keeps split/trim/speed/audio/export features (bottom_toolbar.dart, speed_sheet.dart, audio_track_row.dart present)",
+        "no occurrence of the token 'video_ultra_player_example' remains under lib/",
+        "editor_theme.dart contains the accent color 0xfff5c518",
+        "flutter analyze reports no issues"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "quero adicionar a tela de seleção de mídia (vídeos e imagens) na frente do editor de timeline no meu projeto, mantendo o visual do example",
+      "expected_output": "Picker screen generated in the same dark theme, building TimelineClips (3s default for images) and routing into EditorScreen; editor scaffolded if not present.",
+      "files": [],
+      "assertions": [
+        "media_clip.dart maps image paths to a clip with a default duration and video paths to MediaType.video with null duration",
+        "media_picker_screen.dart uses the shared theme constants (editorBackground/editorAccent) so it matches the editor",
+        "media_picker_screen.dart pushes EditorScreen(clips:",
+        "flutter analyze reports no issues"
+      ]
+    }
+  ]
+}
