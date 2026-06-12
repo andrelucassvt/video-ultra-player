@@ -210,7 +210,11 @@ class _TimelineHeader extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const Spacer(),
-          const Icon(Icons.zoom_out, size: 16),
+          IconButton(
+            icon: Icon(Icons.zoom_out, size: 16),
+            onPressed: () =>
+                controller.setPixelsPerSecond(controller.pixelsPerSecond - 10),
+          ),
           SizedBox(
             width: 96,
             child: Slider(
@@ -220,7 +224,11 @@ class _TimelineHeader extends StatelessWidget {
               onChanged: controller.setPixelsPerSecond,
             ),
           ),
-          const Icon(Icons.zoom_in, size: 16),
+          IconButton(
+            icon: Icon(Icons.zoom_in, size: 16),
+            onPressed: () =>
+                controller.setPixelsPerSecond(controller.pixelsPerSecond + 10),
+          ),
         ],
       ),
     );

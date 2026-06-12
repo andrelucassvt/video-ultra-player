@@ -540,6 +540,8 @@ private final class TimelinePlayerController {
   private let editHistory = TimelineEditModel()
   private var timeObserver: Any?
   private var currentConfig: TimelineCompositionConfig
+  /// One-shot observer that forces the first frame once the initial item is ready.
+  private var firstFrameObserver: NSKeyValueObservation?
 
   init(
     clips: [TimelineClipDescriptor],
@@ -549,15 +551,16 @@ private final class TimelinePlayerController {
     self.textureRegistry = textureRegistry
     self.currentConfig = config
     let playerItem = try composition.build(clips: clips, config: config)
+    // Attach the video output to the item BEFORE handing it to AVPlayer so
+    // the output is part of the rendering pipeline from the very first frame.
+    let tex = TimelineTexture(playerItem: playerItem, textureRegistry: textureRegistry)
     player = AVPlayer(playerItem: playerItem)
-    texture = TimelineTexture(
-      playerItem: playerItem,
-      textureRegistry: textureRegistry
-    )
-    textureId = textureRegistry.register(texture)
-    texture.textureId = textureId
-    texture.start()
+    texture = tex
+    textureId = textureRegistry.register(tex)
+    tex.textureId = textureId
+    tex.start()
     addObservers()
+    observeInitialItemReady(playerItem)
   }
 
   // MARK: - Playback
@@ -743,6 +746,7 @@ private final class TimelinePlayerController {
   }
 
   func dispose() {
+    firstFrameObserver = nil
     if let timeObserver {
       player.removeTimeObserver(timeObserver)
     }
@@ -796,6 +800,24 @@ private final class TimelinePlayerController {
 
   private func pushEditSnapshot() {
     editHistory.pushSnapshot(composition.makeEditSnapshot())
+  }
+
+  /// Observes the player item's readiness one time. On iOS, AVPlayer only
+  /// pushes a pixel buffer to AVPlayerItemVideoOutput after an explicit seek
+  /// or play; without this, the Texture widget stays black while paused.
+  private func observeInitialItemReady(_ playerItem: AVPlayerItem) {
+    firstFrameObserver = playerItem.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+      guard item.status == .readyToPlay, let self else { return }
+      self.firstFrameObserver = nil  // one-shot
+      let time = self.player.currentTime()
+      self.player.seek(
+        to: time,
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+      ) { [weak self] _ in
+        self?.texture.requestFrame()
+      }
+    }
   }
 
   private func addObservers() {
