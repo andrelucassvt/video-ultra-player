@@ -229,6 +229,11 @@ class EditorController extends ChangeNotifier {
     if (state.isPlaying) {
       await _player.pause();
     } else {
+      final atEnd =
+          state.totalDuration > Duration.zero &&
+          state.globalPosition >=
+              state.totalDuration - const Duration(milliseconds: 100);
+      if (atEnd) await _player.seekTo(Duration.zero);
       await _player.play();
     }
   }
