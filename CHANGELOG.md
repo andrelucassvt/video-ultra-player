@@ -1,3 +1,7 @@
+## 2.0.2
+
+- Trimmed README to reduce size on pub.dev (552 → 183 lines).
+
 ## 2.0.1
 
 - Fixed README wireframe image not rendering on pub.dev (switched to absolute GitHub raw URL).
