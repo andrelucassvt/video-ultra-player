@@ -32,12 +32,10 @@ class ClipStrip extends StatelessWidget {
     for (var index = 0; index < clips.length; index++) {
       final clip = clips[index];
       final duration = durations[index];
-      final clipWidth = math.max(
-        76.0,
-        duration.inMilliseconds /
-            Duration.millisecondsPerSecond *
-            controller.pixelsPerSecond,
-      );
+      final clipWidth = (duration.inMilliseconds /
+              Duration.millisecondsPerSecond *
+              controller.pixelsPerSecond)
+          .clamp(4.0, double.infinity);
 
       children.add(
         DragTarget<int>(

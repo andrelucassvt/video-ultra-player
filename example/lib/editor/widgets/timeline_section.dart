@@ -57,36 +57,12 @@ class _TimelineSectionState extends State<TimelineSection> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final pixelsPerSecond = widget.controller.pixelsPerSecond;
-                final clipDurations = widget.controller.resolvedClipDurations(
-                  widget.state,
-                );
-                // Each clip has a minimum visual width of 76px; clips can exceed
-                // contentWidth after splits, which causes Row overflow. Ensure
-                // contentWidth covers the clips' total visual width.
-                final clipsVisualWidth = clipDurations.isEmpty
-                    ? 0.0
-                    : clipDurations.fold<double>(
-                            0.0,
-                            (sum, d) =>
-                                sum +
-                                math.max(
-                                  76.0,
-                                  d.inMilliseconds /
-                                      Duration.millisecondsPerSecond *
-                                      pixelsPerSecond,
-                                ),
-                          ) +
-                          8.0 * (clipDurations.length - 1);
                 final contentWidth = math.max(
                   constraints.maxWidth,
-                  math.max(
-                    timelineDuration.inMilliseconds /
-                            Duration.millisecondsPerSecond *
-                            pixelsPerSecond +
-                        28,
-                    clipsVisualWidth,
-                  ),
+                  timelineDuration.inMilliseconds /
+                          Duration.millisecondsPerSecond *
+                          widget.controller.pixelsPerSecond +
+                      28,
                 );
                 final playheadX = _positionToPixels(
                   position,
