@@ -78,9 +78,9 @@ class _EditorScreenState extends State<EditorScreen> {
                         message: _controller.error!,
                         isError: true,
                       )
-                    else if (_controller.exportPath != null)
+                    else if (_controller.exportMessage != null)
                       _EditorStatusBar(
-                        message: 'Exported to ${_controller.exportPath}',
+                        message: _controller.exportMessage!,
                         isError: false,
                       ),
                   ],

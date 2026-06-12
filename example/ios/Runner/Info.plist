@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Select videos from your library to preview them in the native timeline player.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save exported videos to your photo library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

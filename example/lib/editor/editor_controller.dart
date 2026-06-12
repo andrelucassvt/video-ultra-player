@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 
@@ -32,6 +33,7 @@ class EditorController extends ChangeNotifier {
   final bool _editBusy = false;
   String? _error;
   String? _exportPath;
+  String? _exportMessage;
   OutputAspectRatio _aspectRatio = OutputAspectRatio.ratio9x16;
   int _baseWidth = 1080;
   double _pixelsPerSecond = 72;
@@ -55,6 +57,7 @@ class EditorController extends ChangeNotifier {
   bool get editBusy => _editBusy;
   String? get error => _error;
   String? get exportPath => _exportPath;
+  String? get exportMessage => _exportMessage;
   OutputAspectRatio get aspectRatio => _aspectRatio;
   int get baseWidth => _baseWidth;
   String get resolutionLabel => '${_baseWidth}p';
@@ -165,6 +168,7 @@ class EditorController extends ChangeNotifier {
     _selectedClipIndex = 0;
     _timelineSource = source;
     _exportPath = null;
+    _exportMessage = null;
     _exportProgressStream = null;
     _thumbnailRequests.clear();
     _undoSnapshots.clear();
@@ -196,6 +200,7 @@ class EditorController extends ChangeNotifier {
     _exporting = true;
     _error = null;
     _exportPath = null;
+    _exportMessage = null;
     _exportProgressStream = null;
     _notify();
 
@@ -216,13 +221,36 @@ class EditorController extends ChangeNotifier {
       _notify();
       final exportedPath = await exportFuture;
 
-      _exportPath = exportedPath;
+      await _saveToGallery(exportedPath);
+
+      // O temp foi removido por _saveToGallery; a galeria é a cópia visível.
+      _exportPath = null;
+      _exportMessage = 'Salvo na galeria';
       _exporting = false;
       _notify();
     } catch (error) {
       _setError(error);
       _exporting = false;
       _notify();
+    }
+  }
+
+  Future<void> _saveToGallery(String path) async {
+    final hasAccess = await Gal.requestAccess(toAlbum: false);
+    if (!hasAccess) {
+      throw Exception('Permissão da galeria negada');
+    }
+
+    await Gal.putVideo(path);
+
+    // A galeria passa a ser a cópia visível; remove o arquivo temporário.
+    final tempFile = File(path);
+    if (await tempFile.exists()) {
+      try {
+        await tempFile.delete();
+      } catch (error) {
+        log('[EditorController] export: falha ao remover temp: $error');
+      }
     }
   }
 
