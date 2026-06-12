@@ -242,10 +242,10 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
 
   @override
   Future<void> setAudioTrack(int textureId, Map<String, dynamic> track) {
-    return methodChannel.invokeMethod<void>(
-      'setAudioTrack',
-      <String, Object?>{'textureId': textureId, 'track': track},
-    );
+    return methodChannel.invokeMethod<void>('setAudioTrack', <String, Object?>{
+      'textureId': textureId,
+      'track': track,
+    });
   }
 
   @override

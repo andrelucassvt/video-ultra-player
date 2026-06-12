@@ -284,21 +284,23 @@ class _ClipThumbnailRail extends StatelessWidget {
           return const _ClipFallbackIcon(icon: Icons.movie_creation_outlined);
         }
 
-        final thumbnailWidth = math.max(44.0, width / paths.length);
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final path in paths)
-              SizedBox(
-                width: thumbnailWidth,
-                child: Image.file(
-                  File(path),
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const _ClipFallbackIcon(icon: Icons.movie_outlined),
+        final thumbnailWidth = width / paths.length;
+        return ClipRect(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final path in paths)
+                SizedBox(
+                  width: thumbnailWidth,
+                  child: Image.file(
+                    File(path),
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const _ClipFallbackIcon(icon: Icons.movie_outlined),
+                  ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     );

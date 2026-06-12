@@ -55,7 +55,7 @@ class _ClipTrimHandlesState extends State<ClipTrimHandles> {
 
   @override
   Widget build(BuildContext context) {
-    final durationLabel = _formatSeconds(widget.duration);
+    final durationLabel = _formatSeconds(_trimEnd - _trimStart);
 
     return Stack(
       children: [
