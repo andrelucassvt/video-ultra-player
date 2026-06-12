@@ -552,9 +552,16 @@ private fun editedMediaItemFor(
         mediaItemBuilder.setClippingConfiguration(clippingBuilder.build())
     }
 
-    // setDurationUs is the source (pre-speed) duration for Media3 compositing.
+    // setDurationUs must be the full source duration (not the trimmed duration) because
+    // Media3 validates that clippingEndPositionMs * 1000 <= durationUs. Using the trimmed
+    // duration breaks this invariant whenever trimStartMs > 0 (e.g. after a split).
+    val sourceDurationUs = when {
+        clip.type == TimelineMediaType.IMAGE -> clip.resolvedDurationMs * 1_000L
+        clip.sourceDurationMs > 0 -> clip.sourceDurationMs * 1_000L
+        else -> clip.resolvedDurationMs * 1_000L
+    }
     val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
-        .setDurationUs(clip.resolvedDurationMs * 1_000L)
+        .setDurationUs(sourceDurationUs)
         .setEffects(effectsFor(clip, renderSize))
 
     if (clip.speed != 1.0f) {
