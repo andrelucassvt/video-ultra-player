@@ -1,3 +1,7 @@
+## 2.0.1
+
+- Fixed README wireframe image not rendering on pub.dev (switched to absolute GitHub raw URL).
+
 ## 2.0.0
 
 ### Clip speed

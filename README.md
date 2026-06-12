@@ -10,7 +10,7 @@ multiple Flutter video players at clip boundaries.
 
 ---
 
-![Editor wireframe](wireframe-en.png)
+![Editor wireframe](https://raw.githubusercontent.com/andrelucassvt/video-ultra-player/master/wireframe-en.png)
 
 ---
 
