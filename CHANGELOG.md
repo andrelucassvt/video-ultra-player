@@ -1,3 +1,45 @@
+## 2.0.0
+
+### Clip speed
+
+- Added `TimelineClip.speed` (`double`, range `[0.5, 2.0]`, default `1.0`) — per-clip playback speed multiplier that adjusts effective clip duration at the native compositor level.
+- Added `NativeTimelinePlayer.setClipSpeed(int clipIndex, double speed)` to change a loaded clip's speed without a full reload.
+
+### Audio track overlay
+
+- Added `AudioTrack` model — describes an external audio file overlaid on the timeline with offset, volume, trim bounds, and fade-in/out ramps.
+- Added `NativeTimelinePlayer.setAudioTrack(AudioTrack track)` to attach or replace the overlay audio track on a loaded timeline.
+- Added `NativeTimelinePlayer.removeAudioTrack()` to detach the current overlay audio track.
+
+### Undo / redo
+
+- Added `EditHistoryState` model (`canUndo`, `canRedo`) — emitted by the native layer whenever the edit-history stack changes.
+- Added `NativeTimelinePlayer.undo()` and `NativeTimelinePlayer.redo()` to step through the edit history without a reload.
+- `TimelinePlayerState` now carries an `EditHistoryState` so the UI can reflect undo/redo availability in real time.
+
+### Clip thumbnails
+
+- Added `ClipThumbnail` model — holds the file-system path and source timestamp for a cached JPEG frame.
+- Added `NativeTimelinePlayer.generateThumbnails(int clipIndex, {int count})` to extract evenly-spaced frames from a clip for display in a timeline scrubber.
+
+### Example app — full editor UI
+
+- Replaced the old single-screen demo with a CapCut-inspired editor shell:
+  - `EditorScreen` with `EditorController` managing all editing state.
+  - Timeline section: horizontal ruler, animated playhead, clip strip with per-clip thumbnail strips, and drag-to-trim handles.
+  - Bottom toolbar: Play/Pause, Split at playhead, Speed sheet, Aspect Ratio sheet, and Delete clip.
+  - Media picker — pick videos from the device gallery to add to the timeline.
+  - Export button uses `exportCurrentTimeline()` so the output always matches the current preview.
+
+### Bug fixes
+
+- Fixed audio track errors caused by incorrect clipping configuration on Android.
+- Fixed frame-ready observation timing that caused blank frames on initial load on Android.
+- Fixed clip width calculation using `clamp` for a minimum visible width in the timeline UI.
+- Fixed duration handling for edited clips to use full source duration in the Media3 compositor.
+
+---
+
 ## 1.2.0
 
 ### Timeline editing
