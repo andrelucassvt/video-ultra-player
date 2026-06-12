@@ -1,3 +1,6 @@
+## 2.0.4
+ - Update doc
+ 
 ## 2.0.3
 
 - Constrained wireframe image to 480 px wide in README.
