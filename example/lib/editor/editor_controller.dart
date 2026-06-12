@@ -75,12 +75,12 @@ class EditorController extends ChangeNotifier {
     );
   }
 
-  double get previewAspectRatio {
+  double? get previewAspectRatio {
     return switch (_aspectRatio) {
       OutputAspectRatio.ratio16x9 => 16 / 9,
       OutputAspectRatio.ratio9x16 => 9 / 16,
       OutputAspectRatio.ratio1x1 => 1,
-      OutputAspectRatio.original => 16 / 9,
+      OutputAspectRatio.original => null,
     };
   }
 

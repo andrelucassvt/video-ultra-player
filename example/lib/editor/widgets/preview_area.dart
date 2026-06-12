@@ -13,54 +13,58 @@ class PreviewArea extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final ratio = controller.previewAspectRatio;
+        Widget preview = Builder(
+          builder: (textureContext) {
+            return GestureDetector(
+              onPanUpdate: controller.textureId == null
+                  ? null
+                  : (details) {
+                      final renderBox =
+                          textureContext.findRenderObject() as RenderBox?;
+                      if (renderBox == null || !renderBox.hasSize) {
+                        return;
+                      }
+
+                      final local = renderBox.globalToLocal(
+                        details.globalPosition,
+                      );
+                      final x =
+                          ((local.dx / renderBox.size.width) * 2 - 1)
+                              .clamp(-1.0, 1.0)
+                              .toDouble();
+                      final y =
+                          ((local.dy / renderBox.size.height) * 2 - 1)
+                              .clamp(-1.0, 1.0)
+                              .toDouble();
+                      controller.setClipAlignment(state.clipIndex, x, y);
+                    },
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(color: editorLine),
+                ),
+                child: ClipRect(
+                  child: controller.textureId == null
+                      ? _PreviewPlaceholder(loading: controller.loading)
+                      : Texture(textureId: controller.textureId!),
+                ),
+              ),
+            );
+          },
+        );
+
+        if (ratio != null) {
+          preview = AspectRatio(aspectRatio: ratio, child: preview);
+        }
+
         return Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: constraints.maxWidth,
               maxHeight: constraints.maxHeight,
             ),
-            child: AspectRatio(
-              aspectRatio: controller.previewAspectRatio,
-              child: Builder(
-                builder: (textureContext) {
-                  return GestureDetector(
-                    onPanUpdate: controller.textureId == null
-                        ? null
-                        : (details) {
-                            final renderBox =
-                                textureContext.findRenderObject() as RenderBox?;
-                            if (renderBox == null || !renderBox.hasSize) {
-                              return;
-                            }
-
-                            final local = renderBox.globalToLocal(
-                              details.globalPosition,
-                            );
-                            final x =
-                                ((local.dx / renderBox.size.width) * 2 - 1)
-                                    .clamp(-1.0, 1.0)
-                                    .toDouble();
-                            final y =
-                                ((local.dy / renderBox.size.height) * 2 - 1)
-                                    .clamp(-1.0, 1.0)
-                                    .toDouble();
-                            controller.setClipAlignment(state.clipIndex, x, y);
-                          },
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        border: Border.all(color: editorLine),
-                      ),
-                      child: ClipRect(
-                        child: controller.textureId == null
-                            ? _PreviewPlaceholder(loading: controller.loading)
-                            : Texture(textureId: controller.textureId!),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
+            child: preview,
           ),
         );
       },

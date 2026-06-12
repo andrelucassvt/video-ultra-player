@@ -53,19 +53,23 @@ class ClipStrip extends StatelessWidget {
               ),
               child: LongPressDraggable<int>(
                 data: index,
-                feedback: Material(
-                  color: Colors.transparent,
-                  child: _ClipTile(
-                    controller: controller,
-                    state: state,
-                    clip: clip,
-                    index: index,
-                    duration: duration,
-                    clipStart: controller.clipStart(index, state),
-                    width: clipWidth,
-                    selected: true,
-                    hovering: false,
-                    dragging: true,
+                feedback: SizedBox(
+                  width: clipWidth,
+                  height: 58,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: _ClipTile(
+                      controller: controller,
+                      state: state,
+                      clip: clip,
+                      index: index,
+                      duration: duration,
+                      clipStart: controller.clipStart(index, state),
+                      width: clipWidth,
+                      selected: true,
+                      hovering: false,
+                      dragging: true,
+                    ),
                   ),
                 ),
                 childWhenDragging: Opacity(
@@ -112,7 +116,7 @@ class ClipStrip extends StatelessWidget {
   }
 }
 
-class _ClipTile extends StatelessWidget {
+class _ClipTile extends StatefulWidget {
   const _ClipTile({
     required this.controller,
     required this.state,
@@ -138,26 +142,49 @@ class _ClipTile extends StatelessWidget {
   final bool dragging;
 
   @override
+  State<_ClipTile> createState() => _ClipTileState();
+}
+
+class _ClipTileState extends State<_ClipTile> {
+  double? _draftWidth;
+
+  void _onVisualWidthChange(double width) {
+    setState(() => _draftWidth = width);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ClipTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.duration != widget.duration || oldWidget.clip != widget.clip) {
+      _draftWidth = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final borderColor = hovering
+    final effectiveWidth = _draftWidth ?? widget.width;
+    final borderColor = widget.hovering
         ? Colors.white
-        : selected
+        : widget.selected
         ? editorAccent
         : editorLine;
 
     return SizedBox(
-      width: width,
+      width: effectiveWidth,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: () => controller.selectClip(index),
+          onTap: () => widget.controller.selectClip(widget.index),
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: editorSurfaceHigh,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: borderColor, width: selected ? 2 : 1),
-              boxShadow: dragging
+              border: Border.all(
+                color: borderColor,
+                width: widget.selected ? 2 : 1,
+              ),
+              boxShadow: widget.dragging
                   ? const [
                       BoxShadow(
                         color: Colors.black54,
@@ -173,11 +200,11 @@ class _ClipTile extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   _ClipThumbnailRail(
-                    controller: controller,
-                    clip: clip,
-                    index: index,
-                    duration: duration,
-                    width: width,
+                    controller: widget.controller,
+                    clip: widget.clip,
+                    index: widget.index,
+                    duration: widget.duration,
+                    width: effectiveWidth,
                   ),
                   DecoratedBox(
                     decoration: BoxDecoration(
@@ -195,22 +222,23 @@ class _ClipTile extends StatelessWidget {
                     left: 8,
                     bottom: 5,
                     child: Text(
-                      '${index + 1}',
+                      '${widget.index + 1}',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                  if (selected)
+                  if (widget.selected)
                     ClipTrimHandles(
-                      controller: controller,
-                      state: state,
-                      clip: clip,
-                      clipIndex: index,
-                      clipStart: clipStart,
-                      duration: duration,
-                      pixelsPerSecond: controller.pixelsPerSecond,
+                      controller: widget.controller,
+                      state: widget.state,
+                      clip: widget.clip,
+                      clipIndex: widget.index,
+                      clipStart: widget.clipStart,
+                      duration: widget.duration,
+                      pixelsPerSecond: widget.controller.pixelsPerSecond,
+                      onVisualWidthChange: _onVisualWidthChange,
                     ),
                 ],
               ),

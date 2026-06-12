@@ -13,6 +13,7 @@ class ClipTrimHandles extends StatefulWidget {
     required this.clipStart,
     required this.duration,
     required this.pixelsPerSecond,
+    this.onVisualWidthChange,
   });
 
   final EditorController controller;
@@ -22,6 +23,7 @@ class ClipTrimHandles extends StatefulWidget {
   final Duration clipStart;
   final Duration duration;
   final double pixelsPerSecond;
+  final void Function(double)? onVisualWidthChange;
 
   @override
   State<ClipTrimHandles> createState() => _ClipTrimHandlesState();
@@ -101,12 +103,21 @@ class _ClipTrimHandlesState extends State<ClipTrimHandles> {
     );
   }
 
+  void _notifyVisualWidth() {
+    final seconds =
+        (_trimEnd - _trimStart).inMilliseconds / Duration.millisecondsPerSecond;
+    widget.onVisualWidthChange?.call(
+      (seconds * widget.pixelsPerSecond).clamp(0.0, double.maxFinite),
+    );
+  }
+
   void _updateStart(double deltaPixels) {
     final delta = _durationFromPixels(deltaPixels);
     final minDuration = const Duration(milliseconds: 300);
     final maxStart = _trimEnd - minDuration;
     final next = _clampDuration(_trimStart + delta, Duration.zero, maxStart);
     setState(() => _draftStart = next);
+    _notifyVisualWidth();
     widget.controller.previewSeek(widget.clipStart, widget.state);
   }
 
@@ -123,6 +134,7 @@ class _ClipTrimHandlesState extends State<ClipTrimHandles> {
       maxEnd,
     );
     setState(() => _draftEnd = next);
+    _notifyVisualWidth();
     widget.controller.previewSeek(
       widget.clipStart + widget.duration,
       widget.state,
