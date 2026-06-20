@@ -193,10 +193,13 @@ final class TimelineComposition {
       throw TimelineCompositionError.cannotCreateCompositionTrack
     }
 
-    let audioTrack = mutableComposition.addMutableTrack(
-      withMediaType: .audio,
-      preferredTrackID: kCMPersistentTrackID_Invalid
-    )
+    let hasAnyClipAudio = preparedClips.contains { $0.audioTrack != nil }
+    let audioTrack: AVMutableCompositionTrack? = hasAnyClipAudio
+      ? mutableComposition.addMutableTrack(
+          withMediaType: .audio,
+          preferredTrackID: kCMPersistentTrackID_Invalid
+        )
+      : nil
 
     let firstRenderableSize = preparedClips.first?.renderableSize ?? renderSize
     renderSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)

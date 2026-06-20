@@ -1,3 +1,7 @@
+## 2.0.5
+
+- Fixed iOS crash/silent failure when loading a timeline with no audio clips: audio composition track is now created only when at least one clip has an audio track (`hasAnyClipAudio` guard in `TimelineComposition`).
+
 ## 2.0.4
  - Update doc
  
