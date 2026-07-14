@@ -135,12 +135,15 @@ ElevatedButton(
 // State
 class LoginNavigateToHome extends LoginState {
   const LoginNavigateToHome();
+
+  @override
+  String toString() => 'LoginNavigateToHome';
 }
 
 // Cubit
 result.when(
   ok: (_) => emit(const LoginNavigateToHome()),
-  error: (e) => emit(LoginError('Credenciais inválidas')),
+  error: (e) => emit(LoginError('Credenciais inválidas', error: e)),
 );
 
 // View

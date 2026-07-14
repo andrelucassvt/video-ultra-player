@@ -7,7 +7,7 @@
 - **Quando navegar entre telas**: SEMPRE use `context.push/go/pop` na View ou em `BlocListener` — nunca passe `BuildContext` ao Cubit.
 - **Quando exibir texto ao usuário**: SEMPRE use `context.l10n.<chave>` — nunca string hardcoded.
 - **Quando a View for descartada**: feche o Cubit no `dispose()` com `_cubit.close()`.
-- **NUNCA crie métodos privados que retornam Widget** (ex: `Widget _buildHeader()`) nem **classes privadas de widget** dentro do arquivo de View. Extraia para `widgets/` (reutilizável) ou `content/` (auxiliar específico da View).
+- **NUNCA crie métodos privados que retornam Widget** (ex: `Widget _buildHeader()`) nem **classes privadas de widget** — nem na View nem em arquivos `content/`/`widgets/`. Invariante universal: extraia para um arquivo próprio com identidade.
 - **Exceção**: funções privadas que abrem `showDialog()`, `showModalBottomSheet()` ou similares **podem** permanecer na View.
 - **SafeArea**: SEMPRE envolva o conteúdo principal com `SafeArea`.
 
@@ -100,23 +100,30 @@ class _ProfileViewState extends State<ProfileView> {
           top: false, // AppBar já protege o topo
           child: BlocBuilder<ProfileCubit, ProfileState>(
             // Sem bloc: _cubit — obtido via BlocProvider acima
-            builder: (context, state) => switch (state) {
-              ProfileLoading() => const Center(child: CircularProgressIndicator()),
-              ProfileError(:final message) => Center(
-                  child: Text(message, style: const TextStyle(color: Colors.red)),
-                ),
-              ProfileLoaded(:final name, :final email) => Padding(
+            builder: (context, state) {
+              if (state is ProfileLoading) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (state is ProfileError) {
+                return Center(
+                  child: Text(state.message, style: const TextStyle(color: Colors.red)),
+                );
+              }
+              if (state is ProfileLoaded) {
+                return Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('${l10n.profileNameLabel} $name'),
+                      Text('${l10n.profileNameLabel} ${state.name}'),
                       const SizedBox(height: 8),
-                      Text('${l10n.profileEmailLabel} $email'),
+                      Text('${l10n.profileEmailLabel} ${state.email}'),
                     ],
                   ),
-                ),
-              ProfileInitial() => const SizedBox.shrink(),
+                );
+              }
+              // ProfileInitial e estados futuros: branch padrão
+              return const SizedBox.shrink();
             },
           ),
         ),
@@ -142,10 +149,13 @@ class _ProfileViewState extends State<ProfileView> {
 - ✅ Fecha o Cubit no `dispose()`
 - ✅ Trata todos os estados possíveis (Initial, Loading, Loaded, Error)
 - ✅ SEMPRE usa `SafeArea`
+- ✅ Renderiza estados no `builder` com `if (state is XState)` + early return — **NUNCA** use `switch` expression para o state aqui (dificulta a leitura). O `if (state is X)` promove o tipo, então acesse `state.campo` diretamente. Encerre com um `return` padrão (`const SizedBox.shrink()`) cobrindo `Initial` e estados futuros.
+  - ⚠️ Trade-off conhecido: o `switch` sobre sealed class garante exaustividade em tempo de compilação; o `if` + early return não. Por isso o branch `return` final é o default intencional — ao adicionar um novo state, lembre de tratá-lo explicitamente.
+  - 📌 Carve-out: a regra geral do projeto prefere `switch`/pattern matching para **enums**. Estados são sealed classes e seguem o idioma de **early return** do projeto — logo, `if` aqui é consistente, não uma exceção.
 - ❌ NÃO contém lógica de negócio
 - ❌ NÃO faz chamadas HTTP diretamente
-- ❌ NÃO cria `Widget _buildXxx()` dentro da View
-- ❌ NÃO cria classes privadas de widget dentro da View
+- ❌ NÃO cria `Widget _buildXxx()` (invariante universal — vale também em `content/` e `widgets/`)
+- ❌ NÃO cria classes privadas de widget (invariante universal — vale também em `content/` e `widgets/`)
 
 ---
 
@@ -323,6 +333,8 @@ void _showOptionsBottomSheet() {
 | `Widget _buildXxx()` | ❌ Não — extrair para `widgets/` ou `content/` |
 | `class _XxxContent extends StatelessWidget` | ❌ Não — extrair para `content/` |
 
+> As proibições de `Widget _buildXxx()` e classes privadas de widget são **invariantes universais** — aplicam-se também a arquivos `content/` e `widgets/`, não apenas à View.
+
 ---
 
 ### 4 — Configurar Rota
@@ -358,20 +370,26 @@ inject.registerFactory<ProfileCubit>(() => ProfileCubit(inject()));
 ### View com Lista
 
 ```dart
-builder: (context, state) => switch (state) {
-  ProfileLoaded(:final items) => ListView.builder(
-      itemCount: items.length,
+builder: (context, state) {
+  if (state is ProfileLoading) {
+    return const Center(child: CircularProgressIndicator());
+  }
+  if (state is ProfileError) {
+    return Center(child: Text(state.message));
+  }
+  if (state is ProfileLoaded) {
+    return ListView.builder(
+      itemCount: state.items.length,
       itemBuilder: (context, index) {
-        final item = items[index];
+        final item = state.items[index];
         return ListTile(
           title: Text(item.name),
           onTap: () => context.read<ProfileCubit>().selectItem(item),
         );
       },
-    ),
-  ProfileLoading() => const Center(child: CircularProgressIndicator()),
-  ProfileError(:final message) => Center(child: Text(message)),
-  ProfileInitial() => const SizedBox.shrink(),
+    );
+  }
+  return const SizedBox.shrink();
 },
 ```
 
@@ -434,6 +452,9 @@ ElevatedButton(
 class ProfileNavigateToDetails extends ProfileState {
   const ProfileNavigateToDetails(this.id);
   final String id;
+
+  @override
+  String toString() => 'ProfileNavigateToDetails(id: $id)';
 }
 
 BlocListener<ProfileCubit, ProfileState>(

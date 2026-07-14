@@ -27,29 +27,49 @@ import 'package:flutter/foundation.dart';
 @immutable
 sealed class LoginState {
   const LoginState();
+
+  @override
+  String toString();
 }
 
 class LoginInitial extends LoginState {
   const LoginInitial();
+
+  @override
+  String toString() => 'LoginInitial';
 }
 
 class LoginSubmitting extends LoginState {
   const LoginSubmitting();
+
+  @override
+  String toString() => 'LoginSubmitting';
 }
 
 class LoginSuccess extends LoginState {
   const LoginSuccess();
+
+  @override
+  String toString() => 'LoginSuccess';
 }
 
 class LoginError extends LoginState {
-  const LoginError(this.message);
+  const LoginError(this.message, {this.error});
   final String message;
+  final Object? error;
+
+  @override
+  String toString() => 'LoginError(message: $message, error: $error)';
 }
 
 class LoginFieldError extends LoginState {
   const LoginFieldError({this.emailError, this.passwordError});
   final String? emailError;
   final String? passwordError;
+
+  @override
+  String toString() =>
+      'LoginFieldError(emailError: $emailError, passwordError: $passwordError)';
 }
 ```
 
@@ -90,7 +110,9 @@ class LoginCubit extends Cubit<LoginState> {
 
     result.when(
       ok: (_) => emit(const LoginSuccess()),
-      error: (e) => emit(LoginError('Email ou senha inválidos')),
+      error: (e) => emit(
+        LoginError('Email ou senha inválidos', error: e),
+      ),
     );
   }
 

@@ -87,35 +87,6 @@ else
   echo "⏭️  .claude/skills/ não encontrado. Pulando .agents/skills/."
 fi
 
-# ── Rules: Claude → todas as plataformas ──────────────────
-if [ -d "$TMP_DIR/.claude/rules" ]; then
-  echo "📋 Sincronizando rules para todas as plataformas..."
-
-  # Claude Code: copia direto
-  mkdir -p "$SCRIPT_DIR/.claude/rules"
-  rsync -a --delete "$TMP_DIR/.claude/rules/" "$SCRIPT_DIR/.claude/rules/"
-
-  # Codex / Agents: copia sem transformação de frontmatter
-  mkdir -p "$SCRIPT_DIR/.agents/instructions"
-  rsync -a --delete "$TMP_DIR/.claude/rules/" "$SCRIPT_DIR/.agents/instructions/"
-  # Ajusta referência de skill path nos arquivos copiados
-  for f in "$SCRIPT_DIR/.agents/instructions/"*.md; do
-    [ -f "$f" ] && sed -i '' 's|\.claude/skills/|.agents/skills/|g' "$f"
-  done
-
-  # GitHub Copilot: substitui frontmatter description → applyTo: '**'
-  mkdir -p "$SCRIPT_DIR/.github/instructions"
-  rsync -a --delete "$TMP_DIR/.claude/rules/" "$SCRIPT_DIR/.github/instructions/"
-  for f in "$SCRIPT_DIR/.github/instructions/"*.md; do
-    [ -f "$f" ] && sed -i '' \
-      's|^description:.*|applyTo: '"'"'**'"'"'|g' \
-      "$f"
-    [ -f "$f" ] && sed -i '' 's|\.claude/skills/|.github/skills/|g' "$f"
-  done
-else
-  echo "⏭️  .claude/rules/ não encontrado no repositório fonte. Pulando."
-fi
-
 # ── Auto-update do próprio script ─────────────────────────
 if [ -f "$TMP_DIR/sync-instructions.sh" ]; then
   echo "🔄 Atualizando sync-instructions.sh..."
@@ -130,9 +101,6 @@ echo "Arquivos atualizados:"
 echo "  • .claude/skills/              (sempre sincronizado — fonte das skills)"
 echo "  • .github/skills/              (espelho para GitHub Copilot)"
 echo "  • .agents/skills/              (espelho para Codex / OpenAI Agents)"
-echo "  • .claude/rules/               (regras obrigatórias — Claude Code)"
-echo "  • .github/instructions/        (espelho para GitHub Copilot)"
-echo "  • .agents/instructions/        (espelho para Codex / OpenAI Agents)"
 echo "  • AGENTS.md / CLAUDE.md / .github/copilot-instructions.md"
 echo "    (criados apenas se não existiam)"
 echo ""
@@ -152,14 +120,19 @@ if [ -d "$SCRIPT_DIR/.agents/skills" ]; then
   echo "  • .agents/skills/        ($(find "$SCRIPT_DIR/.agents/skills/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') arquivos)"
 fi
 
-if [ -d "$SCRIPT_DIR/.claude/rules" ]; then
-  echo "  • .claude/rules/         ($(find "$SCRIPT_DIR/.claude/rules/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') arquivos)"
-fi
+migrate_root_dir_to_docs() {
+  local name="$1"
+  local old_dir="$SCRIPT_DIR/$name"
+  local new_dir="$SCRIPT_DIR/docs/$name"
 
-if [ -d "$SCRIPT_DIR/.github/instructions" ]; then
-  echo "  • .github/instructions/  ($(find "$SCRIPT_DIR/.github/instructions/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') arquivos)"
-fi
+  if [ -d "$old_dir" ]; then
+    mkdir -p "$new_dir"
+    rsync -a "$old_dir/" "$new_dir/"
+    rm -rf "$old_dir"
+    echo "  ✅ $name/ → docs/$name/"
+  fi
+}
 
-if [ -d "$SCRIPT_DIR/.agents/instructions" ]; then
-  echo "  • .agents/instructions/  ($(find "$SCRIPT_DIR/.agents/instructions/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') arquivos)"
-fi
+echo "🗂️  Verificando estrutura antiga (plan/ e flow/ na raiz)..."
+migrate_root_dir_to_docs "plan"
+migrate_root_dir_to_docs "flow"

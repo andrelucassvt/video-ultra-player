@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Cria um plano para implementar a tela de login no app Flutter. O usuário vai digitar email e senha, tem validação dos campos, e no sucesso vai para a HomeView. Usa Bearer token e o projeto já tem StorageService.",
-      "expected_output": "Arquivo ./plan/login-screen.md com estrutura completa: objetivo, contexto, tabela de arquivos afetados, fases com checkboxes (View, Cubit/State, rota, DI), critérios de sucesso e seção de riscos.",
+      "expected_output": "Arquivo ./docs/plan/login-screen.md com estrutura completa: objetivo, contexto, tabela de arquivos afetados, fases com checkboxes (View, Cubit/State, rota, DI), critérios de sucesso e seção de riscos.",
       "files": [],
       "assertions": [
         {
@@ -40,7 +40,7 @@
     {
       "id": 2,
       "prompt": "Preciso refatorar o repositório de usuários do projeto. Hoje ele faz chamadas HTTP direto no Cubit, preciso extrair para um UserRepository seguindo Clean Architecture com Entity, Interface no domain e RepositoryImpl no data layer.",
-      "expected_output": "Arquivo ./plan/refactor-user-repository.md com fases sequenciais seguras: primeiro tipos/interfaces, depois implementação, depois migração do Cubit, verificações entre fases, e seção de rollback.",
+      "expected_output": "Arquivo ./docs/plan/refactor-user-repository.md com fases sequenciais seguras: primeiro tipos/interfaces, depois implementação, depois migração do Cubit, verificações entre fases, e seção de rollback.",
       "files": [],
       "assertions": [
         {
@@ -76,7 +76,7 @@
     {
       "id": 3,
       "prompt": "Quero um plano para adicionar push notifications via Firebase no app. iOS e Android. Precisa pedir permissão, receber notificação em foreground e background, e ao tocar abrir a tela correta via deep link.",
-      "expected_output": "Arquivo ./plan/implement-push-notifications.md com fases cobrindo: configuração Firebase, NotificationService, permissões iOS/Android, handlers foreground/background, deep link navigation. Deve ter seção de riscos com APNs e permissões.",
+      "expected_output": "Arquivo ./docs/plan/implement-push-notifications.md com fases cobrindo: configuração Firebase, NotificationService, permissões iOS/Android, handlers foreground/background, deep link navigation. Deve ter seção de riscos com APNs e permissões.",
       "files": [],
       "assertions": [
         {

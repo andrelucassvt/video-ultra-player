@@ -166,6 +166,9 @@ ElevatedButton(
 class HomeNavigateToDetails extends HomeState {
   const HomeNavigateToDetails(this.productId);
   final String productId;
+
+  @override
+  String toString() => 'HomeNavigateToDetails(productId: $productId)';
 }
 
 // Cubit

@@ -398,23 +398,54 @@ class OnboardingCubit extends Cubit<OnboardingState> {
 
 ```dart
 @immutable
-sealed class GeneratorState { const GeneratorState(); }
+sealed class GeneratorState {
+  const GeneratorState();
 
-class GeneratorInitial extends GeneratorState { const GeneratorInitial(); }
-class GeneratorLoading extends GeneratorState { const GeneratorLoading(); }
+  @override
+  String toString();
+}
+
+class GeneratorInitial extends GeneratorState {
+  const GeneratorInitial();
+
+  @override
+  String toString() => 'GeneratorInitial';
+}
+class GeneratorLoading extends GeneratorState {
+  const GeneratorLoading();
+
+  @override
+  String toString() => 'GeneratorLoading';
+}
 class GeneratorSuccess extends GeneratorState {
   const GeneratorSuccess({required this.result});
   final String result;
+
+  @override
+  String toString() => 'GeneratorSuccess(result: $result)';
 }
-class GeneratorPremiumRequired extends GeneratorState { const GeneratorPremiumRequired(); }
+class GeneratorPremiumRequired extends GeneratorState {
+  const GeneratorPremiumRequired();
+
+  @override
+  String toString() => 'GeneratorPremiumRequired';
+}
 class GeneratorAccessInfo extends GeneratorState {
   const GeneratorAccessInfo({required this.canUse, required this.remainingFree});
   final bool canUse;
   final int remainingFree;
+
+  @override
+  String toString() =>
+      'GeneratorAccessInfo(canUse: $canUse, remainingFree: $remainingFree)';
 }
 class GeneratorError extends GeneratorState {
-  const GeneratorError(this.message);
+  const GeneratorError(this.message, {this.error});
   final String message;
+  final Object? error;
+
+  @override
+  String toString() => 'GeneratorError(message: $message, error: $error)';
 }
 ```
 
@@ -423,16 +454,25 @@ class GeneratorError extends GeneratorState {
 ```dart
 BlocBuilder<GeneratorCubit, GeneratorState>(
   bloc: _cubit,
-  builder: (context, state) => switch (state) {
-    GeneratorInitial() => const SizedBox.shrink(),
-    GeneratorLoading() => const Center(child: CircularProgressIndicator()),
-    GeneratorSuccess(:final result) => Text(result),
-    GeneratorPremiumRequired() => PremiumRequiredContent(
-      onUpgrade: () => context.push(AppRoutes.purchase),
-    ),
-    GeneratorAccessInfo(:final remainingFree) =>
-      Text(context.l10n.remainingFreeUses(remainingFree)),
-    GeneratorError(:final message) => Text(message),
+  builder: (context, state) {
+    if (state is GeneratorLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (state is GeneratorSuccess) {
+      return Text(state.result);
+    }
+    if (state is GeneratorPremiumRequired) {
+      return PremiumRequiredContent(
+        onUpgrade: () => context.push(AppRoutes.purchase),
+      );
+    }
+    if (state is GeneratorAccessInfo) {
+      return Text(context.l10n.remainingFreeUses(state.remainingFree));
+    }
+    if (state is GeneratorError) {
+      return Text(state.message);
+    }
+    return const SizedBox.shrink();
   },
 )
 ```

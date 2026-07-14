@@ -2,7 +2,7 @@
 
 ## Leitura Rápida
 
-- **Quando criar um State**: SEMPRE `sealed class` + `@immutable` + `const`; mínimo obrigatório: `Initial`, `Loading`, `Loaded`, `Error`.
+- **Quando criar um State**: SEMPRE `sealed class` + `@immutable` + `const`; mínimo obrigatório: `Initial`, `Loading`, `Loaded`, `Error`; garanta também `toString()` legível no `BlocObserver`.
 - **Quando criar um Cubit**: receba dependências via construtor; NUNCA injete DataSource diretamente — use Repository.
 - **Quando escrever um método async no Cubit**: SEMPRE emita `Loading` primeiro → chame o repository → use `result.when()`.
 - **Quando emitir erro**: converta a exceção técnica em mensagem amigável ao usuário.
@@ -31,14 +31,23 @@ import 'package:flutter/foundation.dart';
 @immutable
 sealed class ProfileState {
   const ProfileState();
+
+  @override
+  String toString();
 }
 
 class ProfileInitial extends ProfileState {
   const ProfileInitial();
+
+  @override
+  String toString() => 'ProfileInitial';
 }
 
 class ProfileLoading extends ProfileState {
   const ProfileLoading();
+
+  @override
+  String toString() => 'ProfileLoading';
 }
 
 class ProfileLoaded extends ProfileState {
@@ -49,11 +58,21 @@ class ProfileLoaded extends ProfileState {
 
   final String name;
   final String email;
+
+  @override
+  String toString() => 'ProfileLoaded(name: $name, email: $email)';
 }
 
 class ProfileError extends ProfileState {
-  const ProfileError(this.message);
+  const ProfileError(this.message, {this.error, this.stackTrace});
+
   final String message;
+  final Object? error;
+  final StackTrace? stackTrace;
+
+  @override
+  String toString() =>
+      'ProfileError(message: $message, error: $error, stackTrace: $stackTrace)';
 }
 ```
 
@@ -64,7 +83,71 @@ class ProfileError extends ProfileState {
 3. **SEMPRE const** no construtor
 4. **Propriedades SEMPRE final**
 5. **Estados mínimos**: Initial, Loading, Loaded, Error
-6. **NUNCA adicione métodos** — apenas dados
+6. **SEMPRE `toString()` legível** — declare-o abstrato na classe base; cada State concreto retorna um nome explícito e mostra os campos relevantes quando houver payload
+7. **NUNCA adicione métodos de negócio** — States carregam dados; `toString()` é a exceção diagnóstica
+
+### Logs legíveis no BlocObserver
+
+O `Change` do BLoC usa o `toString()` dos States. Sem sobrescrita, o log perde o payload:
+
+```text
+Change { currentState: Instance of 'HomeLoading', nextState: Instance of 'HomeLoaded' }
+```
+
+Declare `toString()` como abstrato na `sealed class`. Assim, todo novo State precisa implementar o log. Use nomes explícitos — além de estáveis, eles evitam o lint `no_runtimetype_tostring`:
+
+```dart
+@immutable
+sealed class HomeState {
+  const HomeState();
+
+  @override
+  String toString();
+}
+
+class HomeLoading extends HomeState {
+  const HomeLoading();
+
+  @override
+  String toString() => 'HomeLoading';
+}
+
+class HomeLoaded extends HomeState {
+  const HomeLoaded({required this.items});
+
+  final List<HomeItemEntity> items;
+
+  @override
+  String toString() => 'HomeLoaded(items: $items)';
+}
+
+class HomeError extends HomeState {
+  const HomeError(this.message, {this.error, this.stackTrace});
+
+  final String message;
+  final Object? error;
+  final StackTrace? stackTrace;
+
+  @override
+  String toString() =>
+      'HomeError(message: $message, error: $error, stackTrace: $stackTrace)';
+}
+```
+
+O resultado passa a ser útil para diagnóstico:
+
+```text
+Change { currentState: HomeLoading, nextState: HomeLoaded(items: [...]) }
+Change { currentState: HomeLoading, nextState: HomeError(message: Não foi possível carregar, error: SocketException: ..., stackTrace: ...) }
+```
+
+Regras de observabilidade:
+
+- Mostre o nome do State e os nomes dos campos; `HomeLoaded(items: ...)` é mais claro que apenas os valores.
+- Em erros, mantenha a mensagem amigável separada do erro técnico. Passe `error` recebido do Repository e capture `stackTrace` em `catch (error, stackTrace)` quando ele estiver disponível.
+- Nunca inclua senha, token, cookie, documento ou outro dado sensível no `toString()`.
+- Para listas/objetos muito grandes, registre contagem, identificadores ou uma amostra curta em vez de serializar todo o payload.
+- Se um payload aparecer como `Instance of 'X'`, implemente também um `toString()` seguro nessa Entity/Value Object ou resuma seus campos no próprio State.
 
 ---
 
@@ -74,20 +157,57 @@ class ProfileError extends ProfileState {
 
 ```dart
 @immutable
-sealed class ProductsState { const ProductsState(); }
+sealed class ProductsState {
+  const ProductsState();
 
-class ProductsInitial extends ProductsState { const ProductsInitial(); }
-class ProductsLoading extends ProductsState { const ProductsLoading(); }
+  @override
+  String toString();
+}
+
+class ProductsInitial extends ProductsState {
+  const ProductsInitial();
+
+  @override
+  String toString() => 'ProductsInitial';
+}
+class ProductsLoading extends ProductsState {
+  const ProductsLoading();
+
+  @override
+  String toString() => 'ProductsLoading';
+}
 class ProductsLoaded extends ProductsState {
   const ProductsLoaded({required this.products});
   final List<ProductEntity> products;
+
+  @override
+  String toString() => 'ProductsLoaded(products: $products)';
 }
-class ProductsCreating extends ProductsState { const ProductsCreating(); }
-class ProductsUpdating extends ProductsState { const ProductsUpdating(); }
-class ProductsDeleting extends ProductsState { const ProductsDeleting(); }
+class ProductsCreating extends ProductsState {
+  const ProductsCreating();
+
+  @override
+  String toString() => 'ProductsCreating';
+}
+class ProductsUpdating extends ProductsState {
+  const ProductsUpdating();
+
+  @override
+  String toString() => 'ProductsUpdating';
+}
+class ProductsDeleting extends ProductsState {
+  const ProductsDeleting();
+
+  @override
+  String toString() => 'ProductsDeleting';
+}
 class ProductsError extends ProductsState {
-  const ProductsError(this.message);
+  const ProductsError(this.message, {this.error});
   final String message;
+  final Object? error;
+
+  @override
+  String toString() => 'ProductsError(message: $message, error: $error)';
 }
 ```
 
@@ -95,23 +215,54 @@ class ProductsError extends ProductsState {
 
 ```dart
 @immutable
-sealed class RegisterState { const RegisterState(); }
+sealed class RegisterState {
+  const RegisterState();
 
-class RegisterInitial extends RegisterState { const RegisterInitial(); }
-class RegisterValidating extends RegisterState { const RegisterValidating(); }
-class RegisterSubmitting extends RegisterState { const RegisterSubmitting(); }
+  @override
+  String toString();
+}
+
+class RegisterInitial extends RegisterState {
+  const RegisterInitial();
+
+  @override
+  String toString() => 'RegisterInitial';
+}
+class RegisterValidating extends RegisterState {
+  const RegisterValidating();
+
+  @override
+  String toString() => 'RegisterValidating';
+}
+class RegisterSubmitting extends RegisterState {
+  const RegisterSubmitting();
+
+  @override
+  String toString() => 'RegisterSubmitting';
+}
 class RegisterSuccess extends RegisterState {
   const RegisterSuccess({required this.userId});
   final String userId;
+
+  @override
+  String toString() => 'RegisterSuccess(userId: $userId)';
 }
 class RegisterError extends RegisterState {
-  const RegisterError(this.message);
+  const RegisterError(this.message, {this.error});
   final String message;
+  final Object? error;
+
+  @override
+  String toString() => 'RegisterError(message: $message, error: $error)';
 }
 class RegisterFieldError extends RegisterState {
   const RegisterFieldError({this.emailError, this.passwordError});
   final String? emailError;
   final String? passwordError;
+
+  @override
+  String toString() =>
+      'RegisterFieldError(emailError: $emailError, passwordError: $passwordError)';
 }
 ```
 
@@ -119,22 +270,49 @@ class RegisterFieldError extends RegisterState {
 
 ```dart
 @immutable
-sealed class PostsState { const PostsState(); }
+sealed class PostsState {
+  const PostsState();
 
-class PostsInitial extends PostsState { const PostsInitial(); }
-class PostsLoading extends PostsState { const PostsLoading(); }
+  @override
+  String toString();
+}
+
+class PostsInitial extends PostsState {
+  const PostsInitial();
+
+  @override
+  String toString() => 'PostsInitial';
+}
+class PostsLoading extends PostsState {
+  const PostsLoading();
+
+  @override
+  String toString() => 'PostsLoading';
+}
 class PostsLoaded extends PostsState {
   const PostsLoaded({required this.posts, required this.hasMore});
   final List<PostEntity> posts;
   final bool hasMore;
+
+  @override
+  String toString() =>
+      'PostsLoaded(posts: $posts, hasMore: $hasMore)';
 }
 class PostsLoadingMore extends PostsState {
   const PostsLoadingMore({required this.currentPosts});
   final List<PostEntity> currentPosts;
+
+  @override
+  String toString() =>
+      'PostsLoadingMore(currentPosts: $currentPosts)';
 }
 class PostsError extends PostsState {
-  const PostsError(this.message);
+  const PostsError(this.message, {this.error});
   final String message;
+  final Object? error;
+
+  @override
+  String toString() => 'PostsError(message: $message, error: $error)';
 }
 ```
 
@@ -177,8 +355,14 @@ class SettingsCubit extends Cubit<SettingsState> {
     try {
       final theme = await _storage.getString('theme') ?? 'light';
       emit(SettingsLoaded(theme: theme));
-    } catch (e) {
-      emit(SettingsError('Erro ao carregar configurações: $e'));
+    } catch (error, stackTrace) {
+      emit(
+        SettingsError(
+          'Erro ao carregar configurações',
+          error: error,
+          stackTrace: stackTrace,
+        ),
+      );
     }
   }
 
@@ -213,7 +397,7 @@ class ProfileCubit extends Cubit<ProfileState> {
 
     result.when(
       ok: (data) => emit(ProfileLoaded(name: data.name, email: data.email)),
-      error: (e) => emit(ProfileError('Erro ao carregar: $e')),
+      error: (e) => emit(ProfileError('Erro ao carregar perfil', error: e)),
     );
   }
 }
@@ -232,26 +416,35 @@ class ProductsCubit extends Cubit<ProductsState> {
     final result = await _repository.getAll();
     result.when(
       ok: (data) => emit(ProductsLoaded(products: data)),
-      error: (e) => emit(ProductsError('Erro ao carregar: $e')),
+      error: (e) => emit(ProductsError('Erro ao carregar', error: e)),
     );
   }
 
   Future<void> create(ProductEntity entity) async {
     emit(const ProductsCreating());
     final result = await _repository.create(entity);
-    result.when(ok: (_) => loadAll(), error: (e) => emit(ProductsError('Erro ao criar: $e')));
+    result.when(
+      ok: (_) => loadAll(),
+      error: (e) => emit(ProductsError('Erro ao criar', error: e)),
+    );
   }
 
   Future<void> update(ProductEntity entity) async {
     emit(const ProductsUpdating());
     final result = await _repository.update(entity);
-    result.when(ok: (_) => loadAll(), error: (e) => emit(ProductsError('Erro ao atualizar: $e')));
+    result.when(
+      ok: (_) => loadAll(),
+      error: (e) => emit(ProductsError('Erro ao atualizar', error: e)),
+    );
   }
 
   Future<void> delete(String id) async {
     emit(const ProductsDeleting());
     final result = await _repository.delete(id);
-    result.when(ok: (_) => loadAll(), error: (e) => emit(ProductsError('Erro ao deletar: $e')));
+    result.when(
+      ok: (_) => loadAll(),
+      error: (e) => emit(ProductsError('Erro ao deletar', error: e)),
+    );
   }
 }
 ```
@@ -283,7 +476,7 @@ class ProductsCubit extends Cubit<ProductsState> {
 // ✅ result.when() — preferido, mais conciso
 result.when(
   ok: (data) => emit(LoginSuccess(user: data)),
-  error: (e) => emit(LoginError('$e')),
+  error: (e) => emit(LoginError('Não foi possível entrar', error: e)),
 );
 
 // ✅ switch com destructuring — para lógica complexa
@@ -291,7 +484,7 @@ switch (result) {
   case Ok<User>(:final value):
     emit(LoginSuccess(user: value));
   case Error<User>(:final error):
-    emit(LoginError('$error'));
+    emit(LoginError('Não foi possível entrar', error: error));
 }
 
 // ❌ if/else — nunca use
@@ -332,7 +525,7 @@ class SearchCubit extends Cubit<SearchState> {
       final result = await _repository.search(query);
       result.when(
         ok: (data) => emit(SearchLoaded(results: data)),
-        error: (e) => emit(SearchError('Erro na busca')),
+        error: (e) => emit(SearchError('Erro na busca', error: e)),
       );
     });
   }
@@ -350,12 +543,15 @@ class SearchCubit extends Cubit<SearchState> {
 ```dart
 class LoginNavigateToHome extends LoginState {
   const LoginNavigateToHome();
+
+  @override
+  String toString() => 'LoginNavigateToHome';
 }
 
 // No Cubit
 result.when(
   ok: (_) => emit(const LoginNavigateToHome()),
-  error: (e) => emit(LoginError('Credenciais inválidas')),
+  error: (e) => emit(LoginError('Credenciais inválidas', error: e)),
 );
 
 // Na View
@@ -376,6 +572,8 @@ BlocListener<LoginCubit, LoginState>(
 - [ ] `@immutable` + `sealed class`
 - [ ] Estados mínimos: Initial, Loading, Loaded, Error
 - [ ] Propriedades `final`, construtores `const`
+- [ ] Classe base declara `toString()` abstrato; cada State concreto retorna nome explícito e mostra campos relevantes
+- [ ] State de erro mostra mensagem e erro técnico/stack trace quando disponíveis, sem expor dados sensíveis
 
 ### Cubit:
 - [ ] Arquivo em `lib/presentation/<feature>/view_model/<feature>_cubit.dart`
@@ -404,3 +602,5 @@ inject.registerFactory<SettingsCubit>(() => SettingsCubit(inject()));
 | `if (result is Ok)` | `result.when(ok: ..., error: ...)` |
 | Cubit recebe DataSource | Cubit recebe Repository |
 | Propriedade `String name` sem `final` | `final String name` |
+| Log mostra `Instance of 'HomeLoaded'` | Classe base declara `toString()` abstrato e `HomeLoaded.toString()` retorna nome explícito com os campos relevantes |
+| State de erro oculta a causa | Preserve mensagem amigável e inclua `error`/`stackTrace` no State e no `toString()` seguro |

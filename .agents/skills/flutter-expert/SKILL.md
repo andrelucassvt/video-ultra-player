@@ -22,7 +22,7 @@ Leia o arquivo correspondente à camada antes de gerar código. Não leia todos 
 |---|---|
 | `references/architecture.md` | **Sempre que iniciar em um projeto desconhecido** — entender a proposta de arquitetura e como explorar a estrutura real do projeto |
 | `references/view.md` | Criar ou modificar Views (tela, StatefulWidget, BlocBuilder, SafeArea, BlocConsumer) |
-| `references/view-model.md` | Criar ou modificar Cubits e States (async, Result<T>, debounce, formulário, paginação) |
+| `references/view-model.md` | Criar ou modificar Cubits e States (async, Result<T>, debounce, formulário, paginação, logs legíveis no BlocObserver) |
 | `references/widget.md` | Criar ou extrair widgets reutilizáveis (`widgets/`, `content/`, `common/widgets/`) |
 | `references/domain.md` | Criar Entities ou Repository Interfaces (`lib/domain/**`) |
 | `references/data.md` | Criar Models, DataSources ou RepositoryImpl (`lib/data/**`) |
@@ -66,6 +66,7 @@ Use os exemplos como referência rápida de código pronto e correto. Prefira co
 - **Nome de View**: SEMPRE use `snake_case` com sufixo `_view.dart`, seguindo o nome real da feature. Nunca use hífen (`view-teste.dart`) nem nomes genéricos como `teste`, `nova_view` ou `screen1`.
 - **Storage**: NUNCA acesse `SharedPreferences` diretamente no Cubit — use `StorageService`
 - **Cubit async**: SEMPRE emita `Loading` antes da operação → chame o repository → use `result.when()`
+- **Logs de State**: todo State deve produzir um `toString()` legível no `BlocObserver`. Declare o método abstrato na `sealed class` e implemente um nome explícito em cada State concreto; States com payload mostram os campos relevantes; States de erro incluem ao menos a mensagem e, quando disponível, o erro técnico/stack trace. NUNCA exponha senha, token ou outro segredo e resuma payloads muito grandes.
 - **Arquivos `.md`**: NUNCA crie para documentar mudanças de código
 
 ---
