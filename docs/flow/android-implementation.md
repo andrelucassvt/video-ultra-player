@@ -1,234 +1,127 @@
-# Flow: Implementação Android — Plugin VideoUltraPlayer
+---
+generated_at: 2026-07-31
+source_commit: 1e11b62
+source_state: clean
+verified_at: 2026-07-31
+status: current
+related_plans:
+  - docs/plan/onda-1-quick-wins.md
+  - docs/plan/onda-2-identidade-editor.md
+---
 
-> **Resumo:** Detalha como os quatro arquivos Kotlin do plugin recebem comandos do Flutter, constroem e controlam uma `Composition` Media3, emitem estado periódico, gerenciam histórico de edições e produzem thumbnails e exportações de vídeo.
+# Flow: Camada Nativa Android
+
+> **Resumo:** Implementação Kotlin que recebe os comandos do MethodChannel, monta uma `Composition` Media3 tocada por `CompositionPlayer` sobre um `SurfaceTexture` do Flutter, e exporta a mesma composição com `Transformer`.
 
 ## Visão Geral
 
-A implementação Android vive em `android/src/main/kotlin/com/andre/video_ultra_player/` e é composta por quatro arquivos. `VideoUltraPlayerPlugin` é o ponto de entrada do `FlutterPlugin` e age como dispatcher de comandos: abre três canais de comunicação com o Dart, gerencia um mapa de `textureId → TimelineCompositionController` e delega cada method call para o controller correto. `TimelineCompositionController` encapsula todo o estado de playback — um `CompositionPlayer` Media3, um `SurfaceTexture` do `TextureRegistry` do Flutter e o histórico de edição — além de conter as classes de dados (`TimelineClip`, `AudioTrackDescriptor`, `TimelineCompositionConfig`) e os builders que montam a `Composition` Media3. `TimelineCompositionExporter` encapsula o `Transformer` Media3 e poleia o progresso via `Handler`. `TimelineEditModel` é uma pilha dupla de desfazer/refazer com limite de 50 snapshots. `ThumbnailGenerator` extrai frames JPEG de vídeos com cache em disco.
+A camada Android vive em `android/src/main/kotlin/com/andre/video_ultra_player/` e tem quatro arquivos. `VideoUltraPlayerPlugin` é o `FlutterPlugin`: em `onAttachedToEngine` guarda `applicationContext` e `textureRegistry`, abre o `MethodChannel` de comandos e os dois `EventChannel` (estado e progresso de export), e mantém `controllers: MutableMap<Long, TimelineCompositionController>` mais `activeExporters`. Cada method call de player passa por `withController(call, result)`, que extrai o `textureId` e resolve o controller — erro `invalid_arguments` sem id, `not_found` sem controller.
 
-Os canais Dart↔Android são:
-- **MethodChannel** `video_ultra_player/timeline_player` — todos os comandos síncronos e assíncronos.
-- **EventChannel** `video_ultra_player/timeline_player/events` — estado de playback a ~33 ms.
-- **EventChannel** `video_ultra_player/timeline_player/export` — progresso de exportação a ~100 ms.
+`TimelineCompositionController.load` faz o caminho completo: parseia os clipes (`parseTimelineClips` → `TimelineClip.from` → `resolveClip`, que consulta `MediaMetadataRetriever`/`BitmapFactory` para descobrir duração e dimensões da fonte), calcula o `renderSize` de saída, monta os segmentos, cria o `SurfaceTextureEntry` com `setDefaultBufferSize(renderSize)`, envolve o `SurfaceTexture` num `Surface`, constrói o `CompositionPlayer`, entrega o surface com `setVideoSurface`, registra um `Player.Listener` que empurra erros de playback pelo `EventChannel` de estado, chama `setComposition` + `prepare` e agenda o `stateRunnable` de 33 ms. O `entry.id()` é o `textureId` devolvido ao Dart.
 
----
+A composição é montada por `buildTimelineComposition`: cada clipe vira um `EditedMediaItem` (`editedMediaItemFor`) com `ClippingConfiguration` para trim, `setImageDurationMs`/`setFrameRate(30)` para imagem, `setDurationUs` com a duração **da fonte** (Media3 valida `clippingEnd * 1000 <= durationUs`), efeitos de `Crop` + `Presentation` (`LAYOUT_SCALE_TO_FIT_WITH_CROP`) e um `SpeedProvider` constante quando `speed != 1.0`. Todos entram numa `EditedMediaItemSequence.withAudioAndVideoFrom(items)`. Se existe trilha externa e seu offset cabe na timeline, `audioSequenceFor` adiciona uma segunda sequência só de áudio, com gap inicial para o offset, clipping para o trim e um `GainProcessor` com `AudioTrackGainProvider` fazendo volume + fade in/out por posição de sample.
+
+Toda edição segue o mesmo padrão: `pushEditSnapshot()` → mutar a lista `clips` (ou `audioTrack`) → `rebuildCompositionPreservingPlayback()`, que recalcula os segmentos, lê a posição atual, chama `setComposition(novaComposition, positionMs)` + `prepare()` e retoma o play se estava tocando. Efeitos Media3 são imutáveis, então até `setClipAlignment` passa por rebuild completo — diferente do iOS, onde alinhamento é inline.
+
+Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, sem player) cria um `TimelineCompositionExporter` direto no plugin; `exportCurrentTimeline` pede ao controller (`startExportCurrentTimeline`) um exporter alimentado com a lista de clipes, o `renderSize` e a trilha de áudio **atuais**, garantindo que o MP4 corresponda ao preview. O exporter roda `Transformer.start` e poleia `getProgress(ProgressHolder)` a cada 100 ms.
+
+`ThumbnailGenerator` é independente do player: roda no `thumbnailExecutor` do plugin, extrai frames com `MediaMetadataRetriever` e cacheia JPEGs em `context.cacheDir/vup_thumbs/`.
 
 ## Passo a Passo
 
-### A. Inicialização do plugin
-
-1. **Plugin registrado pelo Flutter engine** — `VideoUltraPlayerPlugin.kt` → `onAttachedToEngine`
-   O engine chama `onAttachedToEngine` com o `FlutterPluginBinding`. O plugin salva `applicationContext` e `textureRegistry`, instancia os três canais e registra handlers (`setMethodCallHandler` / `setStreamHandler`). A instância `exportProgressHandler` (inner class `ExportProgressStreamHandler`) é criada uma vez e compartilhada entre todas as exportações.
-
-### B. Load — construção da timeline
-
-2. **Dart envia `load`** — `VideoUltraPlayerPlugin.kt:264` → `load(call, result)`
-   O dispatcher identifica `call.method == "load"`, extrai `clips` (lista de mapas) e `config` (mapa opcional) dos argumentos e chama `load()`.
-
-3. **Criação do controller** — `TimelineCompositionController.kt:69` → `TimelineCompositionController.load`
-   - `TimelineCompositionConfig.from(rawConfig)` parseia aspect ratio e baseWidth.
-   - `parseTimelineClips` converte cada mapa bruto em `TimelineClip` via `TimelineClip.from()`, depois chama `resolveClip` em cada um.
-
-4. **Resolução de metadados nativos** — `TimelineCompositionController.kt:683` → `resolveClip`
-   Para cada clipe, `resolveSourceSize` abre um `MediaMetadataRetriever` para ler largura, altura e rotação (trocando largura/altura se rotação == 90° ou 270°). Se o clipe for vídeo, `resolveSourceDurationMs` lê a duração real do arquivo. Esses valores populam `sourceDurationMs`, `sourceWidth` e `sourceHeight` no `TimelineClip`.
-
-5. **Cálculo do tamanho de render** — `TimelineCompositionController.kt:770` → `outputSizeFor`
-   Usa o `aspectRatio` da config para calcular `renderSize` a partir de `baseWidth` (padrão 1080 px). Garante dimensões pares com `evenDimension`.
-
-6. **Criação da textura Flutter** — `TimelineCompositionController.kt:78`
-   `textureRegistry.createSurfaceTexture()` aloca uma `SurfaceTextureEntry`; `setDefaultBufferSize(width, height)` define a resolução; um `Surface` é criado a partir do `surfaceTexture`.
-
-7. **Construção da `Composition` Media3** — `TimelineCompositionController.kt:525` → `buildTimelineComposition`
-   Para cada `TimelineClip`, `editedMediaItemFor` cria um `MediaItem` com URI local, `ClippingConfiguration` (se houver trim), `durationUs` (duração completa da fonte — necessária para validação interna do Media3), `effectsFor` (efeitos) e opcionalmente um `SpeedProvider` constante.
-
-   - **`effectsFor`**: Se `scale > 1`, calcula coordenadas de `Crop` com base em `alignmentX/Y`. Em seguida adiciona sempre `Presentation.createForWidthAndHeight(..., LAYOUT_SCALE_TO_FIT_WITH_CROP)` para uniformizar o output size de todos os clipes.
-   - **Trilha de áudio externa**: Se `audioTrack != null`, `audioSequenceFor` cria uma `EditedMediaItemSequence` apenas de áudio com clipping, fade in/out via `AudioTrackGainProvider` e gap inicial (`offsetMs`).
-
-   O resultado é `Composition.Builder(sequences).build()` com 1 sequência de vídeo+áudio e 0 ou 1 sequência de áudio extra.
-
-8. **Inicialização do `CompositionPlayer`** — `TimelineCompositionController.kt:85`
-   `CompositionPlayer.Builder(context).build()` → `setVideoSurface(renderSurface, Size)` → `setComposition(composition)` → `prepare()`. Um listener captura `onPlayerError` e propaga via `eventSink`.
-
-9. **Start do loop de estado** — `TimelineCompositionController.kt:117`
-   `mainHandler.post(stateRunnable)` inicia o loop de 33 ms que chama `emitState()` enquanto `!disposed`.
-
-10. **Retorno do `textureId`** — `VideoUltraPlayerPlugin.kt:291`
-    O controller é inserido em `controllers[textureId]`. O plugin responde `result.success(textureId)` para o Dart.
-
----
-
-### C. Comandos de playback
-
-11. **`play` / `pause`** — `TimelineCompositionController.kt:126,131`
-    Chama `player?.play()` ou `player?.pause()` e `emitState()` imediatamente.
-
-12. **`seekTo`** — `TimelineCompositionController.kt:136`
-    Clampeia `positionMs` em `[0, totalDurationMs]` antes de repassar ao player.
-
-13. **`seekToClip`** — `TimelineCompositionController.kt:141`
-    Localiza `segments[clipIndex].startMs` e delega para `seekTo`.
-
-14. **`setVolume`** — `TimelineCompositionController.kt:147`
-    Clampeia em `[0.0, 1.0]` e ajusta `player.volume`.
-
-15. **Emissão de estado (loop 33 ms)** — `TimelineCompositionController.kt:338` → `emitState`
-    Lê `currentPosition`, calcula `segmentIndex` via busca linear reversa em `segments`, monta o mapa e chama `eventSink?.success(map)` com:
-    `globalPosition`, `clipIndex`, `localPosition`, `isPlaying`, `totalDuration`, `clipDurationsMs`, `canUndo`, `canRedo`.
-
----
-
-### D. Comandos de edição (com undo/redo)
-
-Cada operação de edição segue o mesmo padrão:
-
-16. **`pushEditSnapshot`** — `TimelineCompositionController.kt:373`
-    Antes de mutar `clips` ou `audioTrack`, salva o estado atual em `TimelineEditModel.pushSnapshot`. Isso limpa o `redoStack`.
-
-17. **Mutação da lista de clipes** — exemplos:
-    - `trimClip`: copia o `TimelineClip` com novos `trimStartMs`/`trimEndMs`.
-    - `splitClip`: calcula `absSplitMs = effectiveTrimStart + atLocalPositionMs`, produz `clipA` e `clipB` e substitui o original por dois no slice.
-    - `insertClip`: chama `resolveClip` no novo clipe antes de inserir.
-    - `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `setClipAlignment`: variações diretas sobre `clips[index].copy(...)`.
-    - `setAudioTrack` / `removeAudioTrack`: altera `audioTrack`.
-
-18. **`rebuildCompositionPreservingPlayback`** — `TimelineCompositionController.kt:322`
-    - Recalcula `segments` e `totalDurationMs` via `rebuildSegments`.
-    - Captura `positionMs` e `wasPlaying` do player atual.
-    - `player.setComposition(buildTimelineComposition(...), positionMs)` aplica a nova composição com seek clampado.
-    - `player.prepare()` reinicia o pipeline interno Media3.
-    - Se `wasPlaying`, volta a chamar `player.play()`.
-    - `emitState()` publica o novo estado.
-
-19. **`undo` / `redo`** — `TimelineCompositionController.kt:266,274`
-    - Chama `editHistory.undo(currentSnapshot)` ou `editHistory.redo(currentSnapshot)`.
-    - `TimelineEditModel` remove o topo da pilha correspondente, empurra o snapshot atual na pilha oposta (com clampe em 50 entradas) e retorna o snapshot a restaurar.
-    - `restoreEditSnapshot` repõe `clips` e `audioTrack` e chama `rebuildCompositionPreservingPlayback`.
-
----
-
-### E. Exportação
-
-#### E1. `exportTimeline` (clipes brutos sem player ativo)
-
-20. **Dart envia `exportTimeline`** — `VideoUltraPlayerPlugin.kt:301` → `exportTimeline`
-    Extrai `clips`, `outputPath` e `config`. Cria um `TimelineCompositionExporter`.
-
-21. **`TimelineCompositionExporter.export`** — `TimelineCompositionController.kt:422`
-    Parseia clips, calcula `outputSize`, chama `exportFromClips`.
-
-#### E2. `exportCurrentTimeline` (estado do controller ativo)
-
-22. **Dart envia `exportCurrentTimeline`** — `VideoUltraPlayerPlugin.kt:366` → `exportCurrentTimeline`
-    Localiza o controller pelo `textureId`, chama `controller.startExportCurrentTimeline(outputPath, callback)`.
-
-23. **`TimelineCompositionController.startExportCurrentTimeline`** — `TimelineCompositionController.kt:282`
-    Copia `clips`, `renderSize` e `audioTrack` do estado atual (snapshot imediato) e cria um `TimelineCompositionExporter` que chama `exportFromClips`.
-
-#### E3. Exportação comum
-
-24. **`exportFromClips`** — `TimelineCompositionController.kt:440`
-    - Cria o arquivo de output (path fornecido ou `cacheDir/video_ultra_player_export_<uuid>.mp4`).
-    - Chama `buildTimelineComposition` com os mesmos helpers do preview.
-    - Cria `Transformer` via `Transformer.Builder(context).addListener(...)`.
-    - `transformer.start(composition, outputFile.absolutePath)`.
-    - `mainHandler.post(progressRunnable)` inicia polling de progresso a 100 ms via `transformer.getProgress(ProgressHolder)`.
-
-25. **Progresso** — `ExportProgressStreamHandler.emit` → EventChannel `export`
-    `onProgress` chama `exportProgressHandler.emit(progress, "exporting")` que faz `eventSink?.success(map)`.
-
-26. **Conclusão** — `Transformer.Listener.onCompleted`
-    `complete { callback.onCompleted(outputFile.absolutePath) }` → `result.success(outputPath)` no Dart.
-
----
-
-### F. Geração de thumbnails
-
-27. **Dart envia `generateThumbnails`** — `VideoUltraPlayerPlugin.kt:406`
-    Extrai `videoPath`, `timestampsMs` e `width` (padrão 120 px). Submete ao `thumbnailExecutor` (thread pool cached).
-
-28. **`ThumbnailGenerator.generate`** — `ThumbnailGenerator.kt:31`
-    Abre um `MediaMetadataRetriever`, itera sobre `timestampsMs` chamando `generateFrame` para cada timestamp.
-
-29. **Cache e extração** — `ThumbnailGenerator.kt:46` → `generateFrame`
-    - Chave de cache: `djb2(videoPath)_${tsMs}_${width}.jpg` em `cacheDir/vup_thumbs/`.
-    - Cache hit: retorna o path direto.
-    - Cache miss (API ≥ 27): `getScaledFrameAtTime(timeUs, OPTION_CLOSEST_SYNC, width, scaledHeight)`.
-    - Cache miss (API 24–26): `getFrameAtTime` + `Bitmap.createScaledBitmap`.
-    - Comprime o bitmap como JPEG 80% e persiste no arquivo de cache.
-
-30. **Retorno ao main thread** — `VideoUltraPlayerPlugin.kt:431`
-    `mainHandler.post { result.success(paths) }` devolve a lista de paths para o Dart.
-
----
-
-### G. Dispose
-
-31. **Dart envia `dispose`** — `VideoUltraPlayerPlugin.kt:221`
-    Remove o controller de `controllers` e chama `controller.dispose()`.
-
-32. **`TimelineCompositionController.dispose`** — `TimelineCompositionController.kt:300`
-    Marca `disposed = true`, remove `stateRunnable` do handler, faz `player.release()`, `surface.release()` e `textureEntry.release()` em ordem.
-
----
+1. **Attach** — `.../VideoUltraPlayerPlugin.kt` → `onAttachedToEngine`
+   Guarda contexto e `textureRegistry`; abre `video_ultra_player/timeline_player`, `.../events` e `.../export`.
+2. **Roteamento** — `onMethodCall`
+   `when (call.method)` sobre `load`, `exportTimeline`, `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `setAudioTrack`, `removeAudioTrack`, `undo`, `redo`, `generateThumbnails`, `exportCurrentTimeline`, `dispose`; o resto vira `result.notImplemented()`.
+3. **Resolução do controller** — `withController(call, result, block)`
+   `numberArg(arguments, "textureId")` → `controllers[textureId]`.
+4. **Load** — `.../TimelineCompositionController.kt` → `load(rawClips, rawConfig)`
+   `TimelineCompositionConfig.from` → `parseTimelineClips` → `outputSizeFor` → `rebuildSegments`.
+5. **Resolução de metadados** — `resolveClip` → `resolveSourceDurationMs` / `resolveSourceSize`
+   `MediaMetadataRetriever` para vídeo (inclusive rotação 90/270, que troca largura e altura) e `BitmapFactory` com `inJustDecodeBounds` para imagem.
+6. **Textura e player** — `textureRegistry.createSurfaceTexture()` → `Surface(entry.surfaceTexture())` → `CompositionPlayer.Builder(context).build()`
+   `setVideoSurface(surface, Size(renderSize))`, `addListener { onPlayerError }`, `setComposition(...)`, `prepare()`.
+7. **Composição** — `buildTimelineComposition(clips, renderSize, audioTrack)`
+   `editedMediaItemFor` por clipe + `EditedMediaItemSequence.withAudioAndVideoFrom`; adiciona `audioSequenceFor` quando há trilha externa dentro da duração da timeline.
+8. **Efeitos por clipe** — `effectsFor(clip, renderSize)`
+   `Crop` derivado de `scale`/`alignment` quando `scale > 1.0001`, seguido de `Presentation.createForWidthAndHeight(..., LAYOUT_SCALE_TO_FIT_WITH_CROP)`.
+9. **Estado** — `stateRunnable` → `emitState()` a cada `STATE_INTERVAL_MS` (33 ms)
+   Emite `globalPosition`, `clipIndex` (`segmentIndexFor`), `localPosition`, `isPlaying`, `totalDuration`, `clipDurationsMs`, `canUndo`, `canRedo`.
+10. **Playback** — `play` / `pause` / `seekTo` / `seekToClip` / `setVolume`
+    `seekTo` faz `coerceIn(0, totalDurationMs)`; `seekToClip` usa `segments.getOrNull(clipIndex)?.startMs`; `setVolume` faz `coerceIn(0.0, 1.0)`.
+11. **Edição** — `trimClip` / `splitClip` / `insertClip` / `removeClip` / `moveClip` / `replaceClip` / `setClipSpeed` / `setClipAlignment`
+    Cada um valida o índice, chama `pushEditSnapshot()`, muta `clips` e chama `rebuildCompositionPreservingPlayback()`.
+12. **Trilha de áudio** — `setAudioTrack(rawTrack)` / `removeAudioTrack()`
+    `AudioTrackDescriptor.from` + `resolveAudioTrack` (resolve `sourceDurationMs`) e rebuild; remover sem trilha ativa só re-emite estado.
+13. **Undo/redo** — `undo()` / `redo()` → `TimelineEditModel` → `restoreEditSnapshot`
+    Restaura `clips` + `audioTrack` do snapshot e faz rebuild; pilha vazia é no-op com `emitState()`.
+14. **Export da timeline crua** — `VideoUltraPlayerPlugin.exportTimeline` → `TimelineCompositionExporter.export`
+    Parseia clipes/config, calcula `outputSizeFor` e delega a `exportFromClips` sem trilha de áudio.
+15. **Export do estado atual** — `exportCurrentTimeline` → `TimelineCompositionController.startExportCurrentTimeline` → `exportFromClips`
+    Passa `clips`, `renderSize` e `audioTrack` correntes.
+16. **Transformer** — `TimelineCompositionExporter.exportFromClips`
+    Cria diretório/apaga arquivo existente, `Transformer.Builder(context).addListener{...}.build()`, `start(composition, path)` e agenda `progressRunnable` (100 ms).
+17. **Thumbnails** — `VideoUltraPlayerPlugin.generateThumbnails` → `ThumbnailGenerator.generate`
+    Roda no `thumbnailExecutor`; devolve o resultado via `mainHandler.post { result.success(paths) }`.
+18. **Dispose** — `dispose` no plugin → `TimelineCompositionController.dispose`
+    Marca `disposed`, remove o `stateRunnable`, libera player, `Surface` e `SurfaceTextureEntry`.
+19. **Detach** — `onDetachedFromEngine`
+    Limpa os handlers dos canais, cancela `activeExporters`, dispõe todos os controllers e encerra o `thumbnailExecutor`.
 
 ### Caminhos alternativos
 
-- **Argumentos inválidos (qualquer método):** `withController` ou os handlers diretos retornam `result.error("invalid_arguments", ...)` antes de tocar o controller.
-- **`textureId` não encontrado:** `withController` retorna `result.error("not_found", ...)`.
-- **`load` falha (path inválido, arquivo corrompido):** A exceção propagada por `TimelineCompositionController.load` é capturada em `VideoUltraPlayerPlugin.load` e retorna `result.error("load_failed", ...)`.
-- **Erro de playback:** `Player.Listener.onPlayerError` propaga a mensagem (com chain de causas até 5 níveis) via `eventSink.error("playback_error", ...)`.
-- **Exportação falha:** `Transformer.Listener.onError` apaga o arquivo de output parcial, emite `"failed"` no canal de progresso e chama `result.error("export_failed", ...)`.
-- **Plugin detachado:** `onDetachedFromEngine` cancela todos os exportadores em `activeExporters`, dispõe todos os controllers, desliga `thumbnailExecutor` e remove todos os handlers.
-
----
+- **Plugin sem contexto/registry:** `load`, `exportTimeline` e `generateThumbnails` respondem `not_attached`.
+- **Argumento numérico ausente:** `result.error("invalid_arguments", …)` com a mensagem do campo esperado.
+- **Controller inexistente:** `not_found` (`No native timeline player exists for textureId …`).
+- **Falha em `insertClip`/`replaceClip`/`setAudioTrack`:** `try/catch` no plugin converte em `edit_failed`; `setAudioTrack` também loga com `Log.e` e devolve o stack trace em `details`.
+- **Falha ao montar a composição no load:** `load_failed`.
+- **Índice fora de faixa:** os métodos do controller retornam sem alterar nada (`if (clipIndex !in clips.indices) return`).
+- **Erro de playback:** `Player.Listener.onPlayerError` monta uma mensagem com até 5 níveis de `cause` e chama `eventSink?.error("playback_error", msg, null)`.
+- **Falha de export:** `Transformer.Listener.onError` apaga o arquivo de saída, emite `state: "failed"` e devolve `export_failed`; exceções na montagem também caem em `export_failed` com `exporter.cancel()`.
+- **Trilha de áudio fora da timeline:** `buildTimelineComposition` ignora a sequência de áudio quando `audioTrack.offsetMs >= timelineDurationMs`.
+- **Extração de thumbnail falha:** `generateFrame` devolve `null` e o timestamp é omitido do resultado (`mapNotNull`).
 
 ## Arquivos Envolvidos
 
 | Camada | Arquivo | Responsabilidade |
 |--------|---------|------------------|
-| Plugin / Dispatcher | `VideoUltraPlayerPlugin.kt` | Ponto de entrada `FlutterPlugin`; registra canais, mapeia textureId→controller, despacha method calls |
-| Controller de playback | `TimelineCompositionController.kt` (classe `TimelineCompositionController`) | Estado do player, SurfaceTexture, loop de estado, operações de edição, undo/redo |
-| Exportação | `TimelineCompositionController.kt` (classe `TimelineCompositionExporter`) | Wraps Media3 `Transformer`, polling de progresso, gestão de arquivo de output |
-| Builders de composição | `TimelineCompositionController.kt` (funções top-level) | `buildTimelineComposition`, `editedMediaItemFor`, `audioSequenceFor`, `effectsFor`, `resolveClip`, etc. |
-| Modelos de dados | `TimelineCompositionController.kt` (data classes) | `TimelineClip`, `AudioTrackDescriptor`, `TimelineCompositionConfig`, `TimelineRenderSize`, `TimelineSegment` |
-| Histórico de edição | `TimelineEditModel.kt` | Pilhas de undo/redo com limite de 50 snapshots |
-| Thumbnails | `ThumbnailGenerator.kt` | Extração de frames com `MediaMetadataRetriever` e cache JPEG em disco |
-| Progresso de export | `VideoUltraPlayerPlugin.kt` (inner class `ExportProgressStreamHandler`) | `EventChannel.StreamHandler` que emite `{progress, state}` no canal `export` |
-
----
+| Plugin / dispatcher | `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt` | Canais, mapa de controllers, exporters ativos, parsing de argumentos, thumbnails |
+| Controller | `.../TimelineCompositionController.kt` → `TimelineCompositionController` | `CompositionPlayer`, `Surface`, segmentos, edição, estado, dispose |
+| Builders / modelos | `.../TimelineCompositionController.kt` (top-level) | `buildTimelineComposition`, `editedMediaItemFor`, `audioSequenceFor`, `effectsFor`, `TimelineClip`, `AudioTrackDescriptor`, `TimelineCompositionConfig`, `AudioTrackGainProvider` |
+| Exporter | `.../TimelineCompositionController.kt` → `TimelineCompositionExporter` | `Transformer`, polling de progresso, arquivo de saída |
+| Histórico | `.../TimelineEditModel.kt` | `TimelineEditSnapshot` e pilhas undo/redo (limite 50) |
+| Thumbnails | `.../ThumbnailGenerator.kt` | `MediaMetadataRetriever` + cache em `cacheDir/vup_thumbs` |
+| Build | `android/build.gradle.kts` | Media3 1.10.1, JVM 17, `compileSdk 36`, `minSdk 24`, JUnit Platform |
+| Testes | `android/src/test/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPluginTest.kt` | Método desconhecido → `notImplemented()` |
+| Contraparte Dart | `lib/video_ultra_player_method_channel.dart` | Nomes de método e chaves esperadas por este código |
 
 ## Regras de Negócio Relevantes
 
-- **Dimensões pares obrigatórias** — `TimelineCompositionController.kt:792` (`evenDimension`): Media3 exige que largura e altura do output sejam pares; qualquer valor ímpar é incrementado.
-- **`durationUs` = duração da fonte completa (não trimada)** — `TimelineCompositionController.kt:556`: Media3 valida que `clippingEndPositionMs * 1000 <= durationUs`; usar a duração trimada causa crash quando `trimStartMs > 0`.
-- **Speed range 0.5×–2.0×** — `TimelineCompositionController.kt:241` e `TimelineClip.from`: velocidade fora da faixa é clampada silenciosamente.
-- **`setComposition` apenas em commit** — `TimelineCompositionController.kt:237` (comentário): `rebuildCompositionPreservingPlayback` é custoso (pipeline full rebuild); chamá-lo em cada tick de drag UI causaria artefatos. A API expõe isso para o caller respeitar.
-- **Trilha de áudio externa ignorada se offset ≥ duração total** — `TimelineCompositionController.kt:533`: sequência de áudio é adicionada somente se `audioTrack.offsetMs < timelineDurationMs`.
-- **Aspect ratio `ORIGINAL` usa dimensões do primeiro clipe** — `TimelineCompositionController.kt:785`: se nenhum preset de aspect ratio é especificado, o render size é derivado do primeiro clipe da timeline (já com dimensões pares).
-- **Undo/redo limita 50 snapshots** — `TimelineEditModel.kt:11`: snapshots além do limite são descartados do início da pilha.
-- **Cache de thumbnails por djb2 + timestamp + width** — `ThumbnailGenerator.kt:51`: a mesma combinação de path, timestamp e largura nunca é reprocessada enquanto o arquivo de cache existir em disco.
-
----
+- **`setDurationUs` usa a duração da fonte, não a cortada** — `editedMediaItemFor`: Media3 valida `clippingEndPositionMs * 1000 <= durationUs`; usar a duração cortada quebra o invariante sempre que `trimStartMs > 0` (por exemplo depois de um split). O comentário no código registra isso.
+- **Todo rebuild preserva posição e estado de play** — `rebuildCompositionPreservingPlayback`: `setComposition(composition, positionMs.coerceIn(0, totalDurationMs))` e `play()` se `wasPlaying`.
+- **Alinhamento exige rebuild** — efeitos Media3 são imutáveis; `setClipAlignment` reconstrói a composição inteira (documentado também em `setClipSpeed`/`setAudioTrack`: chamar só no commit do controle, não a cada tick de arrasto).
+- **`scale` só recorta acima de 1** — `effectsFor` usa `max(clip.scale, 1.0)` e só adiciona `Crop` quando `scale > 1.0001`.
+- **`resolvedDurationMs` prioriza `trimEndMs`** — depois cai em `sourceDurationMs` e por fim em `durationMs`/2000 ms; `scaledDurationMs` divide por `speed`.
+- **Áudio externo é clampado pela timeline** — `audioSequenceFor`: `effectiveDurationMs = min(trimmedDurationMs, timelineDurationMs - offsetMs)` para que `durationUs` case com o range de clipping exigido pelo Media3.
+- **Fades são calculados por posição de sample** — `AudioTrackGainProvider.getGainFactorAtSamplePosition` converte sample → µs e multiplica o ganho pelas rampas de fade-in/fade-out.
+- **`speed` clampado em `[0.5, 2.0]`** — em `TimelineClip.from`, em `setClipSpeed` e em `constantSpeedProvider`.
+- **`volume` clampado em `[0.0, 1.0]`** — em `AudioTrackDescriptor.from` e em `setVolume`.
+- **Dimensões sempre pares** — `evenDimension` em `outputSizeFor` e `resolveSourceSize`.
+- **Histórico limitado a 50 snapshots** — `TimelineEditModel`; `pushSnapshot` limpa a pilha de redo.
+- **Rotação da fonte é respeitada** — `resolveSourceSize` inverte largura/altura quando `METADATA_KEY_VIDEO_ROTATION` é 90 ou 270.
+- **Export do estado atual inclui a trilha externa** — `startExportCurrentTimeline` captura `clips`, `renderSize` e `audioTrack` correntes antes de criar o exporter.
 
 ## Dependências Externas
 
-- `androidx.media3:media3-transformer` — `Transformer`, `CompositionPlayer`, `EditedMediaItem`, `EditedMediaItemSequence`, `Composition`, `Effects`, `Presentation`, `Crop`, `GainProcessor`.
-- `androidx.media3:media3-common` — `MediaItem`, `Player`, `PlaybackException`, `C`, `SpeedProvider`.
-- `android.media.MediaMetadataRetriever` — leitura de metadados (duração, dimensões, rotação) e extração de frames.
-- `io.flutter.embedding.engine.plugins.FlutterPlugin` — contrato de plugin federado; `TextureRegistry` para alocar `SurfaceTexture`.
-- `io.flutter.plugin.common.MethodChannel` / `EventChannel` — comunicação bidirecional com o Dart.
-
----
+- **`androidx.media3` 1.10.1:** `CompositionPlayer`, `Composition`, `EditedMediaItem`, `EditedMediaItemSequence`, `Transformer`, `ProgressHolder`, `Effects`, `Crop`, `Presentation`, `GainProcessor`, `SpeedProvider`.
+- **Android framework:** `MediaMetadataRetriever`, `BitmapFactory`, `Surface`, `SurfaceTexture`, `Handler`/`Looper`, `Executors`.
+- **Flutter Android embedder:** `FlutterPlugin`, `MethodChannel`, `EventChannel`, `io.flutter.view.TextureRegistry`.
 
 ## Observações
 
-- **`withController` é o único guardião de `textureId`** — `VideoUltraPlayerPlugin.kt:435`: todos os comandos que precisam de um controller ativo passam por esse helper. Comandos que não precisam de controller (`load`, `exportTimeline`, `generateThumbnails`, `dispose`) fazem sua própria validação inline.
-- **`exportCurrentTimeline` vs `exportTimeline`**: o primeiro exporta o estado atual do controller (clipes editados em memória); o segundo aceita uma lista de clipes brutos independente de qualquer player ativo. São caminhos diferentes no plugin, ambos terminando em `exportFromClips`.
-- **Loop de estado nunca para enquanto o controller existe** — `stateRunnable` se agenda de novo em cada tick enquanto `!disposed`; só é interrompido por `dispose()`.
-- **`activeExporters` é um `Set` no plugin, não no controller** — garante que `onDetachedFromEngine` possa cancelar todas as exportações em andamento mesmo que o controller correspondente já tenha sido descartado.
-- **`splitClip` apaga `transitionToNextMs` do clipA** — `TimelineCompositionController.kt:189`: ao dividir, o ponto de corte não herda a transição original do clip pai para evitar sobreposição incorreta no boundary do split.
-- **Crop com clamp de segurança** — `TimelineCompositionController.kt:643–648`: `Crop` exige `left < right` e `bottom < top`; o código garante margens de 0.01f para evitar composições inválidas com scale extremo.
-
----
-
-*Relacionados: [[native-timeline-player]] (visão geral Dart + iOS + Android), [[project-structure]]*
+- `resolveClip` faz I/O de metadados de forma síncrona: em `load`, `insertClip` e `replaceClip` isso roda na thread do channel (main), ao contrário das thumbnails, que usam `thumbnailExecutor`.
+- `transitionToNextMs` é parseado e preservado em `TimelineClip`, mas nenhuma parte da composição o usa — não há crossfade; o split apenas o zera.
+- `TimelineCompositionExporter.cancel()` marca `completed = true`, então um exporter cancelado nunca reporta resultado — é o comportamento esperado no `onDetachedFromEngine`.
+- `exportTimeline` (lista crua) sempre exporta sem trilha de áudio externa: `export` chama `exportFromClips(..., null, ...)`.
+- `emitState` roda a cada 33 ms enquanto o controller existir, mesmo pausado — é o que mantém `canUndo`/`canRedo` atualizados sem evento dedicado.
+- A única cobertura automatizada é o teste de `notImplemented()`; nada exercita composição, edição ou export.
