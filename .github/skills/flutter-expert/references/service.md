@@ -440,13 +440,15 @@ class GeneratorAccessInfo extends GeneratorState {
       'GeneratorAccessInfo(canUse: $canUse, remainingFree: $remainingFree)';
 }
 class GeneratorError extends GeneratorState {
-  const GeneratorError(this.message, {this.error});
-  final String message;
+  const GeneratorError(this.kind, {this.error});
+  final GeneratorErrorKind kind;
   final Object? error;
 
   @override
-  String toString() => 'GeneratorError(message: $message, error: $error)';
+  String toString() => 'GeneratorError(kind: $kind, error: $error)';
 }
+
+enum GeneratorErrorKind { offline, quotaExceeded, generic }
 ```
 
 ### View reagindo ao gating
@@ -470,7 +472,11 @@ BlocBuilder<GeneratorCubit, GeneratorState>(
       return Text(context.l10n.remainingFreeUses(state.remainingFree));
     }
     if (state is GeneratorError) {
-      return Text(state.message);
+      return Text(switch (state.kind) {
+        GeneratorErrorKind.offline => context.l10n.errorOffline,
+        GeneratorErrorKind.quotaExceeded => context.l10n.errorQuotaExceeded,
+        GeneratorErrorKind.generic => context.l10n.errorGeneric,
+      });
     }
     return const SizedBox.shrink();
   },

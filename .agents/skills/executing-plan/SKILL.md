@@ -25,9 +25,11 @@ Código implementado e verificado, plano com progresso marcado, e os flows estru
 
 ### 1. Localizar e ler o plano completo
 
-Use o caminho informado pelo usuário. Se ele disser apenas "o plano", liste `./docs/plan/*.md`, selecione o único candidato compatível com a conversa ou faça uma pergunta curta quando houver ambiguidade real.
+Use o caminho informado pelo usuário. Se ele disser apenas "o plano", liste `./docs/plan/` (arquivos e pastas), selecione o único candidato compatível com a conversa ou faça uma pergunta curta quando houver ambiguidade real.
 
-Leia o arquivo inteiro antes de alterar código. Identifique:
+**Plano multi-parte** (pasta com `00-indice.md` + partes numeradas): leia o índice para absorver objetivo, Design de Origem e ordem das partes, e depois leia por completo **apenas a parte em execução** — a primeira com status pendente na tabela do índice cujas dependências estejam concluídas. As partes futuras não entram no contexto agora; elas serão lidas quando chegar a vez.
+
+**Plano de arquivo único:** leia o arquivo inteiro antes de alterar código. Identifique:
 
 - Objetivo e critérios de sucesso
 - **Design de Origem** — a decisão aprovada e as alternativas descartadas; é o limite que separa uma correção de drift legítima de uma mudança de rumo que exige o usuário
@@ -101,6 +103,8 @@ Ao chegar ao fim:
 4. Confirme que os flows estruturalmente afetados foram atualizados.
 5. Mantenha desmarcado qualquer critério que não tenha sido comprovado.
 
+**Em plano multi-parte:** ao concluir uma parte, marque o status dela como concluída na tabela do `00-indice.md`, execute o checkpoint final da parte (commit + aviso) e **pare** — informe que a parte N está concluída e que a parte N+1 está pronta para execução, deixando a decisão de continuar com o usuário. A atualização de flows (passo 6) e a declaração de conclusão do plano inteiro só acontecem na última parte.
+
 Só declare o plano concluído quando todos os itens obrigatórios estiverem marcados e as verificações atuais sustentarem essa afirmação.
 
 ---
@@ -111,11 +115,9 @@ Só declare o plano concluído quando todos os itens obrigatórios estiverem mar
 
 **Escopo controlado** — problemas não relacionados encontrados durante a execução devem ser relatados, não incorporados silenciosamente.
 
-**Verificação proporcional** — use exatamente as evidências previstas no plano e amplie apenas quando a alteração revelar risco de regressão diretamente relacionado.
+**Verificação proporcional** — use exatamente as evidências previstas no plano e amplie apenas quando a alteração revelar risco de regressão diretamente relacionado. Testes no harness (unitários e de componente headless) são evidência válida; subir app, servidor, emulador, simulador, dispositivo, browser real, screenshot ou interação visual não é — a validação funcional é do usuário.
 
-**Respeito ao ambiente** — não execute app, servidor, emulador, simulador, dispositivo, screenshot ou interação visual quando o plano reserva a validação funcional ao usuário.
-
-**Idioma** — use o mesmo idioma da conversa e preserve o idioma do plano.
+**Idioma do plano** — preserve o idioma em que o plano foi escrito ao atualizá-lo.
 
 ---
 

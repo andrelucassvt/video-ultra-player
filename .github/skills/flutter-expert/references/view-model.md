@@ -5,7 +5,7 @@
 - **Quando criar um State**: SEMPRE `sealed class` + `@immutable` + `const`; mínimo obrigatório: `Initial`, `Loading`, `Loaded`, `Error`; garanta também `toString()` legível no `BlocObserver`.
 - **Quando criar um Cubit**: receba dependências via construtor; NUNCA injete DataSource diretamente — use Repository.
 - **Quando escrever um método async no Cubit**: SEMPRE emita `Loading` primeiro → chame o repository → use `result.when()`.
-- **Quando emitir erro**: converta a exceção técnica em mensagem amigável ao usuário.
+- **Quando emitir erro**: emita a **causa** (enum `XErrorKind`), nunca o texto — o Cubit não tem `context.l10n`. Guarde a `AppException` original no campo `error` para o log.
 - **Quando o Cubit precisar navegar**: emita um estado de navegação (`XNavigateToY`) e deixe a View reagir via `BlocListener`.
 - **Quando persistir dados localmente** (preferências, cache, flags): injete `StorageService` diretamente no Cubit — sem Repository, sem DataSource.
 
@@ -64,17 +64,63 @@ class ProfileLoaded extends ProfileState {
 }
 
 class ProfileError extends ProfileState {
-  const ProfileError(this.message, {this.error, this.stackTrace});
+  const ProfileError(this.kind, {this.error, this.stackTrace});
 
-  final String message;
+  /// Causa em forma de dado — a View traduz com context.l10n.
+  final ProfileErrorKind kind;
   final Object? error;
   final StackTrace? stackTrace;
 
   @override
   String toString() =>
-      'ProfileError(message: $message, error: $error, stackTrace: $stackTrace)';
+      'ProfileError(kind: $kind, error: $error, stackTrace: $stackTrace)';
+}
+
+enum ProfileErrorKind { offline, sessionExpired, notFound, generic }
+```
+
+### O State de erro carrega a causa, não o texto
+
+O Cubit não tem `BuildContext`, logo não tem acesso a `context.l10n`. Uma mensagem literal no Cubit
+(`emit(ProfileError('Erro ao carregar perfil'))`) quebra a regra de zero strings hardcoded e trava
+o app em um idioma só. Emita a **causa**; a View resolve o texto:
+
+```dart
+// Cubit — classifica pelo tipo da falha vinda do Repository
+result.when(
+  ok: (data) => emit(ProfileLoaded(name: data.name, email: data.email)),
+  error: (e) => emit(
+    ProfileError(
+      switch (e) {
+        NetworkException() => ProfileErrorKind.offline,
+        UnauthorizedException() => ProfileErrorKind.sessionExpired,
+        NotFoundException() => ProfileErrorKind.notFound,
+        _ => ProfileErrorKind.generic,
+      },
+      error: e,
+    ),
+  ),
+);
+
+// View — único lugar com acesso ao l10n
+if (state is ProfileError) {
+  return Center(
+    child: Text(switch (state.kind) {
+      ProfileErrorKind.offline => l10n.errorOffline,
+      ProfileErrorKind.sessionExpired => l10n.errorSessionExpired,
+      ProfileErrorKind.notFound => l10n.errorProfileNotFound,
+      ProfileErrorKind.generic => l10n.errorGeneric,
+    }),
+  );
 }
 ```
+
+> `enum` aqui é uma exceção deliberada à preferência por `if` + early return no `builder`: a regra
+> do `if` vale para **discriminar o State**; para mapear um enum, `switch` exaustivo é o idioma
+> correto e o compilador cobra o caso novo.
+>
+> O campo `error` continua guardando a `AppException` original — ele nunca vai para a tela, só para
+> o log do `BlocObserver`.
 
 ### Regras Obrigatórias para States
 
@@ -122,23 +168,25 @@ class HomeLoaded extends HomeState {
 }
 
 class HomeError extends HomeState {
-  const HomeError(this.message, {this.error, this.stackTrace});
+  const HomeError(this.kind, {this.error, this.stackTrace});
 
-  final String message;
+  final HomeErrorKind kind;
   final Object? error;
   final StackTrace? stackTrace;
 
   @override
   String toString() =>
-      'HomeError(message: $message, error: $error, stackTrace: $stackTrace)';
+      'HomeError(kind: $kind, error: $error, stackTrace: $stackTrace)';
 }
+
+enum HomeErrorKind { offline, generic }
 ```
 
 O resultado passa a ser útil para diagnóstico:
 
 ```text
 Change { currentState: HomeLoading, nextState: HomeLoaded(items: [...]) }
-Change { currentState: HomeLoading, nextState: HomeError(message: Não foi possível carregar, error: SocketException: ..., stackTrace: ...) }
+Change { currentState: HomeLoading, nextState: HomeError(kind: HomeErrorKind.offline, error: SocketException: ..., stackTrace: ...) }
 ```
 
 Regras de observabilidade:
@@ -202,13 +250,16 @@ class ProductsDeleting extends ProductsState {
   String toString() => 'ProductsDeleting';
 }
 class ProductsError extends ProductsState {
-  const ProductsError(this.message, {this.error});
-  final String message;
+  const ProductsError(this.kind, {this.error});
+  final ProductsErrorKind kind;
   final Object? error;
 
   @override
-  String toString() => 'ProductsError(message: $message, error: $error)';
+  String toString() => 'ProductsError(kind: $kind, error: $error)';
 }
+
+/// A operação que falhou faz parte da causa — a View escolhe o texto.
+enum ProductsErrorKind { load, create, update, delete, offline }
 ```
 
 ### Feature com Formulário
@@ -248,22 +299,28 @@ class RegisterSuccess extends RegisterState {
   String toString() => 'RegisterSuccess(userId: $userId)';
 }
 class RegisterError extends RegisterState {
-  const RegisterError(this.message, {this.error});
-  final String message;
+  const RegisterError(this.kind, {this.error});
+  final RegisterErrorKind kind;
   final Object? error;
 
   @override
-  String toString() => 'RegisterError(message: $message, error: $error)';
+  String toString() => 'RegisterError(kind: $kind, error: $error)';
 }
 class RegisterFieldError extends RegisterState {
   const RegisterFieldError({this.emailError, this.passwordError});
-  final String? emailError;
-  final String? passwordError;
+  final FieldErrorKind? emailError;
+  final FieldErrorKind? passwordError;
 
   @override
   String toString() =>
       'RegisterFieldError(emailError: $emailError, passwordError: $passwordError)';
 }
+
+enum RegisterErrorKind { emailAlreadyUsed, weakPassword, offline, generic }
+
+/// Erros de campo também são causa, não texto — o `errorText` do
+/// TextFormField é resolvido na View com context.l10n.
+enum FieldErrorKind { required, invalidFormat, tooShort }
 ```
 
 ### Feature com Paginação
@@ -307,13 +364,15 @@ class PostsLoadingMore extends PostsState {
       'PostsLoadingMore(currentPosts: $currentPosts)';
 }
 class PostsError extends PostsState {
-  const PostsError(this.message, {this.error});
-  final String message;
+  const PostsError(this.kind, {this.error});
+  final PostsErrorKind kind;
   final Object? error;
 
   @override
-  String toString() => 'PostsError(message: $message, error: $error)';
+  String toString() => 'PostsError(kind: $kind, error: $error)';
 }
+
+enum PostsErrorKind { firstPage, nextPage, offline }
 ```
 
 ---
@@ -397,9 +456,16 @@ class ProfileCubit extends Cubit<ProfileState> {
 
     result.when(
       ok: (data) => emit(ProfileLoaded(name: data.name, email: data.email)),
-      error: (e) => emit(ProfileError('Erro ao carregar perfil', error: e)),
+      error: (e) => emit(ProfileError(_kindOf(e), error: e)),
     );
   }
+
+  ProfileErrorKind _kindOf(Object error) => switch (error) {
+        NetworkException() => ProfileErrorKind.offline,
+        UnauthorizedException() => ProfileErrorKind.sessionExpired,
+        NotFoundException() => ProfileErrorKind.notFound,
+        _ => ProfileErrorKind.generic,
+      };
 }
 ```
 
@@ -416,7 +482,7 @@ class ProductsCubit extends Cubit<ProductsState> {
     final result = await _repository.getAll();
     result.when(
       ok: (data) => emit(ProductsLoaded(products: data)),
-      error: (e) => emit(ProductsError('Erro ao carregar', error: e)),
+      error: (e) => emit(ProductsError(_kindOf(e, ProductsErrorKind.load), error: e)),
     );
   }
 
@@ -425,7 +491,7 @@ class ProductsCubit extends Cubit<ProductsState> {
     final result = await _repository.create(entity);
     result.when(
       ok: (_) => loadAll(),
-      error: (e) => emit(ProductsError('Erro ao criar', error: e)),
+      error: (e) => emit(ProductsError(_kindOf(e, ProductsErrorKind.create), error: e)),
     );
   }
 
@@ -434,7 +500,7 @@ class ProductsCubit extends Cubit<ProductsState> {
     final result = await _repository.update(entity);
     result.when(
       ok: (_) => loadAll(),
-      error: (e) => emit(ProductsError('Erro ao atualizar', error: e)),
+      error: (e) => emit(ProductsError(_kindOf(e, ProductsErrorKind.update), error: e)),
     );
   }
 
@@ -443,9 +509,14 @@ class ProductsCubit extends Cubit<ProductsState> {
     final result = await _repository.delete(id);
     result.when(
       ok: (_) => loadAll(),
-      error: (e) => emit(ProductsError('Erro ao deletar', error: e)),
+      error: (e) => emit(ProductsError(_kindOf(e, ProductsErrorKind.delete), error: e)),
     );
   }
+
+  /// Sem rede vence a operação: a mensagem útil é "você está offline",
+  /// não "falha ao atualizar".
+  ProductsErrorKind _kindOf(Object error, ProductsErrorKind operation) =>
+      error is NetworkException ? ProductsErrorKind.offline : operation;
 }
 ```
 
@@ -476,7 +547,7 @@ class ProductsCubit extends Cubit<ProductsState> {
 // ✅ result.when() — preferido, mais conciso
 result.when(
   ok: (data) => emit(LoginSuccess(user: data)),
-  error: (e) => emit(LoginError('Não foi possível entrar', error: e)),
+  error: (e) => emit(LoginError(LoginErrorKind.invalidCredentials, error: e)),
 );
 
 // ✅ switch com destructuring — para lógica complexa
@@ -484,7 +555,7 @@ switch (result) {
   case Ok<User>(:final value):
     emit(LoginSuccess(user: value));
   case Error<User>(:final error):
-    emit(LoginError('Não foi possível entrar', error: error));
+    emit(LoginError(LoginErrorKind.invalidCredentials, error: error));
 }
 
 // ❌ if/else — nunca use
@@ -525,7 +596,7 @@ class SearchCubit extends Cubit<SearchState> {
       final result = await _repository.search(query);
       result.when(
         ok: (data) => emit(SearchLoaded(results: data)),
-        error: (e) => emit(SearchError('Erro na busca', error: e)),
+        error: (e) => emit(SearchError(SearchErrorKind.generic, error: e)),
       );
     });
   }
@@ -540,6 +611,10 @@ class SearchCubit extends Cubit<SearchState> {
 
 ### Estado de Navegação
 
+Válido quando a View de origem é **descartada** na transição (`go`/`replace`), como login → home.
+Se a View sobrevive (`push`), o estado de navegação substitui o de conteúdo e a tela fica em branco —
+nesse caso navegue direto na View. Ver `navigation.md`.
+
 ```dart
 class LoginNavigateToHome extends LoginState {
   const LoginNavigateToHome();
@@ -551,7 +626,7 @@ class LoginNavigateToHome extends LoginState {
 // No Cubit
 result.when(
   ok: (_) => emit(const LoginNavigateToHome()),
-  error: (e) => emit(LoginError('Credenciais inválidas', error: e)),
+  error: (e) => emit(LoginError(LoginErrorKind.invalidCredentials, error: e)),
 );
 
 // Na View
@@ -603,4 +678,5 @@ inject.registerFactory<SettingsCubit>(() => SettingsCubit(inject()));
 | Cubit recebe DataSource | Cubit recebe Repository |
 | Propriedade `String name` sem `final` | `final String name` |
 | Log mostra `Instance of 'HomeLoaded'` | Classe base declara `toString()` abstrato e `HomeLoaded.toString()` retorna nome explícito com os campos relevantes |
-| State de erro oculta a causa | Preserve mensagem amigável e inclua `error`/`stackTrace` no State e no `toString()` seguro |
+| State de erro oculta a causa | Inclua `error`/`stackTrace` no State e no `toString()` seguro |
+| `emit(XError('Erro ao carregar'))` com texto literal | `emit(XError(XErrorKind.generic, error: e))` — a View traduz com `context.l10n` |

@@ -20,15 +20,22 @@ SOURCE_REPO="git@github.com:ANL-Software/flutter-instructions-ia.git"
 # Branch de referência
 SOURCE_BRANCH="main"
 
+# ── Brain Flows (agentes) ──────────────────────────────────
+BRAIN_SOURCE_REPO="${BRAIN_SOURCE_REPO:-https://github.com/andrelucassvt/brain-flows.git}"
+BRAIN_SOURCE_BRANCH="${BRAIN_SOURCE_BRANCH:-main}"
+BRAIN_SOURCE_AGENTS_PATH="${BRAIN_SOURCE_AGENTS_PATH:-.claude/agents}"
+BRAIN_AGENTS=(brain-agent-loop brain-agent-loop-exec)
+
 # ============================================================
 # NÃO EDITE ABAIXO (a menos que saiba o que está fazendo)
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_DIR=$(mktemp -d)
+BRAIN_TMP_DIR=$(mktemp -d)
 
 cleanup() {
-  rm -rf "$TMP_DIR"
+  rm -rf "$TMP_DIR" "$BRAIN_TMP_DIR"
 }
 trap cleanup EXIT
 
@@ -87,6 +94,26 @@ else
   echo "⏭️  .claude/skills/ não encontrado. Pulando .agents/skills/."
 fi
 
+# ── Brain Flows Agents ─────────────────────────────────────
+echo "🤖 Sincronizando agentes do Brain Flows..."
+git clone --depth 1 --branch "$BRAIN_SOURCE_BRANCH" "$BRAIN_SOURCE_REPO" "$BRAIN_TMP_DIR" --quiet || {
+  echo "  ⚠️  Falha ao clonar $BRAIN_SOURCE_REPO. Agentes do Brain Flows não foram sincronizados."
+}
+if [ -d "$BRAIN_TMP_DIR/$BRAIN_SOURCE_AGENTS_PATH" ]; then
+  mkdir -p "$SCRIPT_DIR/.claude/agents"
+  for agent in "${BRAIN_AGENTS[@]}"; do
+    source_agent_file="$BRAIN_TMP_DIR/$BRAIN_SOURCE_AGENTS_PATH/$agent.md"
+    if [ ! -f "$source_agent_file" ]; then
+      echo "  ⚠️  Agente ausente no repositório fonte: $BRAIN_SOURCE_AGENTS_PATH/$agent.md" >&2
+    else
+      cp "$source_agent_file" "$SCRIPT_DIR/.claude/agents/$agent.md"
+      echo "  ✅ $agent"
+    fi
+  done
+else
+  echo "  ⚠️  $BRAIN_SOURCE_AGENTS_PATH/ não encontrado no repositório fonte. Agentes não sincronizados."
+fi
+
 # ── Auto-update do próprio script ─────────────────────────
 if [ -f "$TMP_DIR/sync-instructions.sh" ]; then
   echo "🔄 Atualizando sync-instructions.sh..."
@@ -118,6 +145,10 @@ fi
 
 if [ -d "$SCRIPT_DIR/.agents/skills" ]; then
   echo "  • .agents/skills/        ($(find "$SCRIPT_DIR/.agents/skills/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') arquivos)"
+fi
+
+if [ -d "$SCRIPT_DIR/.claude/agents" ]; then
+  echo "  • .claude/agents/        ($(find "$SCRIPT_DIR/.claude/agents/" -name "*.md" 2>/dev/null | wc -l | tr -d ' ') agentes)"
 fi
 
 migrate_root_dir_to_docs() {

@@ -143,22 +143,30 @@ class LoginNavigateToHome extends LoginState {
 // Cubit
 result.when(
   ok: (_) => emit(const LoginNavigateToHome()),
-  error: (e) => emit(LoginError('Credenciais inválidas', error: e)),
+  error: (e) => emit(LoginError(LoginErrorKind.invalidCredentials, error: e)),
 );
 
 // View
-BlocListener<LoginCubit, LoginState>(
+BlocConsumer<LoginCubit, LoginState>(
   listener: (context, state) {
     if (state is LoginNavigateToHome) context.go(AppRoutes.home);
     if (state is LoginError) {
-      AppSnackbar.showError(context, message: state.message);
+      AppSnackbar.showError(
+        context,
+        message: switch (state.kind) {
+          LoginErrorKind.invalidCredentials => context.l10n.loginInvalidCredentials,
+          LoginErrorKind.offline => context.l10n.errorOffline,
+          LoginErrorKind.generic => context.l10n.errorGeneric,
+        },
+      );
     }
   },
-  child: BlocBuilder<LoginCubit, LoginState>(
-    builder: (context, state) { /* ... */ },
-  ),
+  builder: (context, state) { /* ... */ },
 )
 ```
+
+> Estado de navegação é seguro aqui porque a transição é `go` — a `LoginView` é descartada
+> e ninguém volta para ela. Com `push`, ver a ressalva em `references/navigation.md`.
 
 ---
 

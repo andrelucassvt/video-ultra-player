@@ -4,7 +4,7 @@
 
 - **Quando adicionar uma nova rota**: defina constante em `app_routes.dart` e adicione `GoRoute` em `app_router.dart`.
 - **Quando navegar para outra tela**: use `context.push/go/pop/replace` — SEMPRE na View, nunca no Cubit.
-- **Quando o Cubit precisa disparar navegação**: emita um estado (ex: `LoginNavigateToHome`) e reaja via `BlocListener` na View.
+- **Quando o Cubit precisa disparar navegação**: emita um estado (ex: `LoginNavigateToHome`) e reaja via `BlocListener` na View — **apenas se a View for descartada** (`go`/`replace`). Se ela sobrevive (`push`), navegue direto na View; senão o estado de navegação substitui o de conteúdo e a tela fica em branco.
 - **Quando usar parâmetros de path**: defina como `:id` na rota e acesse via `state.pathParameters['id']!`.
 - **Quando passar objetos complexos**: use `extra` no `context.push` e recupere em `state.extra as T`.
 
@@ -161,31 +161,91 @@ ElevatedButton(
 
 ### ✅ CORRETO — Opção 2: Estado de navegação + BlocListener
 
+**Só use quando a View de origem é descartada na navegação** — login → home, splash → home,
+logout → login. Isto é, quando a transição usa `go`/`replace` e ninguém volta para a tela anterior.
+
 ```dart
 // State
-class HomeNavigateToDetails extends HomeState {
-  const HomeNavigateToDetails(this.productId);
-  final String productId;
+class LoginNavigateToHome extends LoginState {
+  const LoginNavigateToHome();
 
   @override
-  String toString() => 'HomeNavigateToDetails(productId: $productId)';
+  String toString() => 'LoginNavigateToHome';
 }
 
 // Cubit
-void selectProduct(String id) => emit(HomeNavigateToDetails(id));
+result.when(
+  ok: (_) => emit(const LoginNavigateToHome()),
+  error: (e) => emit(LoginError(LoginErrorKind.invalidCredentials, error: e)),
+);
 
 // View
-BlocListener<HomeCubit, HomeState>(
+BlocConsumer<LoginCubit, LoginState>(
   listener: (context, state) {
-    if (state is HomeNavigateToDetails) {
-      context.push('/products/${state.productId}');
-    }
+    if (state is LoginNavigateToHome) context.go(AppRoutes.home);
   },
-  child: BlocBuilder<HomeCubit, HomeState>(
-    builder: (context, state) { /* ... */ },
-  ),
+  builder: (context, state) { /* ... */ },
 )
 ```
+
+### ⚠️ Estado de navegação apaga a tela quando ela sobrevive
+
+O State é **um só**. Emitir `HomeNavigateToDetails` substitui `HomeLoaded`, e o `BlocBuilder` da
+mesma View passa a receber um estado que ele não sabe renderizar — cai no `SizedBox.shrink()` final
+e a tela fica em branco. Ao voltar do `push`, o estado continua sendo o de navegação: a lista não
+reaparece.
+
+```dart
+// ❌ ERRADO — a Home some ao empilhar os detalhes e não volta
+void selectProduct(String id) => emit(HomeNavigateToDetails(id));
+```
+
+Para navegação de onde o usuário **volta** (`push`), navegue direto na View:
+
+```dart
+// ✅ CORRETO — o estado da Home permanece HomeLoaded
+onTap: () {
+  context.read<HomeCubit>().registerVisit(product.id); // efeito no Cubit, se houver
+  context.push('/products/${product.id}');             // navegação na View
+}
+```
+
+Se a navegação depende de uma decisão assíncrona do Cubit (checar permissão, salvar antes de sair),
+mantenha o conteúdo no estado e carregue o destino como um campo consumível:
+
+```dart
+class HomeLoaded extends HomeState {
+  const HomeLoaded({required this.products, this.navigateToId});
+
+  final List<ProductEntity> products;
+  final String? navigateToId; // ✅ intenção de navegação sem perder o conteúdo
+
+  @override
+  String toString() =>
+      'HomeLoaded(products: ${products.length}, navigateToId: $navigateToId)';
+}
+
+// Cubit — emite com a intenção, depois limpa
+void selectProduct(String id) {
+  final current = state;
+  if (current is! HomeLoaded) return;
+  emit(HomeLoaded(products: current.products, navigateToId: id));
+  emit(HomeLoaded(products: current.products)); // ✅ consome a intenção
+}
+
+// View
+listener: (context, state) {
+  if (state is HomeLoaded && state.navigateToId != null) {
+    context.push('/products/${state.navigateToId}');
+  }
+},
+```
+
+| Transição | Padrão |
+|---|---|
+| `push` — usuário volta para esta tela | Navegue na View (Opção 1) |
+| `go`/`replace` — a View é descartada | Estado de navegação (Opção 2) |
+| Decisão assíncrona no Cubit, View sobrevive | Campo consumível dentro do estado de conteúdo |
 
 ### Navegação após ação assíncrona
 

@@ -105,8 +105,17 @@ class _ProfileViewState extends State<ProfileView> {
                 return const Center(child: CircularProgressIndicator());
               }
               if (state is ProfileError) {
+                // ✅ O State carrega a causa; o texto é resolvido aqui
                 return Center(
-                  child: Text(state.message, style: const TextStyle(color: Colors.red)),
+                  child: Text(
+                    switch (state.kind) {
+                      ProfileErrorKind.offline => l10n.errorOffline,
+                      ProfileErrorKind.sessionExpired => l10n.errorSessionExpired,
+                      ProfileErrorKind.notFound => l10n.errorProfileNotFound,
+                      ProfileErrorKind.generic => l10n.errorGeneric,
+                    },
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
                 );
               }
               if (state is ProfileLoaded) {
@@ -268,33 +277,37 @@ Ao extrair: `content/` se for específico de uma única View; `widgets/` se tive
 
 ```dart
 // ≤45 linhas, usado 1x, sem estado → permanece direto no build()
-ProfileLoaded(:final user) => Padding(
-  padding: const EdgeInsets.all(16),
-  child: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(user.name, style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 4),
-      Text(user.email),
-      const SizedBox(height: 12),
-      Text(l10n.profileBioLabel),
-      const SizedBox(height: 4),
-      Text(user.bio),
-      const SizedBox(height: 16),
-      ElevatedButton(
-        onPressed: () => context.read<ProfileCubit>().editProfile(),
-        child: Text(l10n.editButton),
-      ),
-    ],
-  ),
-),
+if (state is ProfileLoaded) {
+  return Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(state.user.name, style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 4),
+        Text(state.user.email),
+        const SizedBox(height: 12),
+        Text(l10n.profileBioLabel),
+        const SizedBox(height: 4),
+        Text(state.user.bio),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: () => context.read<ProfileCubit>().editProfile(),
+          child: Text(l10n.editButton),
+        ),
+      ],
+    ),
+  );
+}
 ```
 
 ### ❌ Extraído sem necessidade (bloco não passou na regra de corte)
 
 ```dart
 // ❌ Extrair ~12 linhas para content/ polui a feature sem motivo
-ProfileLoaded(:final user) => ProfileInfoContent(user: user),
+if (state is ProfileLoaded) {
+  return ProfileInfoContent(user: state.user);
+}
 
 // content/profile_info_content.dart  ← arquivo desnecessário
 class ProfileInfoContent extends StatelessWidget { ... }
@@ -330,8 +343,21 @@ void _showOptionsBottomSheet() {
 | `void _showXxxDialog()` | ✅ Sim |
 | `void _showXxxBottomSheet()` | ✅ Sim |
 | `void _onTapXxx()` (handler) | ✅ Sim |
+| `String _errorText(l10n, kind)` (tradução de causa) | ✅ Sim — retorna dado, não Widget |
 | `Widget _buildXxx()` | ❌ Não — extrair para `widgets/` ou `content/` |
 | `class _XxxContent extends StatelessWidget` | ❌ Não — extrair para `content/` |
+
+Como os States de erro carregam a **causa** (`XErrorKind`) e não o texto, a View concentra a
+tradução em um helper. Ele retorna `String`, então não viola a regra de `Widget _buildXxx()`:
+
+```dart
+String _errorText(AppLocalizations l10n, ProfileErrorKind kind) => switch (kind) {
+      ProfileErrorKind.offline => l10n.errorOffline,
+      ProfileErrorKind.sessionExpired => l10n.errorSessionExpired,
+      ProfileErrorKind.notFound => l10n.errorProfileNotFound,
+      ProfileErrorKind.generic => l10n.errorGeneric,
+    };
+```
 
 > As proibições de `Widget _buildXxx()` e classes privadas de widget são **invariantes universais** — aplicam-se também a arquivos `content/` e `widgets/`, não apenas à View.
 
@@ -375,7 +401,7 @@ builder: (context, state) {
     return const Center(child: CircularProgressIndicator());
   }
   if (state is ProfileError) {
-    return Center(child: Text(state.message));
+    return Center(child: Text(_errorText(context.l10n, state.kind)));
   }
   if (state is ProfileLoaded) {
     return ListView.builder(
@@ -406,7 +432,7 @@ BlocConsumer<ProfileCubit, ProfileState>(
       context.pop();
     }
     if (state is ProfileError) {
-      AppSnackbar.showError(context, message: state.message);
+      AppSnackbar.showError(context, message: _errorText(context.l10n, state.kind));
     }
   },
   builder: (context, state) { /* ... */ },
@@ -442,28 +468,32 @@ BlocListener<AuthCubit, AuthState>(
 ### Navegação após ação assíncrona
 
 ```dart
-// Opção A: navegação direta
+// ✅ Opção A: navegação direta — use sempre que o usuário voltar para esta tela (push)
 ElevatedButton(
   onPressed: () => context.push('/details/${item.id}'),
   child: Text(l10n.detailsButton),
 )
 
-// Opção B: estado de navegação
-class ProfileNavigateToDetails extends ProfileState {
-  const ProfileNavigateToDetails(this.id);
-  final String id;
+// ✅ Opção B: estado de navegação — somente quando esta View é descartada (go/replace)
+class ProfileNavigateToLogin extends ProfileState {
+  const ProfileNavigateToLogin();
 
   @override
-  String toString() => 'ProfileNavigateToDetails(id: $id)';
+  String toString() => 'ProfileNavigateToLogin';
 }
 
 BlocListener<ProfileCubit, ProfileState>(
   listener: (context, state) {
-    if (state is ProfileNavigateToDetails) context.push('/details/${state.id}');
+    if (state is ProfileNavigateToLogin) context.go(AppRoutes.login);
   },
   child: /* ... */,
 )
 ```
+
+> **Não use estado de navegação com `push`.** O State é único: emitir `ProfileNavigateToDetails`
+> substitui `ProfileLoaded`, o `BlocBuilder` cai no `SizedBox.shrink()` e a tela fica em branco —
+> inclusive ao voltar dos detalhes, porque o estado nunca retorna ao de conteúdo.
+> Ver `navigation.md` para as três formas de tratar isso.
 
 ---
 
