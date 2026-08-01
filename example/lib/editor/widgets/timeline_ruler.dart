@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_ruler_painter.dart';
 
 class TimelineRuler extends StatelessWidget {
@@ -19,7 +20,7 @@ class TimelineRuler extends StatelessWidget {
   Widget build(BuildContext context) {
     final textStyle =
         Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Colors.white.withValues(alpha: 0.52),
+          color: editorTextMuted,
           fontSize: 10,
         ) ??
         const TextStyle(fontSize: 10);

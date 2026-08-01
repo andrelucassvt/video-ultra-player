@@ -29,21 +29,18 @@ class TimelinePlayhead extends StatelessWidget {
         child: Stack(
           alignment: Alignment.topCenter,
           children: [
-            Container(
-              width: 14,
-              height: 14,
-              decoration: const BoxDecoration(
-                color: editorAccent,
-                shape: BoxShape.circle,
-              ),
+            const Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: editorText,
             ),
             Positioned(
-              top: 9,
+              top: 12,
               bottom: 0,
               child: Container(
-                width: 2,
+                width: 1.5,
                 decoration: BoxDecoration(
-                  color: editorAccent,
+                  color: editorText,
                   borderRadius: BorderRadius.circular(1),
                 ),
               ),

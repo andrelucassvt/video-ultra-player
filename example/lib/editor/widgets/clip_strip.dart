@@ -161,7 +161,7 @@ class _ClipTileState extends State<_ClipTile> {
   Widget build(BuildContext context) {
     final effectiveWidth = _draftWidth ?? widget.width;
     final borderColor = widget.hovering
-        ? Colors.white
+        ? editorText
         : widget.selected
         ? editorAccent
         : editorLine;
@@ -316,7 +316,7 @@ class _ClipFallbackIcon extends StatelessWidget {
       child: Center(
         child: Icon(
           icon,
-          color: Colors.white.withValues(alpha: 0.48),
+          color: editorTextMuted.withValues(alpha: 0.6),
           size: 20,
         ),
       ),

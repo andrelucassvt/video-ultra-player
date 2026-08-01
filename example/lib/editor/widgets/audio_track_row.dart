@@ -25,7 +25,7 @@ class AudioTrackRow extends StatelessWidget {
           icon: const Icon(Icons.add),
           label: const Text('Adicionar audio'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.white.withValues(alpha: 0.74),
+            foregroundColor: editorTextMuted,
             side: const BorderSide(color: editorLine),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -68,7 +68,7 @@ class AudioTrackRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(
                         context,
-                      ).textTheme.bodySmall?.copyWith(color: Colors.white),
+                      ).textTheme.bodySmall?.copyWith(color: editorText),
                     ),
                   ),
                   SizedBox(

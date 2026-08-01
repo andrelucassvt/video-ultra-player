@@ -10,6 +10,14 @@ import 'package:video_ultra_player_example/editor/widgets/clip_strip.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_playhead.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_ruler.dart';
 
+const double _rulerTop = 0;
+const double _clipTrackTop = 30;
+const double _clipTrackHeight = 58;
+const double _audioTrackTop = 98;
+const double _audioTrackHeight = 38;
+const double _tracksHeight = 136;
+const double _laneHeaderWidth = 40;
+
 class TimelineSection extends StatefulWidget {
   const TimelineSection({
     super.key,
@@ -40,20 +48,16 @@ class _TimelineSectionState extends State<TimelineSection> {
     final position = _dragPosition ?? widget.state.globalPosition;
 
     return Container(
-      height: 184,
+      height: _tracksHeight + 18,
       decoration: const BoxDecoration(
         color: editorSurface,
         border: Border(top: BorderSide(color: editorLine)),
       ),
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(6, 8, 14, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _TimelineHeader(
-            controller: widget.controller,
-            state: widget.state,
-            position: position,
-          ),
-          const SizedBox(height: 6),
+          const _LaneHeaderColumn(),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -73,10 +77,11 @@ class _TimelineSectionState extends State<TimelineSection> {
                   scrollDirection: Axis.horizontal,
                   child: SizedBox(
                     width: contentWidth,
+                    height: _tracksHeight,
                     child: Stack(
                       children: [
                         Positioned(
-                          top: 0,
+                          top: _rulerTop,
                           left: 0,
                           width: contentWidth,
                           child: TimelineRuler(
@@ -87,9 +92,9 @@ class _TimelineSectionState extends State<TimelineSection> {
                           ),
                         ),
                         Positioned(
-                          top: 30,
+                          top: _clipTrackTop,
                           left: 0,
-                          height: 58,
+                          height: _clipTrackHeight,
                           width: contentWidth,
                           child: ClipStrip(
                             controller: widget.controller,
@@ -98,9 +103,9 @@ class _TimelineSectionState extends State<TimelineSection> {
                           ),
                         ),
                         Positioned(
-                          top: 98,
+                          top: _audioTrackTop,
                           left: 0,
-                          height: 38,
+                          height: _audioTrackHeight,
                           width: contentWidth,
                           child: AudioTrackRow(
                             controller: widget.controller,
@@ -111,7 +116,7 @@ class _TimelineSectionState extends State<TimelineSection> {
                           top: 0,
                           left: playheadX - 14,
                           child: TimelinePlayhead(
-                            height: 138,
+                            height: _tracksHeight,
                             onDragStart: _startPlayheadDrag,
                             onDragUpdate: _updatePlayheadDrag,
                             onDragEnd: _endPlayheadDrag,
@@ -184,59 +189,44 @@ class _TimelineSectionState extends State<TimelineSection> {
   }
 }
 
-class _TimelineHeader extends StatelessWidget {
-  const _TimelineHeader({
-    required this.controller,
-    required this.state,
-    required this.position,
-  });
-
-  final EditorController controller;
-  final TimelinePlayerState state;
-  final Duration position;
+class _LaneHeaderColumn extends StatelessWidget {
+  const _LaneHeaderColumn();
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 28,
-      child: Row(
+      width: _laneHeaderWidth,
+      height: _tracksHeight,
+      child: const Stack(
         children: [
-          Text(
-            _formatDuration(position),
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
-          Text(
-            ' / ${_formatDuration(controller.timelineDuration(state))}',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const Spacer(),
-          IconButton(
-            icon: Icon(Icons.zoom_out, size: 16),
-            onPressed: () =>
-                controller.setPixelsPerSecond(controller.pixelsPerSecond - 10),
-          ),
-          SizedBox(
-            width: 96,
-            child: Slider(
-              value: controller.pixelsPerSecond,
-              min: controller.minPixelsPerSecond,
-              max: controller.maxPixelsPerSecond,
-              onChanged: controller.setPixelsPerSecond,
+          Positioned(
+            top: _clipTrackTop,
+            left: 0,
+            right: 0,
+            height: _clipTrackHeight,
+            child: Center(
+              child: Icon(
+                Icons.movie_outlined,
+                size: 20,
+                color: editorTextMuted,
+              ),
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.zoom_in, size: 16),
-            onPressed: () =>
-                controller.setPixelsPerSecond(controller.pixelsPerSecond + 10),
+          Positioned(
+            top: _audioTrackTop,
+            left: 0,
+            right: 0,
+            height: _audioTrackHeight,
+            child: Center(
+              child: Icon(
+                Icons.music_note_outlined,
+                size: 20,
+                color: editorTextMuted,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
-}
-
-String _formatDuration(Duration duration) {
-  final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return '$minutes:$seconds';
 }

@@ -19,14 +19,14 @@ final class TimelineRulerPainter extends CustomPainter {
       ..strokeWidth = 1
       ..isAntiAlias = true;
     final majorTickPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.46)
+      ..color = editorTextMuted
       ..strokeWidth = 1
       ..isAntiAlias = true;
 
     final seconds = duration.inMilliseconds <= 0
         ? 1
         : (duration.inMilliseconds / Duration.millisecondsPerSecond).ceil();
-    final labelEvery = pixelsPerSecond < 58 ? 2 : 1;
+    const labelEvery = 5;
 
     for (var second = 0; second <= seconds; second++) {
       final x = second * pixelsPerSecond;
@@ -42,7 +42,7 @@ final class TimelineRulerPainter extends CustomPainter {
 
       if (!isMajor) continue;
       final textPainter = TextPainter(
-        text: TextSpan(text: '${second}s', style: textStyle),
+        text: TextSpan(text: _formatLabel(second), style: textStyle),
         textDirection: TextDirection.ltr,
       )..layout();
       textPainter.paint(canvas, Offset(x + 4, 0));
@@ -55,4 +55,10 @@ final class TimelineRulerPainter extends CustomPainter {
         oldDelegate.pixelsPerSecond != pixelsPerSecond ||
         oldDelegate.textStyle != textStyle;
   }
+}
+
+String _formatLabel(int totalSeconds) {
+  final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+  final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
 }

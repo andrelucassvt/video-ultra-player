@@ -186,7 +186,7 @@ class _TrimHandle extends StatelessWidget {
           color: editorAccent.withValues(alpha: 0.92),
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Icon(icon, color: Colors.black, size: 18),
+        child: Icon(icon, color: Colors.white, size: 18),
       ),
     );
   }

@@ -86,7 +86,7 @@ class _PreviewPlaceholder extends StatelessWidget {
     return Center(
       child: Icon(
         Icons.video_library_outlined,
-        color: Colors.white.withValues(alpha: 0.55),
+        color: editorTextMuted.withValues(alpha: 0.7),
         size: 48,
       ),
     );

@@ -3,9 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player_example/editor/editor_controller.dart';
 import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
-import 'package:video_ultra_player_example/editor/widgets/bottom_toolbar.dart';
+import 'package:video_ultra_player_example/editor/widgets/editor_toolbar.dart';
 import 'package:video_ultra_player_example/editor/widgets/editor_top_bar.dart';
-import 'package:video_ultra_player_example/editor/widgets/playback_bar.dart';
 import 'package:video_ultra_player_example/editor/widgets/preview_area.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_section.dart';
 
@@ -70,9 +69,8 @@ class _EditorScreenState extends State<EditorScreen> {
                         ),
                       ),
                     ),
-                    PlaybackBar(controller: _controller, state: state),
+                    EditorToolbar(controller: _controller, state: state),
                     TimelineSection(controller: _controller, state: state),
-                    BottomToolbar(controller: _controller, state: state),
                     if (_controller.error != null)
                       _EditorStatusBar(
                         message: _controller.error!,
@@ -123,9 +121,9 @@ class _EditorStatusBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Text(
         message,
-        style: Theme.of(
-          context,
-        ).textTheme.bodySmall?.copyWith(color: Colors.white),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: isError ? Colors.white : editorText,
+        ),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
