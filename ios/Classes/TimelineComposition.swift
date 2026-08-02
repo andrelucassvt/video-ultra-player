@@ -121,6 +121,58 @@ struct AudioTrackDescriptor {
   }
 }
 
+/// Horizontal alignment of a multi-line text overlay.
+enum TextOverlayTextAlign: String {
+  case left
+  case center
+  case right
+}
+
+/// Describes a text overlay burned into the composed video, identical in the
+/// preview and the exported MP4.
+struct TextOverlayDescriptor {
+  let id: String
+  let text: String
+  let startMs: Int64
+  let endMs: Int64
+  let x: CGFloat
+  let y: CGFloat
+  let rotationDegrees: Double
+  let fontSize: CGFloat
+  let color: UInt32
+  let fontFamily: String?
+  let fontPath: String?
+  let backgroundColor: UInt32
+  let opacity: Double
+  let textAlign: TextOverlayTextAlign
+
+  init?(dictionary: [String: Any]) {
+    guard let id = dictionary["id"] as? String,
+          let text = dictionary["text"] as? String
+    else {
+      return nil
+    }
+    let alignValue = dictionary["textAlign"] as? String ?? "center"
+
+    self.id = id
+    self.text = text
+    self.startMs = (dictionary["startMs"] as? NSNumber)?.int64Value ?? 0
+    self.endMs = (dictionary["endMs"] as? NSNumber)?.int64Value ?? 0
+    self.x = CGFloat(min(max((dictionary["x"] as? NSNumber)?.doubleValue ?? 0.5, 0), 1))
+    self.y = CGFloat(min(max((dictionary["y"] as? NSNumber)?.doubleValue ?? 0.5, 0), 1))
+    self.rotationDegrees = (dictionary["rotationDegrees"] as? NSNumber)?.doubleValue ?? 0
+    self.fontSize = CGFloat(
+      min(max((dictionary["fontSize"] as? NSNumber)?.doubleValue ?? 0.05, 0.01), 1)
+    )
+    self.color = (dictionary["color"] as? NSNumber)?.uint32Value ?? 0xFFFFFFFF
+    self.fontFamily = dictionary["fontFamily"] as? String
+    self.fontPath = dictionary["fontPath"] as? String
+    self.backgroundColor = (dictionary["backgroundColor"] as? NSNumber)?.uint32Value ?? 0x00000000
+    self.opacity = min(max((dictionary["opacity"] as? NSNumber)?.doubleValue ?? 1, 0), 1)
+    self.textAlign = TextOverlayTextAlign(rawValue: alignValue) ?? .center
+  }
+}
+
 final class TimelineComposition {
   private struct PreparedClip {
     let asset: AVURLAsset
@@ -142,6 +194,8 @@ final class TimelineComposition {
   private var audioMix: AVAudioMix?
   /// Currently set external audio track descriptor (nil = no external audio).
   private(set) var currentAudioTrack: AudioTrackDescriptor?
+  /// Text overlays burned into the rendered video.
+  private(set) var textOverlays: [TextOverlayDescriptor] = []
 
   private(set) var totalDuration = CMTime.zero
 
@@ -347,13 +401,39 @@ final class TimelineComposition {
     currentAudioTrack = nil
   }
 
+  /// Adds a text overlay. Does NOT trigger a rebuild — the caller is
+  /// responsible for regenerating the video composition.
+  func addTextOverlay(_ descriptor: TextOverlayDescriptor) {
+    textOverlays.append(descriptor)
+  }
+
+  /// Replaces the text overlay with the same `id` (no-op when it does not
+  /// exist). Does NOT trigger a rebuild.
+  func updateTextOverlay(_ descriptor: TextOverlayDescriptor) {
+    guard let index = textOverlays.firstIndex(where: { $0.id == descriptor.id }) else {
+      return
+    }
+    textOverlays[index] = descriptor
+  }
+
+  /// Removes the text overlay with the given `id` (no-op when it does not
+  /// exist). Does NOT trigger a rebuild.
+  func removeTextOverlay(id: String) {
+    textOverlays.removeAll { $0.id == id }
+  }
+
   func makeEditSnapshot() -> TimelineEditSnapshot {
-    return TimelineEditSnapshot(clips: clips, audioTrack: currentAudioTrack)
+    return TimelineEditSnapshot(
+      clips: clips,
+      audioTrack: currentAudioTrack,
+      textOverlays: textOverlays
+    )
   }
 
   func restoreEditSnapshot(_ snapshot: TimelineEditSnapshot) {
     clips = snapshot.clips
     currentAudioTrack = snapshot.audioTrack
+    textOverlays = snapshot.textOverlays
   }
 
   var clipCount: Int {
@@ -449,6 +529,13 @@ final class TimelineComposition {
     return segments.first(where: { $0.clipIndex == clipIndex })?.startTime
   }
 
+  /// Regenerates the video composition for the current state (same as
+  /// `makeVideoComposition`). Used by mutations that preserve playback
+  /// instead of rebuilding the whole `AVMutableComposition`.
+  func updatedVideoComposition() -> AVVideoComposition {
+    return makeVideoComposition()
+  }
+
   func playbackState(at time: CMTime) -> (clipIndex: Int, localPosition: CMTime) {
     guard !segments.isEmpty else {
       return (0, .zero)
@@ -500,6 +587,26 @@ final class TimelineComposition {
     videoComposition.instructions = instructions.sorted {
       CMTimeCompare($0.timeRange.start, $1.timeRange.start) < 0
     }
+
+    if !textOverlays.isEmpty {
+      let videoLayer = CALayer()
+      videoLayer.frame = CGRect(origin: .zero, size: renderSize)
+      let parentLayer = CALayer()
+      parentLayer.frame = CGRect(origin: .zero, size: renderSize)
+      parentLayer.addSublayer(videoLayer)
+      parentLayer.addSublayer(
+        TextOverlayLayers.makeTextOverlayParentLayer(
+          overlays: textOverlays,
+          renderSize: renderSize,
+          totalDuration: totalDuration
+        )
+      )
+      videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+        postProcessingAsVideoLayer: videoLayer,
+        in: parentLayer
+      )
+    }
+
     return videoComposition
   }
 

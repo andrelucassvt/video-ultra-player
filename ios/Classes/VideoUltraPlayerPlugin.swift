@@ -212,6 +212,50 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       } catch {
         result(FlutterError(code: "edit_failed", message: "removeAudioTrack failed", details: "\(error)"))
       }
+    case "addTextOverlay":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let overlayDict = args["overlay"] as? [String: Any],
+            let descriptor = TextOverlayDescriptor(dictionary: overlayDict) else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "addTextOverlay requires a valid overlay map.",
+          details: nil
+        ))
+        return
+      }
+      controller.addTextOverlay(descriptor)
+      result(nil)
+    case "updateTextOverlay":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let overlayDict = args["overlay"] as? [String: Any],
+            let descriptor = TextOverlayDescriptor(dictionary: overlayDict) else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "updateTextOverlay requires a valid overlay map.",
+          details: nil
+        ))
+        return
+      }
+      controller.updateTextOverlay(descriptor)
+      result(nil)
+    case "removeTextOverlay":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let overlayId = args["overlayId"] as? String else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "removeTextOverlay requires overlayId (String).",
+          details: nil
+        ))
+        return
+      }
+      controller.removeTextOverlay(id: overlayId)
+      result(nil)
     case "generateThumbnails":
       guard let args = call.arguments as? [String: Any],
             let videoPath = args["videoPath"] as? String,
@@ -698,6 +742,26 @@ private final class TimelinePlayerController {
     try rebuildPreservingPlayback(positionMs: positionMs, clearAudioTrack: true)
   }
 
+  // MARK: - Text overlays
+
+  func addTextOverlay(_ descriptor: TextOverlayDescriptor) {
+    pushEditSnapshot()
+    composition.addTextOverlay(descriptor)
+    applyUpdatedVideoComposition()
+  }
+
+  func updateTextOverlay(_ descriptor: TextOverlayDescriptor) {
+    pushEditSnapshot()
+    composition.updateTextOverlay(descriptor)
+    applyUpdatedVideoComposition()
+  }
+
+  func removeTextOverlay(id: String) {
+    pushEditSnapshot()
+    composition.removeTextOverlay(id: id)
+    applyUpdatedVideoComposition()
+  }
+
   func undo() throws {
     let current = composition.makeEditSnapshot()
     guard let snapshot = editHistory.undo(current: current) else {
@@ -800,6 +864,24 @@ private final class TimelinePlayerController {
 
   private func pushEditSnapshot() {
     editHistory.pushSnapshot(composition.makeEditSnapshot())
+  }
+
+  /// Regenerates only the video composition (cheap, preserves playback) and
+  /// reassigns it to the current item. When paused, forces a zero-tolerance
+  /// seek plus a frame request so the new text appears immediately.
+  private func applyUpdatedVideoComposition() {
+    player.currentItem?.videoComposition = composition.updatedVideoComposition()
+    if player.rate == 0 {
+      let time = player.currentTime()
+      player.seek(
+        to: time,
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+      ) { [weak self] _ in
+        self?.texture.requestFrame()
+      }
+    }
+    emitState()
   }
 
   /// Observes the player item's readiness one time. On iOS, AVPlayer only

@@ -3,6 +3,7 @@ import Foundation
 struct TimelineEditSnapshot {
   let clips: [TimelineClipDescriptor]
   let audioTrack: AudioTrackDescriptor?
+  let textOverlays: [TextOverlayDescriptor]
 }
 
 final class TimelineEditModel {
