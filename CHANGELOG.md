@@ -1,3 +1,8 @@
+## 2.1.1
+
+- Fixed iOS text-overlay export crashes on affected Simulator runtimes by compositing overlays as an additional Core Animation input track instead of post-processing the rendered video layer.
+- Replaced raster-backed export layers with `CATextLayer` while preserving cached raster rendering for the live preview.
+
 ## 2.1.0
 
 ### Text overlays

@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'video_ultra_player'
-  s.version          = '2.1.0'
+  s.version          = '2.1.1'
   s.summary          = 'Native gapless timeline preview and MP4 export for Flutter.'
   s.description      = <<-DESC
 Flutter plugin for previewing and exporting native media timelines built from local video and image files.

@@ -592,27 +592,30 @@ final class TimelineComposition {
       )
     }
 
-    videoComposition.instructions = instructions.sorted {
-      CMTimeCompare($0.timeRange.start, $1.timeRange.start) < 0
-    }
-
-    if includeTextOverlays && !textOverlays.isEmpty {
-      let videoLayer = CALayer()
-      videoLayer.frame = CGRect(origin: .zero, size: renderSize)
-      let parentLayer = CALayer()
-      parentLayer.frame = CGRect(origin: .zero, size: renderSize)
-      parentLayer.addSublayer(videoLayer)
-      parentLayer.addSublayer(
-        TextOverlayLayers.makeTextOverlayParentLayer(
-          overlays: textOverlays,
-          renderSize: renderSize,
-          totalDuration: totalDuration
-        )
+    if includeTextOverlays,
+       !textOverlays.isEmpty,
+       let composition {
+      // The post-processing Core Animation initializer crashes in several
+      // iOS Simulator runtimes while bridging its output through IOSurface.
+      // Model the overlay as a synthetic composition input instead. Each
+      // instruction references that track before the video track, preserving
+      // z-order without invoking the failing post-processing path.
+      let overlayTrackID = composition.unusedTrackID()
+      let overlayLayer = TextOverlayLayers.makeTextOverlayParentLayer(
+        overlays: textOverlays,
+        renderSize: renderSize,
+        totalDuration: totalDuration
       )
       videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-        postProcessingAsVideoLayer: videoLayer,
-        in: parentLayer
+        additionalLayer: overlayLayer,
+        asTrackID: overlayTrackID
       )
+
+      TextOverlayLayers.prependOverlayTrack(overlayTrackID, to: instructions)
+    }
+
+    videoComposition.instructions = instructions.sorted {
+      CMTimeCompare($0.timeRange.start, $1.timeRange.start) < 0
     }
 
     return videoComposition

@@ -4,8 +4,9 @@ import UIKit
 
 /// Builds the CALayer tree that burns text overlays into the rendered video.
 ///
-/// Export attaches this tree to `AVVideoCompositionCoreAnimationTool`.
-/// Preview draws the exact same cached rasters into `TimelineTexture` frames,
+/// Export attaches this tree as an additional synthetic input of
+/// `AVVideoCompositionCoreAnimationTool`.
+/// Preview rasterizes the same attributed text into `TimelineTexture` frames,
 /// because Apple only supports the animation tool for offline rendering.
 enum TextOverlayLayers {
   /// Root layer for all text overlays, sized to the render frame.
@@ -24,23 +25,21 @@ enum TextOverlayLayers {
     let totalSeconds = totalDuration.isNumeric
       ? max(CMTimeGetSeconds(totalDuration), 0)
       : 0
-    let rasters = makeTextOverlayRasters(
-      overlays: overlays,
-      renderSize: renderSize,
-      totalDuration: totalDuration
-    )
-
-    for raster in rasters {
-      parentLayer.addSublayer(
-        makeTextLayer(raster: raster, totalSeconds: totalSeconds)
-      )
+    for overlay in overlays {
+      guard let textLayer = makeExportTextLayer(
+        overlay: overlay,
+        renderSize: renderSize,
+        totalSeconds: totalSeconds
+      ) else {
+        continue
+      }
+      parentLayer.addSublayer(textLayer)
     }
     return parentLayer
   }
 
-  /// Rasterizes text once so preview and export consume the same glyphs,
-  /// background, metrics and padding. Preview draws these images into the
-  /// texture pixel buffer; export places them in Core Animation layers.
+  /// Rasterizes text once per committed state so preview can draw the cached
+  /// images into the texture pixel buffer without doing text layout per frame.
   static func makeTextOverlayRasters(
     overlays: [TextOverlayDescriptor],
     renderSize: CGSize,
@@ -57,6 +56,19 @@ enum TextOverlayLayers {
         renderSize: renderSize,
         totalSeconds: totalSeconds
       )
+    }
+  }
+
+  /// Inserts the synthetic Core Animation input before the video input so
+  /// every composition segment renders text above its source frame.
+  static func prependOverlayTrack(
+    _ trackID: CMPersistentTrackID,
+    to instructions: [AVMutableVideoCompositionInstruction]
+  ) {
+    for instruction in instructions {
+      let overlayInstruction = AVMutableVideoCompositionLayerInstruction()
+      overlayInstruction.trackID = trackID
+      instruction.layerInstructions.insert(overlayInstruction, at: 0)
     }
   }
 
@@ -166,37 +178,88 @@ enum TextOverlayLayers {
     )
   }
 
-  private static func makeTextLayer(
-    raster: TextOverlayRaster,
+  /// Uses CATextLayer for offline export instead of assigning a raster image
+  /// to CALayer.contents. The latter makes Core Animation bridge the image
+  /// through IOSurface and crashes the iOS compositor on some runtimes.
+  private static func makeExportTextLayer(
+    overlay: TextOverlayDescriptor,
+    renderSize: CGSize,
     totalSeconds: Double
-  ) -> CALayer {
-    let layer = CALayer()
-    layer.contents = raster.image
-    layer.contentsGravity = .resize
+  ) -> CATextLayer? {
+    let startSeconds = max(Double(overlay.startMs) / 1_000, 0)
+    let endSeconds = min(Double(overlay.endMs) / 1_000, max(totalSeconds, 0))
+    guard endSeconds > startSeconds, totalSeconds > 0 else {
+      return nil
+    }
+
+    let fontSize = overlay.fontSize * renderSize.height
+    let font = resolveFont(
+      fontFamily: overlay.fontFamily,
+      fontPath: overlay.fontPath,
+      size: fontSize
+    )
+
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = textAlignment(for: overlay.textAlign)
+    let attributed = NSAttributedString(
+      string: overlay.text,
+      attributes: [
+        .font: font,
+        .foregroundColor: UIColor(argb: overlay.color),
+        .paragraphStyle: paragraph,
+      ]
+    )
+
+    let boundingRect = attributed.boundingRect(
+      with: CGSize(width: renderSize.width, height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading],
+      context: nil
+    )
+    let padding: CGFloat = fontSize * 0.3
+    let boxSize = CGSize(
+      width: max(ceil(boundingRect.width) + padding * 2, fontSize),
+      height: max(ceil(boundingRect.height) + padding * 2, fontSize)
+    )
+    let center = CGPoint(
+      x: overlay.x * renderSize.width,
+      y: overlay.y * renderSize.height
+    )
+
+    let layer = CATextLayer()
+    layer.string = attributed
+    layer.isWrapped = true
+    layer.alignmentMode = alignmentMode(for: overlay.textAlign)
+    layer.contentsScale = UIScreen.main.scale
     layer.allowsEdgeAntialiasing = true
     layer.frame = CGRect(
-      x: raster.center.x - raster.size.width / 2,
-      y: raster.center.y - raster.size.height / 2,
-      width: raster.size.width,
-      height: raster.size.height
+      x: center.x - boxSize.width / 2,
+      y: center.y - boxSize.height / 2,
+      width: boxSize.width,
+      height: boxSize.height
     )
     layer.opacity = 0
 
-    if raster.rotationRadians != 0 {
-      layer.setValue(raster.rotationRadians, forKeyPath: "transform.rotation.z")
+    if overlay.backgroundColor >> 24 > 0 {
+      layer.backgroundColor = UIColor(argb: overlay.backgroundColor).cgColor
+    }
+    if overlay.rotationDegrees != 0 {
+      layer.setValue(
+        overlay.rotationDegrees * .pi / 180,
+        forKeyPath: "transform.rotation.z"
+      )
     }
 
     // CoreAnimationTool is an offline renderer. A discrete opacity animation
     // is reliable at both edges of [start, end), unlike CALayer timing fields
     // whose fill behavior can leak the model-layer opacity outside the window.
-    let startFraction = raster.startSeconds / totalSeconds
-    let endFraction = raster.endSeconds / totalSeconds
+    let startFraction = startSeconds / totalSeconds
+    let endFraction = endSeconds / totalSeconds
     let visibility = CAKeyframeAnimation(keyPath: "opacity")
     if startFraction <= 0 {
-      visibility.values = [raster.opacity, 0]
+      visibility.values = [overlay.opacity, 0]
       visibility.keyTimes = [0, NSNumber(value: endFraction)]
     } else {
-      visibility.values = [0, raster.opacity, 0]
+      visibility.values = [0, overlay.opacity, 0]
       visibility.keyTimes = [
         0,
         NSNumber(value: startFraction),
@@ -220,9 +283,17 @@ enum TextOverlayLayers {
     case .right: return .right
     }
   }
+
+  private static func alignmentMode(for align: TextOverlayTextAlign) -> CATextLayerAlignmentMode {
+    switch align {
+    case .left: return .left
+    case .center: return .center
+    case .right: return .right
+    }
+  }
 }
 
-/// Immutable raster shared by iOS preview and export text compositing.
+/// Immutable raster used by iOS preview text compositing.
 struct TextOverlayRaster {
   let image: CGImage
   let size: CGSize
