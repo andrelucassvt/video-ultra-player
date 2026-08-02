@@ -23,18 +23,18 @@ O editor do exemplo é um `ChangeNotifier` (`example/lib/editor/editor_controlle
 
 ### Fase 1 — Estado e ações no controller
 
-- [ ] Em `editor_controller.dart`, adicionar: `List<TimelineTextOverlay> _textOverlays = []`, `String? _selectedTextOverlayId`, getters (`textOverlays`, `selectedTextOverlay`, `hasSelectedTextOverlay`) e `_textOverlayCounter` para ids (`'text_${_textOverlayCounter++}'`)
-- [ ] `Future<void> addTextOverlay()`: guarda `_textureId == null`; cria overlay default — texto `"Texto"`, centro `(0.5, 0.5)`, `fontSize: 0.08`, cor branca, `start` = posição atual de playback, `end` = min(start + 3s, totalDuration); chama `_player.addTextOverlay`, adiciona na lista local, seleciona e notifica
-- [ ] `void selectTextOverlay(String? id)` — só seleção local + notify
-- [ ] `Future<void> commitTextOverlay(TimelineTextOverlay updated)`: substitui na lista local (por `id`), chama `_player.updateTextOverlay(updated)` e notifica — **única porta de mutação** (garante commit-only)
-- [ ] `void updateSelectedTextOverlayPosition(double x, double y)` — atualiza **só a cópia local** durante o drag (sem channel); `Future<void> commitSelectedTextOverlayPosition()` — chama `commitTextOverlay` com a posição final
-- [ ] `Future<void> removeSelectedTextOverlay()`: chama `_player.removeTextOverlay(id)`, remove da lista, limpa seleção, notifica
-- [ ] Limpar `_textOverlays`/seleção onde o estado da timeline é resetado (mesmo lugar onde `_audioTrack` é limpo/recarregado — ver linhas ~167 e ~731 do controller)
-- [ ] Verificação: `cd example && flutter analyze` limpo
+- [x] Em `editor_controller.dart`, adicionar: `List<TimelineTextOverlay> _textOverlays = []`, `String? _selectedTextOverlayId`, getters (`textOverlays`, `selectedTextOverlay`, `hasSelectedTextOverlay`) e `_textOverlayCounter` para ids (`'text_${_textOverlayCounter++}'`)
+- [x] `Future<void> addTextOverlay()`: guarda `_textureId == null`; cria overlay default — texto `"Texto"`, centro `(0.5, 0.5)`, `fontSize: 0.08`, cor branca, `start` = posição atual de playback, `end` = min(start + 3s, totalDuration); chama `_player.addTextOverlay`, adiciona na lista local, seleciona e notifica
+- [x] `void selectTextOverlay(String? id)` — só seleção local + notify
+- [x] `Future<void> commitTextOverlay(TimelineTextOverlay updated)`: substitui na lista local (por `id`), chama `_player.updateTextOverlay(updated)` e notifica — **única porta de mutação** (garante commit-only)
+- [x] `void updateSelectedTextOverlayPosition(double x, double y)` — atualiza **só a cópia local** durante o drag (sem channel); `Future<void> commitSelectedTextOverlayPosition()` — chama `commitTextOverlay` com a posição final
+- [x] `Future<void> removeSelectedTextOverlay()`: chama `_player.removeTextOverlay(id)`, remove da lista, limpa seleção, notifica
+- [x] Limpar `_textOverlays`/seleção onde o estado da timeline é resetado (mesmo lugar onde `_audioTrack` é limpo/recarregado — ver linhas ~167 e ~731 do controller)
+- [x] Verificação: `cd example && flutter analyze` limpo
 
 ### Fase 2 — Bottom sheet de edição + botão na toolbar
 
-- [ ] Criar `example/lib/editor/widgets/text_edit_sheet.dart` (seguir o estilo de `speed_sheet.dart`/`aspect_ratio_sheet.dart`, tema `editor/theme/editor_theme.dart`):
+- [x] Criar `example/lib/editor/widgets/text_edit_sheet.dart` (seguir o estilo de `speed_sheet.dart`/`aspect_ratio_sheet.dart`, tema `editor/theme/editor_theme.dart`):
   - `TextField` para o conteúdo (multi-linha), aplicando via `commitTextOverlay` no submit/Desfocar
   - Linha de cores predefinidas (8–10 swatches) para `color`; toggle de cor de fundo (mesmos swatches + "nenhuma")
   - Sliders com label de valor: tamanho (`fontSize` 0.02–0.30), opacidade (0–1), rotação (−180–180°)
@@ -43,31 +43,31 @@ O editor do exemplo é um `ChangeNotifier` (`example/lib/editor/editor_controlle
   - `RangeSlider` para a janela `start`/`end` (0 → totalDuration do estado)
   - Botão "Excluir texto" (vermelho) → `removeSelectedTextOverlay`
   - Todos os controles aplicam via `commitTextOverlay` **no release/commit** (`onChangeEnd` de sliders, seleção de cor/fonte), nunca em `onChanged`
-- [ ] Em `editor_toolbar.dart`, adicionar ação "Texto" (ícone `Icons.text_fields`) que chama `controller.addTextOverlay()` e abre o sheet do texto recém-criado
-- [ ] Verificação: `flutter analyze` limpo
+- [x] Em `editor_toolbar.dart`, adicionar ação "Texto" (ícone `Icons.text_fields`) que chama `controller.addTextOverlay()` e abre o sheet do texto recém-criado
+- [x] Verificação: `flutter analyze` limpo
 
 ### Fase 3 — Drag no preview + faixa na timeline
 
-- [ ] Em `preview_area.dart`: envolver a `Texture` num `Stack`; quando `controller.hasSelectedTextOverlay`, posicionar um `Positioned` com `IgnorePointer(false)` + `GestureDetector` mostrando um `Text` "ghost" (mesmo conteúdo/cor/tamanho aproximado, opacidade 0.8) na posição `(x, y)` da cópia local; `onPanUpdate` → `updateSelectedTextOverlayPosition` (local), `onPanEnd` → `commitSelectedTextOverlayPosition()`. Tap no ghost abre o `TextEditSheet`. O drag de alinhamento de clipe existente (`onPanUpdate` do GestureDetector atual) fica **desativado** enquanto houver texto selecionado (prioridade ao texto)
-- [ ] Criar `text_track_row.dart` (espelhar `audio_track_row.dart`): estado vazio com botão "Adicionar texto"; com textos, um bloco por overlay posicionado por `start/totalDuration` e largura `(end-start)/totalDuration` × largura disponível, cor de destaque quando selecionado, tap → `selectTextOverlay` + abre sheet
-- [ ] Em `timeline_section.dart`, adicionar o `TextTrackRow` numa faixa acima da de áudio (novas constantes `_textTrackTop`/`_textTrackHeight`, deslocando `_audioTrackTop` conforme necessário) e ajustar a altura total da seção
-- [ ] Verificação: `flutter analyze` limpo
+- [x] Em `preview_area.dart`: envolver a `Texture` num `Stack`; quando `controller.hasSelectedTextOverlay`, posicionar um `Positioned` com `IgnorePointer(false)` + `GestureDetector` mostrando um `Text` "ghost" (mesmo conteúdo/cor/tamanho aproximado, opacidade 0.8) na posição `(x, y)` da cópia local; `onPanUpdate` → `updateSelectedTextOverlayPosition` (local), `onPanEnd` → `commitSelectedTextOverlayPosition()`. Tap no ghost abre o `TextEditSheet`. O drag de alinhamento de clipe existente (`onPanUpdate` do GestureDetector atual) fica **desativado** enquanto houver texto selecionado (prioridade ao texto)
+- [x] Criar `text_track_row.dart` (espelhar `audio_track_row.dart`): estado vazio com botão "Adicionar texto"; com textos, um bloco por overlay posicionado por `start/totalDuration` e largura `(end-start)/totalDuration` × largura disponível, cor de destaque quando selecionado, tap → `selectTextOverlay` + abre sheet
+- [x] Em `timeline_section.dart`, adicionar o `TextTrackRow` numa faixa acima da de áudio (novas constantes `_textTrackTop`/`_textTrackHeight`, deslocando `_audioTrackTop` conforme necessário) e ajustar a altura total da seção
+- [x] Verificação: `flutter analyze` limpo
 
 ### Fase 4 — Widget tests (harness existente)
 
 > O example tem `example/test/widget_test.dart` — harness `flutter_test` disponível.
 
-- [ ] Criar `example/test/text_edit_sheet_test.dart`: o sheet renderiza campo de texto, swatches, sliders e botão excluir; editar o conteúdo e dar submit chama o callback com o texto novo; "Excluir texto" dispara o callback de remoção
-- [ ] Criar `example/test/text_track_row_test.dart`: estado vazio mostra "Adicionar texto"; com overlays, renderiza um bloco por overlay; tap num bloco dispara seleção
-- [ ] Ajustar/substituir `example/test/widget_test.dart` se ele quebrar com as mudanças (é o teste default de counter — remover se não tiver relação com o app)
-- [ ] Verificação: `cd example && flutter test` verde
-- [ ] Checkpoint: commit das mudanças da parte + informar o usuário que a parte 4 está concluída e a parte 5 está pronta para execução
+- [x] Criar `example/test/text_edit_sheet_test.dart`: o sheet renderiza campo de texto, swatches, sliders e botão excluir; editar o conteúdo e dar submit chama o callback com o texto novo; "Excluir texto" dispara o callback de remoção
+- [x] Criar `example/test/text_track_row_test.dart`: estado vazio mostra "Adicionar texto"; com overlays, renderiza um bloco por overlay; tap num bloco dispara seleção
+- [x] Ajustar/substituir `example/test/widget_test.dart` se ele quebrar com as mudanças (é o teste default de counter — remover se não tiver relação com o app)
+- [x] Verificação: `cd example && flutter test` verde
+- [x] Checkpoint: commit das mudanças da parte + informar o usuário que a parte 4 está concluída e a parte 5 está pronta para execução
 
 ## Critérios de Sucesso
 
-- [ ] `flutter analyze` limpo no example
-- [ ] Widget tests novos passando (`cd example && flutter test`)
-- [ ] Nenhuma mutação nativa em `onChanged`/tick de drag — apenas em commit (auditar chamadas a `commitTextOverlay`)
+- [x] `flutter analyze` limpo no example
+- [x] Widget tests novos passando (`cd example && flutter test`)
+- [x] Nenhuma mutação nativa em `onChanged`/tick de drag — apenas em commit (auditar chamadas a `commitTextOverlay`)
 - [ ] _(manual — feito pelo usuário)_ Adicionar 2+ textos, arrastar, mudar cor/fonte/tamanho, ajustar janela, remover; verificar no preview e no MP4 exportado; undo/redo restaurando textos
 
 ## Riscos e Mitigações

@@ -7,15 +7,18 @@ import 'package:video_ultra_player_example/editor/editor_controller.dart';
 import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 import 'package:video_ultra_player_example/editor/widgets/audio_track_row.dart';
 import 'package:video_ultra_player_example/editor/widgets/clip_strip.dart';
+import 'package:video_ultra_player_example/editor/widgets/text_track_row.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_playhead.dart';
 import 'package:video_ultra_player_example/editor/widgets/timeline_ruler.dart';
 
 const double _rulerTop = 0;
 const double _clipTrackTop = 30;
 const double _clipTrackHeight = 58;
-const double _audioTrackTop = 98;
-const double _audioTrackHeight = 38;
-const double _tracksHeight = 136;
+const double _textTrackTop = 92;
+const double _textTrackHeight = 30;
+const double _audioTrackTop = 126;
+const double _audioTrackHeight = 34;
+const double _tracksHeight = 160;
 const double _laneHeaderWidth = 40;
 
 class TimelineSection extends StatefulWidget {
@@ -97,6 +100,17 @@ class _TimelineSectionState extends State<TimelineSection> {
                           height: _clipTrackHeight,
                           width: contentWidth,
                           child: ClipStrip(
+                            controller: widget.controller,
+                            state: widget.state,
+                            width: contentWidth,
+                          ),
+                        ),
+                        Positioned(
+                          top: _textTrackTop,
+                          left: 0,
+                          height: _textTrackHeight,
+                          width: contentWidth,
+                          child: TextTrackRow(
                             controller: widget.controller,
                             state: widget.state,
                             width: contentWidth,
@@ -207,6 +221,19 @@ class _LaneHeaderColumn extends StatelessWidget {
             child: Center(
               child: Icon(
                 Icons.movie_outlined,
+                size: 20,
+                color: editorTextMuted,
+              ),
+            ),
+          ),
+          Positioned(
+            top: _textTrackTop,
+            left: 0,
+            right: 0,
+            height: _textTrackHeight,
+            child: Center(
+              child: Icon(
+                Icons.title,
                 size: 20,
                 color: editorTextMuted,
               ),

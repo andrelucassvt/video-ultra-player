@@ -4,6 +4,7 @@ import 'package:video_ultra_player_example/editor/editor_controller.dart';
 import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 import 'package:video_ultra_player_example/editor/widgets/aspect_ratio_sheet.dart';
 import 'package:video_ultra_player_example/editor/widgets/speed_sheet.dart';
+import 'package:video_ultra_player_example/editor/widgets/text_edit_sheet.dart';
 
 class EditorToolbar extends StatelessWidget {
   const EditorToolbar({
@@ -65,6 +66,18 @@ class EditorToolbar extends StatelessWidget {
                   ? () => showAspectRatioSheet(context, controller)
                   : null,
               icon: const Icon(Icons.aspect_ratio, size: 20),
+            ),
+            IconButton(
+              tooltip: 'Texto',
+              onPressed: hasTimeline
+                  ? () async {
+                      final sheetContext = context;
+                      await controller.addTextOverlay();
+                      if (!sheetContext.mounted) return;
+                      await showTextEditSheet(sheetContext, controller, state);
+                    }
+                  : null,
+              icon: const Icon(Icons.text_fields, size: 20),
             ),
             IconButton(
               tooltip: 'Excluir',

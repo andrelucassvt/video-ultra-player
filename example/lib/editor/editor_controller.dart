@@ -23,6 +23,11 @@ class EditorController extends ChangeNotifier {
       <String, Future<List<String>>>{};
   List<TimelineClip> _clips = <TimelineClip>[];
   AudioTrack? _audioTrack;
+  List<TimelineTextOverlay> _textOverlays = <TimelineTextOverlay>[];
+  String? _selectedTextOverlayId;
+  int _textOverlayCounter = 0;
+  TimelinePlayerState? _lastPlaybackState;
+  StreamSubscription<TimelinePlayerState>? _stateSubscription;
   int? _textureId;
   int _selectedClipIndex = 0;
   final String _title = 'Meu vídeo';
@@ -48,6 +53,19 @@ class EditorController extends ChangeNotifier {
       _exportProgressStream;
   List<TimelineClip> get clips => List.unmodifiable(_clips);
   AudioTrack? get audioTrack => _audioTrack;
+  List<TimelineTextOverlay> get textOverlays =>
+      List.unmodifiable(_textOverlays);
+  String? get selectedTextOverlayId => _selectedTextOverlayId;
+  TimelineTextOverlay? get selectedTextOverlay {
+    final id = _selectedTextOverlayId;
+    if (id == null) return null;
+    for (final overlay in _textOverlays) {
+      if (overlay.id == id) return overlay;
+    }
+    return null;
+  }
+
+  bool get hasSelectedTextOverlay => selectedTextOverlay != null;
   int? get textureId => _textureId;
   int get selectedClipIndex => _selectedClipIndex;
   String get title => _title;
@@ -163,8 +181,19 @@ class EditorController extends ChangeNotifier {
 
     _textureId = textureId;
     _stateStream = _player.stateStream;
+    _stateSubscription?.cancel();
+    _stateSubscription = _stateStream!.listen(
+      (state) => _lastPlaybackState = state,
+      onError: (Object _) {
+        // O estado de playback é rastreado apenas como referência para novas
+        // sobreposições de texto; erros do stream são tratados pela tela.
+      },
+    );
     _clips = List<TimelineClip>.of(clips);
     _audioTrack = audioTrack;
+    _textOverlays = <TimelineTextOverlay>[];
+    _selectedTextOverlayId = null;
+    _textOverlayCounter = 0;
     _selectedClipIndex = 0;
     _timelineSource = source;
     _exportPath = null;
@@ -550,6 +579,103 @@ class EditorController extends ChangeNotifier {
     }
   }
 
+  // ── Text overlays ────────────────────────────────────────────────────────
+
+  /// Adds a default text overlay at the current playback position, selects it
+  /// and commits it to the native player.
+  Future<void> addTextOverlay() async {
+    if (_textureId == null) return;
+    final state = _lastPlaybackState ?? const TimelinePlayerState.initial();
+    final start = state.globalPosition;
+    var end = start + const Duration(seconds: 3);
+    final total = state.totalDuration;
+    if (total > Duration.zero && end > total) {
+      end = total;
+    }
+    if (end <= start) {
+      end = start + const Duration(seconds: 3);
+    }
+
+    final overlay = TimelineTextOverlay(
+      id: 'text_${_textOverlayCounter++}',
+      text: 'Texto',
+      start: start,
+      end: end,
+      x: 0.5,
+      y: 0.5,
+      fontSize: 0.08,
+    );
+
+    try {
+      await _player.addTextOverlay(overlay);
+      _textOverlays = <TimelineTextOverlay>[..._textOverlays, overlay];
+      _selectedTextOverlayId = overlay.id;
+      _notify();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// Selects the text overlay with [id] (or clears the selection when `null`).
+  void selectTextOverlay(String? id) {
+    _selectedTextOverlayId = id;
+    _notify();
+  }
+
+  /// Single mutation port for text overlays: replaces the local copy and
+  /// commits to the native player. Callers must invoke this only on commit of
+  /// a gesture or control (never on every drag tick).
+  Future<void> commitTextOverlay(TimelineTextOverlay updated) async {
+    if (_textureId == null) return;
+    final index = _textOverlays.indexWhere((o) => o.id == updated.id);
+    if (index == -1) return;
+    var next = updated;
+    if (next.end <= next.start) {
+      next = next.copyWith(end: next.start + const Duration(seconds: 1));
+    }
+    try {
+      await _player.updateTextOverlay(next);
+      _textOverlays = <TimelineTextOverlay>[..._textOverlays]..[index] = next;
+      _notify();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  /// Updates the local position of the selected overlay only (no channel call).
+  /// Call [commitSelectedTextOverlayPosition] on drag end.
+  void updateSelectedTextOverlayPosition(double x, double y) {
+    final overlay = selectedTextOverlay;
+    if (overlay == null) return;
+    _textOverlays = <TimelineTextOverlay>[
+      for (final o in _textOverlays)
+        if (o.id == overlay.id) o.copyWith(x: x, y: y) else o,
+    ];
+    _notify();
+  }
+
+  /// Commits the final position of the selected overlay after a drag.
+  Future<void> commitSelectedTextOverlayPosition() async {
+    final overlay = selectedTextOverlay;
+    if (overlay == null) return;
+    await commitTextOverlay(overlay);
+  }
+
+  Future<void> removeSelectedTextOverlay() async {
+    final overlay = selectedTextOverlay;
+    if (overlay == null || _textureId == null) return;
+    try {
+      await _player.removeTextOverlay(overlay.id);
+      _textOverlays = _textOverlays
+          .where((o) => o.id != overlay.id)
+          .toList(growable: false);
+      _selectedTextOverlayId = null;
+      _notify();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
   Future<void> undo() async {
     if (_textureId == null || _undoSnapshots.isEmpty) return;
     final current = _makeSnapshot();
@@ -640,6 +766,7 @@ class EditorController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _seekThrottleTimer?.cancel();
+    _stateSubscription?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -714,6 +841,8 @@ class EditorController extends ChangeNotifier {
     return _EditorSnapshot(
       clips: List<TimelineClip>.of(_clips),
       audioTrack: _audioTrack,
+      textOverlays: List<TimelineTextOverlay>.of(_textOverlays),
+      selectedTextOverlayId: _selectedTextOverlayId,
       selectedClipIndex: _selectedClipIndex,
     );
   }
@@ -729,6 +858,8 @@ class EditorController extends ChangeNotifier {
   void _restoreSnapshot(_EditorSnapshot snapshot) {
     _clips = List<TimelineClip>.of(snapshot.clips);
     _audioTrack = snapshot.audioTrack;
+    _textOverlays = List<TimelineTextOverlay>.of(snapshot.textOverlays);
+    _selectedTextOverlayId = snapshot.selectedTextOverlayId;
     _selectedClipIndex = snapshot.selectedClipIndex.clamp(
       0,
       _clips.isEmpty ? 0 : _clips.length - 1,
@@ -776,10 +907,14 @@ class _EditorSnapshot {
   const _EditorSnapshot({
     required this.clips,
     required this.audioTrack,
+    required this.textOverlays,
+    required this.selectedTextOverlayId,
     required this.selectedClipIndex,
   });
 
   final List<TimelineClip> clips;
   final AudioTrack? audioTrack;
+  final List<TimelineTextOverlay> textOverlays;
+  final String? selectedTextOverlayId;
   final int selectedClipIndex;
 }
