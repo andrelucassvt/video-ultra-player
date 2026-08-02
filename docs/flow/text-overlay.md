@@ -39,7 +39,7 @@ Um detalhe crítico do Android: timestamps de efeito no Media3 são relativos ao
 7. **[Renderização iOS]** — `ios/Classes/TextOverlayLayers.swift` → `makeTextOverlayParentLayer`
    Raiz `isGeometryFlipped = true`; cada overlay vira um `CATextLayer` com `NSAttributedString` (fonte resolvida por `resolveFont`: `fontPath` → PostScript name via Core Text, senão `fontFamily`, fallback `systemFont`), frame medido por `boundingRect` e centrado em `(x * width, y * height)`, `backgroundColor` só com alpha > 0, `opacity`, rotação via `transform.rotation.z`, janela `[start, end)` por `beginTime`/`duration` sobre `AVCoreAnimationBeginTimeAtZero`.
 8. **[Renderização Android]** — `android/src/main/kotlin/com/andre/video_ultra_player/TextOverlay.kt` → `TimelineTextOverlay`
-   `getText` devolve `SpannableString("")` fora da janela e, dentro, os spans (cor, fundo condicional, `AbsoluteSizeSpan` = `fontSize × renderHeight`, `AlignmentSpan`, `Typeface` custom cacheado por path); `getOverlaySettings` converte `(x, y)` 0..1 top-left → NDC com `StaticOverlaySettings.Builder` (âncoras, rotação, `alphaScale = opacity`).
+   `getText` devolve sempre texto não-vazio (nunca `SpannableString("")` — string vazia gera bitmap 0×0 no `TextOverlay` do Media3 e congela preview/export) com os spans (cor, fundo condicional, `AbsoluteSizeSpan` = `fontSize × renderHeight`, `AlignmentSpan`, `Typeface` custom cacheado por path); `getOverlaySettings` converte `(x, y)` 0..1 top-left → NDC com `StaticOverlaySettings.Builder` (âncoras, rotação, `alphaScale = 0` fora da janela, senão `opacity`).
 9. **[Re-anchoragem Android]** — `TextOverlay.kt` → `textOverlaysForClip`
    `buildTimelineComposition` acumula `clipStartMs` por segmento e chama a função pura: intersecta `[clipStart, clipStart + clipDuration)` e subtrai `clipStartMs` da janela; o `OverlayEffect` entra em `effectsFor` depois do `Presentation`.
 10. **[Export]** — iOS: `animationTool` embutido na `videoComposition` de `buildCurrentExportAsset`; Android: `startExportCurrentTimeline` passa `textOverlays` a `exportFromClips`. `exportTimeline(clips)` standalone exporta sem textos (paridade com a trilha de áudio).
@@ -85,7 +85,7 @@ Um detalhe crítico do Android: timestamps de efeito no Media3 são relativos ao
 ## Regras de Negócio Relevantes
 
 - **"Export = preview"** — textos vivem na `videoComposition` (iOS) e nos efeitos de `buildTimelineComposition` (Android), os dois pipelines compartilhados por preview e export; `exportTimeline(clips)` standalone não tem overlays.
-- **Janela `[start, end)`** — `end` é clampado pela duração total; fora da janela o overlay não renderiza (string vazia no Android, layer inexistente no iOS).
+- **Janela `[start, end)`** — `end` é clampado pela duração total; fora da janela o overlay não renderiza (`alphaScale = 0` no Android — string vazia quebraria o `TextOverlay` do Media3 com bitmap 0×0, congelando preview/export; layer inexistente no iOS).
 - **`fontPath` vence `fontFamily`** — `resolveFont` (iOS) e `typefaceFor` (Android), com fallback que nunca falha.
 - **Timestamps Media3 são relativos ao item** — `textOverlaysForClip` re-ancora a janela por clipe; função pura testável.
 - **Mutações commit-only** — Android reconstrói a `Composition` (efeitos imutáveis); o app chama `commitTextOverlay` apenas no commit do gesto.

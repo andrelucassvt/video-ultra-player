@@ -4,9 +4,9 @@ import UIKit
 
 /// Builds the CALayer tree that burns text overlays into the rendered video.
 ///
-/// The layer tree is attached to the `AVVideoComposition` via
-/// `AVVideoCompositionCoreAnimationTool` in `TimelineComposition`, so the
-/// same tree renders in the preview (AVPlayerItem) and in the exported MP4.
+/// Export attaches this tree to `AVVideoCompositionCoreAnimationTool`.
+/// Preview draws the exact same cached rasters into `TimelineTexture` frames,
+/// because Apple only supports the animation tool for offline rendering.
 enum TextOverlayLayers {
   /// Root layer for all text overlays, sized to the render frame.
   ///
@@ -21,19 +21,43 @@ enum TextOverlayLayers {
     parentLayer.frame = CGRect(origin: .zero, size: renderSize)
     parentLayer.isGeometryFlipped = true
 
-    let totalSeconds = totalDuration.isNumeric ? CMTimeGetSeconds(totalDuration) : 0
+    let totalSeconds = totalDuration.isNumeric
+      ? max(CMTimeGetSeconds(totalDuration), 0)
+      : 0
+    let rasters = makeTextOverlayRasters(
+      overlays: overlays,
+      renderSize: renderSize,
+      totalDuration: totalDuration
+    )
 
-    for overlay in overlays {
-      guard let textLayer = makeTextLayer(
+    for raster in rasters {
+      parentLayer.addSublayer(
+        makeTextLayer(raster: raster, totalSeconds: totalSeconds)
+      )
+    }
+    return parentLayer
+  }
+
+  /// Rasterizes text once so preview and export consume the same glyphs,
+  /// background, metrics and padding. Preview draws these images into the
+  /// texture pixel buffer; export places them in Core Animation layers.
+  static func makeTextOverlayRasters(
+    overlays: [TextOverlayDescriptor],
+    renderSize: CGSize,
+    totalDuration: CMTime
+  ) -> [TextOverlayRaster] {
+    let totalSeconds = totalDuration.isNumeric
+      ? max(CMTimeGetSeconds(totalDuration), 0)
+      : 0
+    guard totalSeconds > 0 else { return [] }
+
+    return overlays.compactMap { overlay in
+      makeTextOverlayRaster(
         overlay: overlay,
         renderSize: renderSize,
         totalSeconds: totalSeconds
-      ) else {
-        continue
-      }
-      parentLayer.addSublayer(textLayer)
+      )
     }
-    return parentLayer
   }
 
   /// Resolves the font for an overlay: `fontPath` (custom .ttf/.otf) wins,
@@ -60,12 +84,12 @@ enum TextOverlayLayers {
     return UIFont.systemFont(ofSize: size)
   }
 
-  private static func makeTextLayer(
+  private static func makeTextOverlayRaster(
     overlay: TextOverlayDescriptor,
     renderSize: CGSize,
     totalSeconds: Double
-  ) -> CATextLayer? {
-    let startSeconds = Double(overlay.startMs) / 1_000
+  ) -> TextOverlayRaster? {
+    let startSeconds = max(Double(overlay.startMs) / 1_000, 0)
     let endSeconds = min(Double(overlay.endMs) / 1_000, max(totalSeconds, 0))
     guard endSeconds > startSeconds, totalSeconds > 0 else {
       return nil
@@ -108,42 +132,84 @@ enum TextOverlayLayers {
       y: overlay.y * renderSize.height
     )
 
-    let layer = CATextLayer()
-    layer.string = attributed
-    layer.isWrapped = true
-    layer.alignmentMode = alignmentMode(for: overlay.textAlign)
-    layer.contentsScale = UIScreen.main.scale
-    layer.allowsEdgeAntialiasing = true
-    layer.frame = CGRect(
-      x: center.x - boxSize.width / 2,
-      y: center.y - boxSize.height / 2,
-      width: boxSize.width,
-      height: boxSize.height
-    )
-    layer.opacity = Float(overlay.opacity)
-
-    if overlay.backgroundColor >> 24 > 0 {
-      layer.backgroundColor = UIColor(argb: overlay.backgroundColor).cgColor
-    }
-
-    if overlay.rotationDegrees != 0 {
-      layer.setValue(
-        overlay.rotationDegrees * .pi / 180,
-        forKeyPath: "transform.rotation.z"
+    let format = UIGraphicsImageRendererFormat()
+    format.opaque = false
+    format.scale = 1
+    let renderer = UIGraphicsImageRenderer(size: boxSize, format: format)
+    let image = renderer.image { context in
+      context.cgContext.clear(CGRect(origin: .zero, size: boxSize))
+      if overlay.backgroundColor >> 24 > 0 {
+        UIColor(argb: overlay.backgroundColor).setFill()
+        context.cgContext.fill(CGRect(origin: .zero, size: boxSize))
+      }
+      attributed.draw(
+        with: CGRect(
+          x: padding - boundingRect.minX,
+          y: padding - boundingRect.minY,
+          width: max(boundingRect.width, fontSize),
+          height: max(boundingRect.height, fontSize)
+        ),
+        options: [.usesLineFragmentOrigin, .usesFontLeading],
+        context: nil
       )
     }
+    guard let cgImage = image.cgImage else { return nil }
 
-    // Visibility window: the layer exists only within [startSeconds, endSeconds).
-    // `isRemovedOnCompletion` is a CAAnimation-only property, so the window is
-    // expressed through the layer's media timing fields alone.
-    layer.beginTime = AVCoreAnimationBeginTimeAtZero + startSeconds
-    layer.duration = endSeconds - startSeconds
-    layer.fillMode = .forwards
+    return TextOverlayRaster(
+      image: cgImage,
+      size: boxSize,
+      center: center,
+      rotationRadians: CGFloat(overlay.rotationDegrees * .pi / 180),
+      opacity: CGFloat(overlay.opacity),
+      startSeconds: startSeconds,
+      endSeconds: endSeconds
+    )
+  }
 
-    // Known CoreAnimationTool quirk: if the text shows outside its window on
-    // manual testing, replace the beginTime/duration approach with opacity
-    // keyframes (0→1 at start, 1→0 at end) anchored on
-    // AVCoreAnimationBeginTimeAtZero.
+  private static func makeTextLayer(
+    raster: TextOverlayRaster,
+    totalSeconds: Double
+  ) -> CALayer {
+    let layer = CALayer()
+    layer.contents = raster.image
+    layer.contentsGravity = .resize
+    layer.allowsEdgeAntialiasing = true
+    layer.frame = CGRect(
+      x: raster.center.x - raster.size.width / 2,
+      y: raster.center.y - raster.size.height / 2,
+      width: raster.size.width,
+      height: raster.size.height
+    )
+    layer.opacity = 0
+
+    if raster.rotationRadians != 0 {
+      layer.setValue(raster.rotationRadians, forKeyPath: "transform.rotation.z")
+    }
+
+    // CoreAnimationTool is an offline renderer. A discrete opacity animation
+    // is reliable at both edges of [start, end), unlike CALayer timing fields
+    // whose fill behavior can leak the model-layer opacity outside the window.
+    let startFraction = raster.startSeconds / totalSeconds
+    let endFraction = raster.endSeconds / totalSeconds
+    let visibility = CAKeyframeAnimation(keyPath: "opacity")
+    if startFraction <= 0 {
+      visibility.values = [raster.opacity, 0]
+      visibility.keyTimes = [0, NSNumber(value: endFraction)]
+    } else {
+      visibility.values = [0, raster.opacity, 0]
+      visibility.keyTimes = [
+        0,
+        NSNumber(value: startFraction),
+        NSNumber(value: endFraction),
+      ]
+    }
+    visibility.calculationMode = .discrete
+    visibility.beginTime = AVCoreAnimationBeginTimeAtZero
+    visibility.duration = totalSeconds
+    visibility.fillMode = .both
+    visibility.isRemovedOnCompletion = false
+    layer.add(visibility, forKey: "timelineVisibility")
+
     return layer
   }
 
@@ -154,13 +220,112 @@ enum TextOverlayLayers {
     case .right: return .right
     }
   }
+}
 
-  private static func alignmentMode(for align: TextOverlayTextAlign) -> CATextLayerAlignmentMode {
-    switch align {
-    case .left: return .left
-    case .center: return .center
-    case .right: return .right
+/// Immutable raster shared by iOS preview and export text compositing.
+struct TextOverlayRaster {
+  let image: CGImage
+  let size: CGSize
+  let center: CGPoint
+  let rotationRadians: CGFloat
+  let opacity: CGFloat
+  let startSeconds: Double
+  let endSeconds: Double
+
+  func isVisible(at seconds: Double) -> Bool {
+    return seconds >= startSeconds && seconds < endSeconds
+  }
+}
+
+/// Draws cached overlay rasters directly into AVPlayerItemVideoOutput frames.
+/// Raster creation happens only when the overlay state changes; per-frame work
+/// is dispatched by TimelineTexture to its serial processing queue.
+final class TimelineTextOverlayRenderer {
+  private let stateLock = NSLock()
+  private var rasters: [TextOverlayRaster] = []
+  private var renderSize = CGSize.zero
+
+  func update(
+    overlays: [TextOverlayDescriptor],
+    renderSize: CGSize,
+    totalDuration: CMTime
+  ) {
+    let nextRasters = TextOverlayLayers.makeTextOverlayRasters(
+      overlays: overlays,
+      renderSize: renderSize,
+      totalDuration: totalDuration
+    )
+    stateLock.lock()
+    rasters = nextRasters
+    self.renderSize = renderSize
+    stateLock.unlock()
+  }
+
+  func render(over pixelBuffer: CVPixelBuffer, at itemTime: CMTime) {
+    guard itemTime.isNumeric else { return }
+    let seconds = CMTimeGetSeconds(itemTime)
+
+    stateLock.lock()
+    let currentRasters = rasters
+    let currentRenderSize = renderSize
+    stateLock.unlock()
+
+    let activeRasters = currentRasters.filter { $0.isVisible(at: seconds) }
+    guard !activeRasters.isEmpty,
+          currentRenderSize.width > 0,
+          currentRenderSize.height > 0,
+          CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA
+    else {
+      return
     }
+
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+    guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue |
+      CGImageAlphaInfo.premultipliedFirst.rawValue
+    guard let context = CGContext(
+      data: baseAddress,
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: bitmapInfo
+    ) else {
+      return
+    }
+
+    let scaleX = CGFloat(width) / currentRenderSize.width
+    let scaleY = CGFloat(height) / currentRenderSize.height
+    context.translateBy(x: 0, y: CGFloat(height))
+    context.scaleBy(x: scaleX, y: -scaleY)
+
+    for raster in activeRasters {
+      context.saveGState()
+      context.translateBy(x: raster.center.x, y: raster.center.y)
+      context.rotate(by: raster.rotationRadians)
+      // The pixel-buffer context is flipped to top-left coordinates above,
+      // but CGContext.draw(CGImage) still uses Quartz image orientation.
+      // Flip only the raster around its center so glyphs stay upright without
+      // changing the overlay's top-left position or clockwise rotation.
+      context.scaleBy(x: 1, y: -1)
+      context.setAlpha(raster.opacity)
+      context.draw(
+        raster.image,
+        in: CGRect(
+          x: -raster.size.width / 2,
+          y: -raster.size.height / 2,
+          width: raster.size.width,
+          height: raster.size.height
+        )
+      )
+      context.restoreGState()
+    }
+    context.flush()
   }
 }
 

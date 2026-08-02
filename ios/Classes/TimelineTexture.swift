@@ -6,6 +6,15 @@ final class TimelineTexture: NSObject, FlutterTexture {
   private let videoOutput: AVPlayerItemVideoOutput
   private weak var textureRegistry: FlutterTextureRegistry?
   private var displayLink: CADisplayLink?
+  private let textOverlayRenderer = TimelineTextOverlayRenderer()
+  private let frameProcessingQueue = DispatchQueue(
+    label: "video_ultra_player.timeline_texture.frames",
+    qos: .userInteractive
+  )
+  private let processingLock = NSLock()
+  private var isProcessingFrame = false
+  private var overlayGeneration = 0
+  private var isDisposed = false
 
   // Pixel buffer captured on the display-link (main) thread and read on
   // Flutter's rasterizer thread — protected by bufferLock.
@@ -42,6 +51,27 @@ final class TimelineTexture: NSObject, FlutterTexture {
     newItem.add(videoOutput)
   }
 
+  /// Rebuilds the cached text rasters after a committed overlay mutation.
+  /// Existing composited frames are discarded so a paused player cannot keep
+  /// showing stale text while the zero-tolerance refresh seek completes.
+  func updateTextOverlays(
+    _ overlays: [TextOverlayDescriptor],
+    renderSize: CGSize,
+    totalDuration: CMTime
+  ) {
+    textOverlayRenderer.update(
+      overlays: overlays,
+      renderSize: renderSize,
+      totalDuration: totalDuration
+    )
+    processingLock.lock()
+    overlayGeneration += 1
+    processingLock.unlock()
+    bufferLock.lock()
+    pixelBufferCache = nil
+    bufferLock.unlock()
+  }
+
   /// Asks Flutter to pull a frame immediately. Call after a seek completes to
   /// ensure the first frame appears even when the player is paused.
   func requestFrame() {
@@ -52,6 +82,10 @@ final class TimelineTexture: NSObject, FlutterTexture {
   func dispose() {
     displayLink?.invalidate()
     displayLink = nil
+    processingLock.lock()
+    isDisposed = true
+    overlayGeneration += 1
+    processingLock.unlock()
     bufferLock.lock()
     pixelBufferCache = nil
     bufferLock.unlock()
@@ -86,10 +120,7 @@ final class TimelineTexture: NSObject, FlutterTexture {
       }
       NSLog("[TimelineTexture] FIRST FRAME captured!")
       _didCaptureFirstFrame = true
-      bufferLock.lock()
-      pixelBufferCache = pixelBuffer
-      bufferLock.unlock()
-      textureRegistry?.textureFrameAvailable(textureId)
+      enqueueFrame(pixelBuffer, itemTime: itemTime, textureId: textureId)
       return
     }
 
@@ -100,10 +131,49 @@ final class TimelineTexture: NSObject, FlutterTexture {
           )
     else { return }
 
-    bufferLock.lock()
-    pixelBufferCache = pixelBuffer
-    bufferLock.unlock()
+    enqueueFrame(pixelBuffer, itemTime: itemTime, textureId: textureId)
+  }
 
-    textureRegistry?.textureFrameAvailable(textureId)
+  /// Keeps pixel-buffer drawing away from both Flutter's rasterizer thread and
+  /// the main thread. If rendering falls behind, the newest display-link tick
+  /// is dropped instead of building a queue that would increase preview lag.
+  private func enqueueFrame(
+    _ pixelBuffer: CVPixelBuffer,
+    itemTime: CMTime,
+    textureId: Int64
+  ) {
+    processingLock.lock()
+    guard !isDisposed, !isProcessingFrame else {
+      processingLock.unlock()
+      return
+    }
+    isProcessingFrame = true
+    let generation = overlayGeneration
+    processingLock.unlock()
+
+    frameProcessingQueue.async { [weak self] in
+      guard let self else { return }
+      self.textOverlayRenderer.render(over: pixelBuffer, at: itemTime)
+
+      self.processingLock.lock()
+      let shouldPublish = !self.isDisposed && generation == self.overlayGeneration
+      self.isProcessingFrame = false
+      self.processingLock.unlock()
+
+      guard shouldPublish else { return }
+      self.bufferLock.lock()
+      self.pixelBufferCache = pixelBuffer
+      self.bufferLock.unlock()
+
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.processingLock.lock()
+        let canNotify = !self.isDisposed && generation == self.overlayGeneration
+        self.processingLock.unlock()
+        if canNotify {
+          self.textureRegistry?.textureFrameAvailable(textureId)
+        }
+      }
+    }
   }
 }

@@ -747,19 +747,19 @@ private final class TimelinePlayerController {
   func addTextOverlay(_ descriptor: TextOverlayDescriptor) {
     pushEditSnapshot()
     composition.addTextOverlay(descriptor)
-    applyUpdatedVideoComposition()
+    applyUpdatedTextOverlays()
   }
 
   func updateTextOverlay(_ descriptor: TextOverlayDescriptor) {
     pushEditSnapshot()
     composition.updateTextOverlay(descriptor)
-    applyUpdatedVideoComposition()
+    applyUpdatedTextOverlays()
   }
 
   func removeTextOverlay(id: String) {
     pushEditSnapshot()
     composition.removeTextOverlay(id: id)
-    applyUpdatedVideoComposition()
+    applyUpdatedTextOverlays()
   }
 
   func undo() throws {
@@ -832,6 +832,11 @@ private final class TimelinePlayerController {
       config: currentConfig,
       clearAudioTrack: clearAudioTrack
     )
+    texture.updateTextOverlays(
+      composition.textOverlays,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
 
     NotificationCenter.default.removeObserver(
       self,
@@ -866,10 +871,16 @@ private final class TimelinePlayerController {
     editHistory.pushSnapshot(composition.makeEditSnapshot())
   }
 
-  /// Regenerates only the video composition (cheap, preserves playback) and
-  /// reassigns it to the current item. When paused, forces a zero-tolerance
-  /// seek plus a frame request so the new text appears immediately.
-  private func applyUpdatedVideoComposition() {
+  /// Refreshes cached text rasters without assigning a CoreAnimationTool to
+  /// AVPlayerItem (Apple only supports that tool for offline rendering).
+  /// When paused, a zero-tolerance seek requests a fresh source frame so
+  /// removed or edited text cannot remain in the cached Flutter texture.
+  private func applyUpdatedTextOverlays() {
+    texture.updateTextOverlays(
+      composition.textOverlays,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
     player.currentItem?.videoComposition = composition.updatedVideoComposition()
     if player.rate == 0 {
       let time = player.currentTime()

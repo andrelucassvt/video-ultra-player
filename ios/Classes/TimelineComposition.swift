@@ -199,6 +199,10 @@ final class TimelineComposition {
 
   private(set) var totalDuration = CMTime.zero
 
+  /// Output size used by both the AVPlayer video composition and the text
+  /// renderer that burns overlays into the Flutter texture frames.
+  var outputRenderSize: CGSize { renderSize }
+
   // MARK: - Build
 
   func build(
@@ -353,7 +357,9 @@ final class TimelineComposition {
     self.composition = mutableComposition
 
     let playerItem = AVPlayerItem(asset: mutableComposition)
-    playerItem.videoComposition = makeVideoComposition()
+    // AVVideoCompositionCoreAnimationTool is only supported for offline
+    // rendering. Text is composited by TimelineTexture during playback.
+    playerItem.videoComposition = makeVideoComposition(includeTextOverlays: false)
     playerItem.audioMix = audioMix
     return playerItem
   }
@@ -379,7 +385,7 @@ final class TimelineComposition {
     let playerItem = try build(clips: clips, config: config)
     return TimelineExportAsset(
       asset: playerItem.asset,
-      videoComposition: playerItem.videoComposition,
+      videoComposition: makeVideoComposition(includeTextOverlays: true),
       audioMix: playerItem.audioMix
     )
   }
@@ -522,18 +528,18 @@ final class TimelineComposition {
 
     clips[clipIndex].alignmentX = min(max(x, -1), 1)
     clips[clipIndex].alignmentY = min(max(y, -1), 1)
-    return makeVideoComposition()
+    return makeVideoComposition(includeTextOverlays: false)
   }
 
   func startTime(forClipIndex clipIndex: Int) -> CMTime? {
     return segments.first(where: { $0.clipIndex == clipIndex })?.startTime
   }
 
-  /// Regenerates the video composition for the current state (same as
-  /// `makeVideoComposition`). Used by mutations that preserve playback
-  /// instead of rebuilding the whole `AVMutableComposition`.
+  /// Regenerates a composition that is safe to assign to AVPlayerItem.
+  /// Text overlays are deliberately excluded because CoreAnimationTool is
+  /// supported only by offline renderers such as AVAssetExportSession.
   func updatedVideoComposition() -> AVVideoComposition {
-    return makeVideoComposition()
+    return makeVideoComposition(includeTextOverlays: false)
   }
 
   func playbackState(at time: CMTime) -> (clipIndex: Int, localPosition: CMTime) {
@@ -571,7 +577,9 @@ final class TimelineComposition {
 
   // MARK: - Private
 
-  private func makeVideoComposition() -> AVMutableVideoComposition {
+  private func makeVideoComposition(
+    includeTextOverlays: Bool
+  ) -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
@@ -588,7 +596,7 @@ final class TimelineComposition {
       CMTimeCompare($0.timeRange.start, $1.timeRange.start) < 0
     }
 
-    if !textOverlays.isEmpty {
+    if includeTextOverlays && !textOverlays.isEmpty {
       let videoLayer = CALayer()
       videoLayer.frame = CGRect(origin: .zero, size: renderSize)
       let parentLayer = CALayer()

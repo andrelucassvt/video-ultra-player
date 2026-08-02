@@ -104,7 +104,8 @@ internal fun textOverlaysForClip(
 
 /**
  * Media3 [TextOverlay] that renders one [TextOverlayDescriptor] on a single
- * clip. Returns an empty string outside the overlay's window (no-op render).
+ * clip. Hidden outside the overlay's window (alphaScale = 0 — an empty string
+ * would crash Media3's bitmap renderer with a 0x0 bitmap).
  */
 internal class TimelineTextOverlay(
     private val descriptor: TextOverlayDescriptor,
@@ -112,12 +113,13 @@ internal class TimelineTextOverlay(
 ) : TextOverlay() {
 
     override fun getText(presentationTimeUs: Long): SpannableString {
-        val timeMs = presentationTimeUs / 1_000
-        if (timeMs < descriptor.startMs || timeMs >= descriptor.endMs) {
-            return SpannableString("")
-        }
-
-        val span = SpannableString(descriptor.text)
+        // Media3's TextOverlay cannot render an empty SpannableString: an empty
+        // string produces a 0x0 StaticLayout and Bitmap.createBitmap(0, 0) throws
+        // on the GL thread, permanently freezing preview and export. The bitmap
+        // must stay non-empty at all times — the window is enforced in
+        // getOverlaySettings via alphaScale = 0. Spans are applied unconditionally
+        // so Media3's text cache never regenerates the bitmap on window edges.
+        val span = SpannableString(if (descriptor.text.isEmpty()) " " else descriptor.text)
         val textSizePx = (descriptor.fontSize * renderHeight).toInt().coerceAtLeast(1)
         val align = when (descriptor.textAlign) {
             TextOverlayTextAlign.LEFT -> Layout.Alignment.ALIGN_NORMAL
@@ -168,8 +170,15 @@ internal class TimelineTextOverlay(
             .setOverlayFrameAnchor(ndcX, ndcY)
             .setBackgroundFrameAnchor(ndcX, ndcY)
             .setRotationDegrees(descriptor.rotationDegrees.toFloat())
-            .setAlphaScale(descriptor.opacity.toFloat())
+            .setAlphaScale(
+                if (isVisible(presentationTimeUs)) descriptor.opacity.toFloat() else 0f
+            )
             .build()
+    }
+
+    private fun isVisible(presentationTimeUs: Long): Boolean {
+        val timeMs = presentationTimeUs / 1_000
+        return timeMs >= descriptor.startMs && timeMs < descriptor.endMs
     }
 
     private fun resolveTypeface(): Typeface {
