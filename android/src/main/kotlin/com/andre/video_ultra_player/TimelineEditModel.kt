@@ -2,7 +2,8 @@ package com.andre.video_ultra_player
 
 internal data class TimelineEditSnapshot(
     val clips: List<TimelineClip>,
-    val audioTrack: AudioTrackDescriptor?
+    val audioTrack: AudioTrackDescriptor?,
+    val textOverlays: List<TextOverlayDescriptor>
 )
 
 internal class TimelineEditModel(

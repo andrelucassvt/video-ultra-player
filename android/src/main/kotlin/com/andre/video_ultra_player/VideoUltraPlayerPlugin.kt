@@ -28,8 +28,9 @@ class VideoUltraPlayerPlugin :
     private val exportProgressHandler = ExportProgressStreamHandler()
 
     // Background executor and main-thread handler used for thumbnail generation.
+    // Lazy so plain JVM unit tests can construct the plugin without a mocked Looper.
     private val thumbnailExecutor = Executors.newCachedThreadPool()
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
@@ -206,6 +207,51 @@ class VideoUltraPlayerPlugin :
             }
             "removeAudioTrack" -> withController(call, result) { controller ->
                 controller.removeAudioTrack()
+                result.success(null)
+            }
+            "addTextOverlay" -> withController(call, result) { controller ->
+                val overlay = (call.arguments as? Map<*, *>)?.get("overlay") as? Map<*, *>
+                if (overlay == null) {
+                    result.error("invalid_arguments", "Expected overlay.", null)
+                    return@withController
+                }
+                try {
+                    controller.addTextOverlay(overlay)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.e("VideoUltraPlayer", "addTextOverlay failed", error)
+                    result.error(
+                        "edit_failed",
+                        "addTextOverlay failed: ${error.message ?: error.toString()}",
+                        Log.getStackTraceString(error)
+                    )
+                }
+            }
+            "updateTextOverlay" -> withController(call, result) { controller ->
+                val overlay = (call.arguments as? Map<*, *>)?.get("overlay") as? Map<*, *>
+                if (overlay == null) {
+                    result.error("invalid_arguments", "Expected overlay.", null)
+                    return@withController
+                }
+                try {
+                    controller.updateTextOverlay(overlay)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.e("VideoUltraPlayer", "updateTextOverlay failed", error)
+                    result.error(
+                        "edit_failed",
+                        "updateTextOverlay failed: ${error.message ?: error.toString()}",
+                        Log.getStackTraceString(error)
+                    )
+                }
+            }
+            "removeTextOverlay" -> withController(call, result) { controller ->
+                val overlayId = (call.arguments as? Map<*, *>)?.get("overlayId") as? String
+                if (overlayId == null) {
+                    result.error("invalid_arguments", "Expected overlayId.", null)
+                    return@withController
+                }
+                controller.removeTextOverlay(overlayId)
                 result.success(null)
             }
             "undo" -> withController(call, result) { controller ->

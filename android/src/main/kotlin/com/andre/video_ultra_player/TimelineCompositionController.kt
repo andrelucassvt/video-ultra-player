@@ -16,6 +16,7 @@ import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.Size
 import androidx.media3.effect.Crop
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.CompositionPlayer
@@ -49,6 +50,7 @@ internal class TimelineCompositionController(
     private var renderSize = TimelineRenderSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     private var totalDurationMs: Long = 0L
     private var audioTrack: AudioTrackDescriptor? = null
+    private var textOverlays: List<TextOverlayDescriptor> = emptyList()
     private val editHistory = TimelineEditModel()
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
@@ -109,7 +111,7 @@ internal class TimelineCompositionController(
                     }
                 )
                 compositionPlayer.setComposition(
-                    buildTimelineComposition(clips, renderSize, audioTrack)
+                    buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)
                 )
                 compositionPlayer.prepare()
             }
@@ -263,6 +265,49 @@ internal class TimelineCompositionController(
         rebuildCompositionPreservingPlayback()
     }
 
+    /**
+     * Adds a text overlay to the current timeline. Rebuilding the Media3
+     * Composition is unavoidable (effects are immutable), so callers should
+     * invoke this only on commit/release of UI controls.
+     */
+    fun addTextOverlay(rawOverlay: Map<*, *>) {
+        pushEditSnapshot()
+        textOverlays = textOverlays + TextOverlayDescriptor.from(rawOverlay)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Replaces the text overlay with the same `id` (no-op when it does not
+     * exist). Rebuilding the Media3 Composition is unavoidable (effects are
+     * immutable), so callers should invoke this only on commit of a gesture.
+     */
+    fun updateTextOverlay(rawOverlay: Map<*, *>) {
+        val descriptor = TextOverlayDescriptor.from(rawOverlay)
+        val index = textOverlays.indexOfFirst { it.id == descriptor.id }
+        if (index == -1) {
+            emitState()
+            return
+        }
+        pushEditSnapshot()
+        textOverlays = textOverlays.toMutableList().also { it[index] = descriptor }
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Removes the text overlay with the given [overlayId] (no-op when it does
+     * not exist). Rebuilding the Media3 Composition is unavoidable (effects
+     * are immutable).
+     */
+    fun removeTextOverlay(overlayId: String) {
+        if (textOverlays.none { it.id == overlayId }) {
+            emitState()
+            return
+        }
+        pushEditSnapshot()
+        textOverlays = textOverlays.filterNot { it.id == overlayId }
+        rebuildCompositionPreservingPlayback()
+    }
+
     fun undo() {
         val snapshot = editHistory.undo(currentEditSnapshot()) ?: run {
             emitState()
@@ -286,11 +331,13 @@ internal class TimelineCompositionController(
         val currentClips = clips.toList()
         val currentRenderSize = renderSize
         val currentAudioTrack = audioTrack
+        val currentTextOverlays = textOverlays
         return TimelineCompositionExporter(context).also { exporter ->
             exporter.exportFromClips(
                 currentClips,
                 currentRenderSize,
                 currentAudioTrack,
+                currentTextOverlays,
                 outputPath,
                 callback
             )
@@ -325,7 +372,7 @@ internal class TimelineCompositionController(
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
         currentPlayer.setComposition(
-            buildTimelineComposition(clips, renderSize, audioTrack),
+            buildTimelineComposition(clips, renderSize, audioTrack, textOverlays),
             positionMs.coerceIn(0L, totalDurationMs)
         )
         currentPlayer.prepare()
@@ -377,13 +424,15 @@ internal class TimelineCompositionController(
     private fun currentEditSnapshot(): TimelineEditSnapshot {
         return TimelineEditSnapshot(
             clips = clips.toList(),
-            audioTrack = audioTrack
+            audioTrack = audioTrack,
+            textOverlays = textOverlays
         )
     }
 
     private fun restoreEditSnapshot(snapshot: TimelineEditSnapshot) {
         clips = snapshot.clips.toMutableList()
         audioTrack = snapshot.audioTrack
+        textOverlays = snapshot.textOverlays
         rebuildCompositionPreservingPlayback()
     }
 }
@@ -432,6 +481,7 @@ internal class TimelineCompositionExporter(
             parsedClips,
             outputSize,
             null,
+            emptyList(),
             outputPath,
             callback
         )
@@ -441,6 +491,7 @@ internal class TimelineCompositionExporter(
         clips: List<TimelineClip>,
         renderSize: TimelineRenderSize,
         audioTrack: AudioTrackDescriptor?,
+        textOverlays: List<TextOverlayDescriptor> = emptyList(),
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
@@ -452,7 +503,7 @@ internal class TimelineCompositionExporter(
             outputFile.delete()
         }
 
-        val composition = buildTimelineComposition(clips, renderSize, audioTrack)
+        val composition = buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)
         val exportTransformer = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -525,9 +576,19 @@ internal class TimelineCompositionExporter(
 private fun buildTimelineComposition(
     clips: List<TimelineClip>,
     renderSize: TimelineRenderSize,
-    audioTrack: AudioTrackDescriptor? = null
+    audioTrack: AudioTrackDescriptor? = null,
+    textOverlays: List<TextOverlayDescriptor> = emptyList()
 ): Composition {
-    val items = clips.map { clip -> editedMediaItemFor(clip, renderSize) }
+    var clipStartMs = 0L
+    val items = clips.map { clip ->
+        val item = editedMediaItemFor(
+            clip,
+            renderSize,
+            textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs)
+        )
+        clipStartMs += clip.scaledDurationMs
+        item
+    }
     val sequences = mutableListOf(EditedMediaItemSequence.withAudioAndVideoFrom(items))
     val timelineDurationMs = clips.sumOf { it.scaledDurationMs }
     if (audioTrack != null && audioTrack.offsetMs < timelineDurationMs) {
@@ -538,7 +599,8 @@ private fun buildTimelineComposition(
 
 private fun editedMediaItemFor(
     clip: TimelineClip,
-    renderSize: TimelineRenderSize
+    renderSize: TimelineRenderSize,
+    clipOverlays: List<TextOverlayDescriptor> = emptyList()
 ): EditedMediaItem {
     val mediaItemBuilder = MediaItem.Builder()
         .setUri(Uri.fromFile(File(clip.path)))
@@ -562,7 +624,7 @@ private fun editedMediaItemFor(
     }
     val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
         .setDurationUs(sourceDurationUs)
-        .setEffects(effectsFor(clip, renderSize))
+        .setEffects(effectsFor(clip, renderSize, clipOverlays))
 
     if (clip.speed != 1.0f) {
         builder.setSpeed(constantSpeedProvider(clip.speed))
@@ -623,7 +685,8 @@ private fun audioSequenceFor(
 
 private fun effectsFor(
     clip: TimelineClip,
-    renderSize: TimelineRenderSize
+    renderSize: TimelineRenderSize,
+    clipOverlays: List<TextOverlayDescriptor> = emptyList()
 ): Effects {
     val audioEffects = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
     val videoEffects = mutableListOf<Effect>()
@@ -656,6 +719,14 @@ private fun effectsFor(
             Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
         )
     )
+
+    // Text overlays go AFTER Presentation so the text is not cropped or
+    // scaled by the clip's crop/scale transforms.
+    if (clipOverlays.isNotEmpty()) {
+        videoEffects.add(
+            OverlayEffect(clipOverlays.map { TimelineTextOverlay(it, renderSize.height) })
+        )
+    }
     return Effects(audioEffects, videoEffects)
 }
 
