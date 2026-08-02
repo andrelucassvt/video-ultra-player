@@ -44,6 +44,7 @@ NativeTimelinePlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPla
 - Toda mutação nativa segue: `pushEditSnapshot()` → mutar a lista de clipes → rebuild preservando `textureId` e posição (`rebuildPreservingPlayback` / `rebuildCompositionPreservingPlayback`).
 - Durações trafegam sempre em milissegundos; `trimEnd` é **ponto absoluto na fonte**, não duração, e tem precedência sobre `duration` para vídeo.
 - Android é Kotlin DSL (`build.gradle.kts`) — edite `dependencies {}` em sintaxe Kotlin, não Groovy.
+- Toda funcionalidade nova ou ajuste em funcionalidade existente deve priorizar **desempenho fluido em todas as plataformas** (sem jank, sem trabalho pesado na thread de UI) e **simplicidade de uso para o usuário final** (menos passos, menos fricção, UX clara).
 - Antes de criar ou alterar features, invoque a skill `brainstorming`.
 - Não criar arquivos `.md` para documentar mudanças de código.
 
