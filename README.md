@@ -12,8 +12,8 @@ A Flutter plugin for previewing and exporting a native gapless media timeline ma
 - Non-destructive clip editing: trim, split, insert, remove, move, replace.
 - Per-clip speed (0.5× – 2×) and pan/crop with normalized alignment values.
 - Overlay audio track with offset, volume, trim, fade-in, and fade-out.
+- Timeline text overlays with positioning, timing, rotation, colors, opacity, alignment, and custom fonts.
 - Undo/redo with `canUndo` / `canRedo` flags in the state stream.
-- Clip-to-clip crossfade transitions.
 - Filmstrip thumbnail generation.
 - Output aspect ratio presets and resolution control.
 
@@ -96,6 +96,30 @@ await player.setAudioTrack(const AudioTrack(
 await player.removeAudioTrack();
 ```
 
+## Text overlays
+
+Text overlays use normalized frame coordinates and are visible in the
+half-open timeline window `[start, end)`. The same overlay is rendered in the
+preview and burned into the exported MP4.
+
+```dart
+const title = TimelineTextOverlay(
+  id: 'opening-title',
+  text: 'My video',
+  start: Duration.zero,
+  end: Duration(seconds: 3),
+  x: 0.5,
+  y: 0.2,
+  fontSize: 0.08,
+  color: 0xFFFFFFFF,
+  backgroundColor: 0x99000000,
+);
+
+await player.addTextOverlay(title);
+await player.updateTextOverlay(title.copyWith(rotationDegrees: -5));
+await player.removeTextOverlay(title.id);
+```
+
 ## Export
 
 ```dart
@@ -144,6 +168,7 @@ await player.load(clips, config: const TimelineCompositionConfig(
 | `setClipSpeed(int, double)` | Per-clip speed (0.5 – 2.0). |
 | `setClipAlignment(int, double, double)` | Pan/crop alignment. |
 | `setAudioTrack(AudioTrack)` / `removeAudioTrack()` | Overlay audio. |
+| `addTextOverlay` / `updateTextOverlay` / `removeTextOverlay` | Timeline text overlays. |
 | `undo()` / `redo()` | Edit history. |
 | `generateThumbnails(path, timestamps, {width})` | JPEG thumbnail list. |
 | `stateStream` | `Stream<TimelinePlayerState>` |
@@ -160,7 +185,19 @@ await player.load(clips, config: const TimelineCompositionConfig(
 | `speed` | Playback speed (0.5 – 2.0, default: 1.0). |
 | `alignment` / `scale` | Pan/crop. |
 | `trimStart` / `trimEnd` | Source in/out points. |
-| `transitionToNext` | `ClipTransition` for a crossfade to the next clip. |
+| `transitionToNext` | Serialized transition descriptor; native playback/export currently use a hard cut. |
+
+### TimelineTextOverlay
+
+| Property | Description |
+| --- | --- |
+| `id` / `text` | Stable identifier and multiline content. |
+| `start` / `end` | Timeline visibility window `[start, end)`. |
+| `x` / `y` | Center in normalized frame coordinates (`0.0..1.0`). |
+| `rotationDegrees` / `fontSize` | Rotation and size relative to frame height. |
+| `color` / `backgroundColor` / `opacity` | ARGB colors and overlay opacity. |
+| `textAlign` | Multiline left, center, or right alignment. |
+| `fontFamily` / `fontPath` | System family or absolute custom font path. |
 
 ### TimelinePlayerState
 
@@ -179,5 +216,6 @@ await player.load(clips, config: const TimelineCompositionConfig(
 - Empty clip lists are rejected by `load` and `exportTimeline`.
 - Image clips default to 2 s when `duration` is omitted.
 - iOS image clips are converted to temporary MP4 segments before composition.
+- Clip transitions are currently serialized but both native pipelines render hard cuts.
 - Exported files are returned as local paths — use `gal` or similar to save to the gallery.
 - `exportTimeline` is independent of the preview player and can be called without `load`.

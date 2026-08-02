@@ -9,11 +9,13 @@ typedef SupportDirectoryProvider = Future<Directory> Function();
 /// [EditorMediaSessionService] that copies media into Application Support and
 /// never deletes paths outside the directory it controls.
 class EditorMediaSessionServiceImpl implements EditorMediaSessionService {
-  EditorMediaSessionServiceImpl({SupportDirectoryProvider? supportDirectoryProvider})
-    : _supportDirectoryProvider =
-          supportDirectoryProvider ?? getApplicationSupportDirectory;
+  EditorMediaSessionServiceImpl({
+    SupportDirectoryProvider? supportDirectoryProvider,
+  }) : _supportDirectoryProvider =
+           supportDirectoryProvider ?? getApplicationSupportDirectory;
 
-  static const _sessionsDirectoryName = 'video_ultra_player_example_editor_sessions';
+  static const _sessionsDirectoryName =
+      'video_ultra_player_example_editor_sessions';
 
   final SupportDirectoryProvider _supportDirectoryProvider;
   Future<void> _operationTail = Future<void>.value();

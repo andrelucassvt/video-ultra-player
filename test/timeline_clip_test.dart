@@ -293,21 +293,9 @@ void main() {
     });
 
     test('equality considers speed', () {
-      const a = TimelineClip(
-        path: '/a.mp4',
-        type: MediaType.video,
-        speed: 1.5,
-      );
-      const b = TimelineClip(
-        path: '/a.mp4',
-        type: MediaType.video,
-        speed: 1.5,
-      );
-      const c = TimelineClip(
-        path: '/a.mp4',
-        type: MediaType.video,
-        speed: 2.0,
-      );
+      const a = TimelineClip(path: '/a.mp4', type: MediaType.video, speed: 1.5);
+      const b = TimelineClip(path: '/a.mp4', type: MediaType.video, speed: 1.5);
+      const c = TimelineClip(path: '/a.mp4', type: MediaType.video, speed: 2.0);
       expect(a, b);
       expect(a.hashCode, b.hashCode);
       expect(a, isNot(c));

@@ -1,0 +1,32 @@
+# Repository-only automation and internal documentation.
+.agents/
+.claude/
+.github/
+.vscode/
+docs/
+tasks/
+AGENTS.md
+CLAUDE.md
+sync-brain.sh
+sync-instructions.sh
+
+# Generated and local development files.
+.dart_tool/
+.idea/
+.metadata
+**/.dart_tool/
+**/.gradle/
+**/build/
+**/Pods/
+**/.DS_Store
+*.iml
+*.log
+pubspec.lock
+example/pubspec.lock
+example/ios/Podfile.lock
+
+# Repository assets/artifacts not required by the package runtime.
+META-INF/
+androidx/
+wireframe.png
+wireframe-en.png

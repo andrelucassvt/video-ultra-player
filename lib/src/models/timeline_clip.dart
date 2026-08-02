@@ -46,11 +46,11 @@ class TimelineClip {
     this.trimStart,
     this.trimEnd,
     this.transitionToNext,
-  })  : assert(scale > 0, 'scale must be greater than zero'),
-        assert(
-          speed >= 0.5 && speed <= 2.0,
-          'speed must be in the range [0.5, 2.0]',
-        );
+  }) : assert(scale > 0, 'scale must be greater than zero'),
+       assert(
+         speed >= 0.5 && speed <= 2.0,
+         'speed must be in the range [0.5, 2.0]',
+       );
 
   /// Absolute path to the media file.
   final String path;
@@ -106,7 +106,8 @@ class TimelineClip {
       'speed': speed,
       if (trimStart != null) 'trimStartMs': trimStart!.inMilliseconds,
       if (trimEnd != null) 'trimEndMs': trimEnd!.inMilliseconds,
-      if (transitionToNext != null) 'transitionToNext': transitionToNext!.toJson(),
+      if (transitionToNext != null)
+        'transitionToNext': transitionToNext!.toJson(),
     };
   }
 

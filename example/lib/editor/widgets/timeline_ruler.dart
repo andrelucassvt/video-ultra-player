@@ -19,10 +19,9 @@ class TimelineRuler extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textStyle =
-        Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: editorTextMuted,
-          fontSize: 10,
-        ) ??
+        Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: editorTextMuted, fontSize: 10) ??
         const TextStyle(fontSize: 10);
 
     return Semantics(

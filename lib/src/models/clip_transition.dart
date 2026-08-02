@@ -32,7 +32,9 @@ class ClipTransition {
 
   @override
   bool operator ==(Object other) =>
-      other is ClipTransition && other.type == type && other.duration == duration;
+      other is ClipTransition &&
+      other.type == type &&
+      other.duration == duration;
 
   @override
   int get hashCode => Object.hash(type, duration);

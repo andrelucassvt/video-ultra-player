@@ -38,10 +38,7 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
 
   /// Exports the currently loaded (and edited) timeline without requiring
   /// a separate clip list. Preview and export share the same native state.
-  Future<String> exportCurrentTimeline(
-    int textureId, {
-    String? outputPath,
-  }) {
+  Future<String> exportCurrentTimeline(int textureId, {String? outputPath}) {
     throw UnimplementedError(
       'exportCurrentTimeline() has not been implemented.',
     );
@@ -105,11 +102,7 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
 
   /// Splits the clip at [clipIndex] at [atLocalPositionMs] milliseconds from
   /// its trim-start, producing two clips in its place.
-  Future<void> splitClip(
-    int textureId,
-    int clipIndex,
-    int atLocalPositionMs,
-  ) {
+  Future<void> splitClip(int textureId, int clipIndex, int atLocalPositionMs) {
     throw UnimplementedError('splitClip() has not been implemented.');
   }
 
@@ -180,10 +173,7 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
   ///
   /// [overlay] is a JSON-compatible map produced by
   /// [TimelineTextOverlay.toJson].
-  Future<void> addTextOverlay(
-    int textureId,
-    Map<String, dynamic> overlay,
-  ) {
+  Future<void> addTextOverlay(int textureId, Map<String, dynamic> overlay) {
     throw UnimplementedError('addTextOverlay() has not been implemented.');
   }
 
@@ -191,10 +181,7 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
   ///
   /// [overlay] is a JSON-compatible map produced by
   /// [TimelineTextOverlay.toJson].
-  Future<void> updateTextOverlay(
-    int textureId,
-    Map<String, dynamic> overlay,
-  ) {
+  Future<void> updateTextOverlay(int textureId, Map<String, dynamic> overlay) {
     throw UnimplementedError('updateTextOverlay() has not been implemented.');
   }
 

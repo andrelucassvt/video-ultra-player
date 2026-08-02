@@ -20,10 +20,9 @@ void main() {
     await file.writeAsBytes(<int>[1, 2, 3]);
     player = FakeTimelinePlayer();
     controller = EditorController(player: player);
-    await controller.replaceTimeline(
-      [TimelineClip(path: file.path, type: MediaType.video)],
-      source: 'test',
-    );
+    await controller.replaceTimeline([
+      TimelineClip(path: file.path, type: MediaType.video),
+    ], source: 'test');
   });
 
   tearDown(() async {
@@ -34,10 +33,7 @@ void main() {
     }
   });
 
-  Future<void> pumpRow(
-    WidgetTester tester,
-    EditorController controller,
-  ) async {
+  Future<void> pumpRow(WidgetTester tester, EditorController controller) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: editorTheme,

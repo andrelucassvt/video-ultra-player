@@ -273,11 +273,7 @@ class NativeTimelinePlayer {
     if (clipIndex < 0) {
       throw ArgumentError.value(clipIndex, 'clipIndex', 'Must be >= 0.');
     }
-    return _platform.replaceClip(
-      _requireTextureId(),
-      clipIndex,
-      clip.toJson(),
-    );
+    return _platform.replaceClip(_requireTextureId(), clipIndex, clip.toJson());
   }
 
   /// Sets the playback speed of the clip at [clipIndex] to [speed].
@@ -380,8 +376,9 @@ class NativeTimelinePlayer {
     List<Duration> timestamps, {
     int width = 120,
   }) {
-    final timestampsMs =
-        timestamps.map((d) => d.inMilliseconds).toList(growable: false);
+    final timestampsMs = timestamps
+        .map((d) => d.inMilliseconds)
+        .toList(growable: false);
     return _platform.generateThumbnails(videoPath, timestampsMs, width: width);
   }
 

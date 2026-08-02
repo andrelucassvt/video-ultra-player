@@ -42,10 +42,7 @@ void main() {
       'clips': [
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
-      'config': {
-        'aspectRatio': 'original',
-        'baseWidth': 1080,
-      },
+      'config': {'aspectRatio': 'original', 'baseWidth': 1080},
     });
   });
 
@@ -65,10 +62,7 @@ void main() {
       'clips': [
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
-      'config': {
-        'aspectRatio': 'ratio9x16',
-        'baseWidth': 1080,
-      },
+      'config': {'aspectRatio': 'ratio9x16', 'baseWidth': 1080},
     });
   });
 
@@ -86,10 +80,7 @@ void main() {
           <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
         ],
         'outputPath': '/tmp/final.mp4',
-        'config': {
-          'aspectRatio': 'original',
-          'baseWidth': 1080,
-        },
+        'config': {'aspectRatio': 'original', 'baseWidth': 1080},
       });
     },
   );
@@ -112,10 +103,7 @@ void main() {
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
       'outputPath': '/tmp/final.mp4',
-      'config': {
-        'aspectRatio': 'ratio1x1',
-        'baseWidth': 1200,
-      },
+      'config': {'aspectRatio': 'ratio1x1', 'baseWidth': 1200},
     });
   });
 
@@ -237,11 +225,10 @@ void main() {
     });
 
     test('insertClip sends correct payload', () async {
-      await platform.insertClip(
-        77,
-        2,
-        <String, dynamic>{'path': '/b.mp4', 'type': 'video'},
-      );
+      await platform.insertClip(77, 2, <String, dynamic>{
+        'path': '/b.mp4',
+        'type': 'video',
+      });
       expect(calls.single.method, 'insertClip');
       expect(calls.single.arguments, {
         'textureId': 77,
@@ -267,11 +254,11 @@ void main() {
     });
 
     test('replaceClip sends correct payload', () async {
-      await platform.replaceClip(
-        77,
-        0,
-        <String, dynamic>{'path': '/c.mp4', 'type': 'video', 'trimStartMs': 500},
-      );
+      await platform.replaceClip(77, 0, <String, dynamic>{
+        'path': '/c.mp4',
+        'type': 'video',
+        'trimStartMs': 500,
+      });
       expect(calls.single.method, 'replaceClip');
       expect(calls.single.arguments, {
         'textureId': 77,
@@ -333,11 +320,10 @@ void main() {
             return null;
           });
 
-      final paths = await platform.generateThumbnails(
-        '/path/video.mp4',
-        [0, 1000],
-        width: 120,
-      );
+      final paths = await platform.generateThumbnails('/path/video.mp4', [
+        0,
+        1000,
+      ], width: 120);
 
       expect(calls.single.method, 'generateThumbnails');
       expect(calls.single.arguments, {
@@ -349,22 +335,15 @@ void main() {
     });
 
     test('setAudioTrack sends correct payload', () async {
-      await platform.setAudioTrack(
-        77,
-        <String, dynamic>{
-          'path': '/music/bg.mp3',
-          'offsetMs': 1000,
-          'volume': 0.8,
-        },
-      );
+      await platform.setAudioTrack(77, <String, dynamic>{
+        'path': '/music/bg.mp3',
+        'offsetMs': 1000,
+        'volume': 0.8,
+      });
       expect(calls.single.method, 'setAudioTrack');
       expect(calls.single.arguments, {
         'textureId': 77,
-        'track': {
-          'path': '/music/bg.mp3',
-          'offsetMs': 1000,
-          'volume': 0.8,
-        },
+        'track': {'path': '/music/bg.mp3', 'offsetMs': 1000, 'volume': 0.8},
       });
     });
 
@@ -375,23 +354,20 @@ void main() {
     });
 
     test('addTextOverlay sends correct payload', () async {
-      await platform.addTextOverlay(
-        77,
-        <String, dynamic>{
-          'id': 'text-1',
-          'text': 'Hello',
-          'startMs': 500,
-          'endMs': 3000,
-          'x': 0.25,
-          'y': 0.75,
-          'rotationDegrees': 0,
-          'fontSize': 0.08,
-          'color': 0xFFFFFFFF,
-          'backgroundColor': 0x00000000,
-          'opacity': 1.0,
-          'textAlign': 'center',
-        },
-      );
+      await platform.addTextOverlay(77, <String, dynamic>{
+        'id': 'text-1',
+        'text': 'Hello',
+        'startMs': 500,
+        'endMs': 3000,
+        'x': 0.25,
+        'y': 0.75,
+        'rotationDegrees': 0,
+        'fontSize': 0.08,
+        'color': 0xFFFFFFFF,
+        'backgroundColor': 0x00000000,
+        'opacity': 1.0,
+        'textAlign': 'center',
+      });
       expect(calls.single.method, 'addTextOverlay');
       expect(calls.single.arguments, {
         'textureId': 77,
@@ -413,23 +389,20 @@ void main() {
     });
 
     test('updateTextOverlay sends correct payload', () async {
-      await platform.updateTextOverlay(
-        77,
-        <String, dynamic>{
-          'id': 'text-1',
-          'text': 'Hello',
-          'startMs': 500,
-          'endMs': 3000,
-          'x': 0.25,
-          'y': 0.75,
-          'rotationDegrees': 0,
-          'fontSize': 0.08,
-          'color': 0xFFFFFFFF,
-          'backgroundColor': 0x00000000,
-          'opacity': 1.0,
-          'textAlign': 'center',
-        },
-      );
+      await platform.updateTextOverlay(77, <String, dynamic>{
+        'id': 'text-1',
+        'text': 'Hello',
+        'startMs': 500,
+        'endMs': 3000,
+        'x': 0.25,
+        'y': 0.75,
+        'rotationDegrees': 0,
+        'fontSize': 0.08,
+        'color': 0xFFFFFFFF,
+        'backgroundColor': 0x00000000,
+        'opacity': 1.0,
+        'textAlign': 'center',
+      });
       expect(calls.single.method, 'updateTextOverlay');
       expect(calls.single.arguments, {
         'textureId': 77,

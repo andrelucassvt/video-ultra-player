@@ -6,10 +6,7 @@ void main() {
     test('toJson serializes default values', () {
       final config = TimelineCompositionConfig();
 
-      expect(config.toJson(), {
-        'aspectRatio': 'original',
-        'baseWidth': 1080,
-      });
+      expect(config.toJson(), {'aspectRatio': 'original', 'baseWidth': 1080});
     });
 
     test('toJson serializes custom values', () {
@@ -18,10 +15,7 @@ void main() {
         baseWidth: 1440,
       );
 
-      expect(config.toJson(), {
-        'aspectRatio': 'ratio9x16',
-        'baseWidth': 1440,
-      });
+      expect(config.toJson(), {'aspectRatio': 'ratio9x16', 'baseWidth': 1440});
     });
 
     test('throws ArgumentError for non-positive baseWidth', () {

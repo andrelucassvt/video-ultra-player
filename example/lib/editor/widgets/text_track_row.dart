@@ -38,8 +38,7 @@ class TextTrackRow extends StatelessWidget {
     }
 
     final totalMs = controller.timelineDuration(state).inMilliseconds;
-    final pixelsPerMs =
-        totalMs > 0 ? controller.pixelsPerSecond / 1000 : 0.0;
+    final pixelsPerMs = totalMs > 0 ? controller.pixelsPerSecond / 1000 : 0.0;
 
     return SizedBox(
       width: width,
@@ -53,10 +52,10 @@ class TextTrackRow extends StatelessWidget {
               ),
               top: 0,
               bottom: 0,
-              width: ((overlay.end.inMilliseconds -
-                          overlay.start.inMilliseconds) *
-                      pixelsPerMs)
-                  .clamp(0.0, width),
+              width:
+                  ((overlay.end.inMilliseconds - overlay.start.inMilliseconds) *
+                          pixelsPerMs)
+                      .clamp(0.0, width),
               child: GestureDetector(
                 onTap: () {
                   controller.selectTextOverlay(overlay.id);

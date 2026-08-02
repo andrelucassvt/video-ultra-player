@@ -29,11 +29,7 @@ class TimelinePlayhead extends StatelessWidget {
         child: Stack(
           alignment: Alignment.topCenter,
           children: [
-            const Icon(
-              Icons.arrow_drop_down,
-              size: 16,
-              color: editorText,
-            ),
+            const Icon(Icons.arrow_drop_down, size: 16, color: editorText),
             Positioned(
               top: 12,
               bottom: 0,

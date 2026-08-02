@@ -46,10 +46,7 @@ void main() {
       Icons.redo,
     ]) {
       final button = tester.widget<IconButton>(
-        find.ancestor(
-          of: find.byIcon(icon),
-          matching: find.byType(IconButton),
-        ),
+        find.ancestor(of: find.byIcon(icon), matching: find.byType(IconButton)),
       );
       expect(button.onPressed, isNull, reason: '$icon should be disabled');
     }

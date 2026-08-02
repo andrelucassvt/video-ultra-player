@@ -259,10 +259,7 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   // ── Text overlays ────────────────────────────────────────────────────────
 
   @override
-  Future<void> addTextOverlay(
-    int textureId,
-    Map<String, dynamic> overlay,
-  ) {
+  Future<void> addTextOverlay(int textureId, Map<String, dynamic> overlay) {
     return methodChannel.invokeMethod<void>('addTextOverlay', <String, Object?>{
       'textureId': textureId,
       'overlay': overlay,
@@ -270,16 +267,10 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
-  Future<void> updateTextOverlay(
-    int textureId,
-    Map<String, dynamic> overlay,
-  ) {
+  Future<void> updateTextOverlay(int textureId, Map<String, dynamic> overlay) {
     return methodChannel.invokeMethod<void>(
       'updateTextOverlay',
-      <String, Object?>{
-        'textureId': textureId,
-        'overlay': overlay,
-      },
+      <String, Object?>{'textureId': textureId, 'overlay': overlay},
     );
   }
 
@@ -287,10 +278,7 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   Future<void> removeTextOverlay(int textureId, String overlayId) {
     return methodChannel.invokeMethod<void>(
       'removeTextOverlay',
-      <String, Object?>{
-        'textureId': textureId,
-        'overlayId': overlayId,
-      },
+      <String, Object?>{'textureId': textureId, 'overlayId': overlayId},
     );
   }
 

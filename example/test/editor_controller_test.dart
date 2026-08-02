@@ -15,15 +15,9 @@ void main() {
     final player = FakeTimelinePlayer();
     final controller = EditorController(player: player);
 
-    await controller.replaceTimeline(
-      [
-        TimelineClip(
-          path: '/nonexistent/never.mp4',
-          type: MediaType.video,
-        ),
-      ],
-      source: 'test',
-    );
+    await controller.replaceTimeline([
+      TimelineClip(path: '/nonexistent/never.mp4', type: MediaType.video),
+    ], source: 'test');
 
     expect(controller.error, editorMediaUnavailableError);
     expect(controller.loading, isFalse);
@@ -43,10 +37,9 @@ void main() {
     var notifications = 0;
     controller.addListener(() => notifications++);
 
-    final pending = controller.replaceTimeline(
-      [TimelineClip(path: file.path, type: MediaType.video)],
-      source: 'test',
-    );
+    final pending = controller.replaceTimeline([
+      TimelineClip(path: file.path, type: MediaType.video),
+    ], source: 'test');
     await _waitUntil(() async => player.calls.contains('load'));
     controller.dispose();
     gate.complete(42);
@@ -63,91 +56,97 @@ void main() {
     }
   });
 
-  test('image clip duration is clamped and committed via replaceClip', () async {
-    final player = FakeTimelinePlayer();
-    final controller = EditorController(player: player);
-    final dir = await Directory.systemTemp.createTemp('vc_image_test_');
-    final file = File('${dir.path}/still.png');
-    await file.writeAsBytes(<int>[1, 2, 3]);
+  test(
+    'image clip duration is clamped and committed via replaceClip',
+    () async {
+      final player = FakeTimelinePlayer();
+      final controller = EditorController(player: player);
+      final dir = await Directory.systemTemp.createTemp('vc_image_test_');
+      final file = File('${dir.path}/still.png');
+      await file.writeAsBytes(<int>[1, 2, 3]);
 
-    await controller.replaceTimeline(
-      [
+      await controller.replaceTimeline([
         TimelineClip(
           path: file.path,
           type: MediaType.image,
           duration: kDefaultImageClipDuration,
         ),
-      ],
-      source: 'test',
-    );
-    expect(controller.hasSelectedImageClip, isTrue);
+      ], source: 'test');
+      expect(controller.hasSelectedImageClip, isTrue);
 
-    await controller.setSelectedClipImageDuration(const Duration(seconds: 30));
+      await controller.setSelectedClipImageDuration(
+        const Duration(seconds: 30),
+      );
 
-    expect(controller.clips.single.duration, const Duration(seconds: 15));
-    expect(player.calls, contains('replaceClip:0'));
-    expect(controller.canUndo, isTrue);
+      expect(controller.clips.single.duration, const Duration(seconds: 15));
+      expect(player.calls, contains('replaceClip:0'));
+      expect(controller.canUndo, isTrue);
 
-    controller.dispose();
-    if (await dir.exists()) {
-      await dir.delete(recursive: true);
-    }
-  });
+      controller.dispose();
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    },
+  );
 
-  test('pickMedia imports media into the session and replaces the timeline',
-      () async {
-    final supportDir = await Directory.systemTemp.createTemp('vc_support_');
-    final sourceDir = await Directory.systemTemp.createTemp('vc_source_');
-    final video = File('${sourceDir.path}/a.mp4')..writeAsBytesSync(<int>[1, 2, 3]);
-    final image = File('${sourceDir.path}/b.png')..writeAsBytesSync(<int>[4, 5]);
-    final session = EditorMediaSessionServiceImpl(
-      supportDirectoryProvider: () async => supportDir,
-    );
-    final player = FakeTimelinePlayer();
-    final controller = EditorController(
-      player: player,
-      picker: _FakeImagePicker(<XFile>[XFile(video.path), XFile(image.path)]),
-      mediaSession: session,
-    );
+  test(
+    'pickMedia imports media into the session and replaces the timeline',
+    () async {
+      final supportDir = await Directory.systemTemp.createTemp('vc_support_');
+      final sourceDir = await Directory.systemTemp.createTemp('vc_source_');
+      final video = File('${sourceDir.path}/a.mp4')
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final image = File('${sourceDir.path}/b.png')
+        ..writeAsBytesSync(<int>[4, 5]);
+      final session = EditorMediaSessionServiceImpl(
+        supportDirectoryProvider: () async => supportDir,
+      );
+      final player = FakeTimelinePlayer();
+      final controller = EditorController(
+        player: player,
+        picker: _FakeImagePicker(<XFile>[XFile(video.path), XFile(image.path)]),
+        mediaSession: session,
+      );
 
-    await controller.pickMedia();
+      await controller.pickMedia();
 
-    expect(controller.clips.length, 2);
-    expect(controller.clips[0].type, MediaType.video);
-    expect(controller.clips[0].duration, isNull);
-    expect(controller.clips[1].type, MediaType.image);
-    expect(controller.clips[1].duration, kDefaultImageClipDuration);
-    expect(controller.clips[0].path, isNot(video.path));
-    expect(controller.clips[0].path, startsWith(supportDir.path));
-    expect(player.calls, contains('load'));
+      expect(controller.clips.length, 2);
+      expect(controller.clips[0].type, MediaType.video);
+      expect(controller.clips[0].duration, isNull);
+      expect(controller.clips[1].type, MediaType.image);
+      expect(controller.clips[1].duration, kDefaultImageClipDuration);
+      expect(controller.clips[0].path, isNot(video.path));
+      expect(controller.clips[0].path, startsWith(supportDir.path));
+      expect(player.calls, contains('load'));
 
-    final sessionsRoot = Directory(
-      '${supportDir.path}/video_ultra_player_example_editor_sessions',
-    );
-    final importedFiles = await sessionsRoot
-        .list(recursive: true)
-        .where((entity) => entity is File)
-        .toList();
-    expect(importedFiles.length, 2);
-
-    // Switching to another timeline releases the orphaned session files.
-    final other = File('${sourceDir.path}/c.mp4')..writeAsBytesSync(<int>[6, 7]);
-    await controller.replaceTimeline(
-      [TimelineClip(path: other.path, type: MediaType.video)],
-      source: 'other',
-    );
-
-    await _waitUntil(() async {
-      final files = await sessionsRoot
+      final sessionsRoot = Directory(
+        '${supportDir.path}/video_ultra_player_example_editor_sessions',
+      );
+      final importedFiles = await sessionsRoot
           .list(recursive: true)
           .where((entity) => entity is File)
           .toList();
-      return files.isEmpty;
-    });
+      expect(importedFiles.length, 2);
 
-    controller.dispose();
-    await sourceDir.delete(recursive: true);
-  });
+      // Switching to another timeline releases the orphaned session files.
+      final other = File('${sourceDir.path}/c.mp4')
+        ..writeAsBytesSync(<int>[6, 7]);
+      await controller.replaceTimeline([
+        TimelineClip(path: other.path, type: MediaType.video),
+      ], source: 'other');
+
+      await _waitUntil(() async {
+        final files = await sessionsRoot
+            .list(recursive: true)
+            .where((entity) => entity is File)
+            .toList();
+        return files.isEmpty;
+      });
+
+      controller.dispose();
+      await sourceDir.delete(recursive: true);
+    },
+  );
 }
 
 class _FakeImagePicker extends ImagePicker {

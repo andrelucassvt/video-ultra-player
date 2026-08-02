@@ -4,10 +4,7 @@ import 'package:flutter/foundation.dart';
 @immutable
 class EditHistoryState {
   /// Creates an edit-history state.
-  const EditHistoryState({
-    required this.canUndo,
-    required this.canRedo,
-  });
+  const EditHistoryState({required this.canUndo, required this.canRedo});
 
   /// Whether an undo snapshot is available.
   final bool canUndo;

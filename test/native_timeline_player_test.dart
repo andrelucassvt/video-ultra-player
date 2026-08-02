@@ -238,9 +238,7 @@ class MockVideoUltraPlayerPlatform
     lastGenerateThumbnailsPath = videoPath;
     lastGenerateThumbnailsTimestampsMs = timestampsMs;
     lastGenerateThumbnailsWidth = width;
-    return timestampsMs
-        .map((ts) => '/tmp/thumb_${ts}_$width.jpg')
-        .toList();
+    return timestampsMs.map((ts) => '/tmp/thumb_${ts}_$width.jpg').toList();
   }
 
   @override
@@ -597,9 +595,9 @@ void main() {
 
     setUp(() async {
       player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
     });
 
     test('trimClip forwards clipIndex and trim bounds', () async {
@@ -630,10 +628,7 @@ void main() {
     });
 
     test('splitClip rejects atLocalPosition <= zero', () {
-      expect(
-        () => player.splitClip(0, Duration.zero),
-        throwsArgumentError,
-      );
+      expect(() => player.splitClip(0, Duration.zero), throwsArgumentError);
     });
 
     test('insertClip forwards atIndex and serialized clip', () async {
@@ -683,12 +678,17 @@ void main() {
       expect(fakePlatform.lastClipPayload?['trimStartMs'], 500);
     });
 
-    test('exportCurrentTimeline delegates with textureId and outputPath', () async {
-      final path = await player.exportCurrentTimeline(outputPath: '/tmp/out.mp4');
-      expect(path, '/tmp/out.mp4');
-      expect(fakePlatform.calls, contains('exportCurrentTimeline'));
-      expect(fakePlatform.lastTextureId, 42);
-    });
+    test(
+      'exportCurrentTimeline delegates with textureId and outputPath',
+      () async {
+        final path = await player.exportCurrentTimeline(
+          outputPath: '/tmp/out.mp4',
+        );
+        expect(path, '/tmp/out.mp4');
+        expect(fakePlatform.calls, contains('exportCurrentTimeline'));
+        expect(fakePlatform.lastTextureId, 42);
+      },
+    );
 
     test('exportCurrentTimeline rejects concurrent export', () async {
       fakePlatform.exportCompleter = Completer<String>();
@@ -721,9 +721,9 @@ void main() {
 
     setUp(() async {
       player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
     });
 
     test('trimClip rejects negative clipIndex', () {
@@ -784,30 +784,29 @@ void main() {
 
   group('generateThumbnails', () {
     test(
-        'delegates to platform with converted milliseconds and default width',
-        () async {
-      final player = NativeTimelinePlayer(platform: fakePlatform);
+      'delegates to platform with converted milliseconds and default width',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
 
-      final paths = await player.generateThumbnails(
-        '/path/video.mp4',
-        [Duration.zero, const Duration(seconds: 1)],
-      );
+        final paths = await player.generateThumbnails('/path/video.mp4', [
+          Duration.zero,
+          const Duration(seconds: 1),
+        ]);
 
-      expect(fakePlatform.calls, contains('generateThumbnails'));
-      expect(fakePlatform.lastGenerateThumbnailsPath, '/path/video.mp4');
-      expect(fakePlatform.lastGenerateThumbnailsTimestampsMs, [0, 1000]);
-      expect(fakePlatform.lastGenerateThumbnailsWidth, 120);
-      expect(paths, ['/tmp/thumb_0_120.jpg', '/tmp/thumb_1000_120.jpg']);
-    });
+        expect(fakePlatform.calls, contains('generateThumbnails'));
+        expect(fakePlatform.lastGenerateThumbnailsPath, '/path/video.mp4');
+        expect(fakePlatform.lastGenerateThumbnailsTimestampsMs, [0, 1000]);
+        expect(fakePlatform.lastGenerateThumbnailsWidth, 120);
+        expect(paths, ['/tmp/thumb_0_120.jpg', '/tmp/thumb_1000_120.jpg']);
+      },
+    );
 
     test('forwards custom width to platform', () async {
       final player = NativeTimelinePlayer(platform: fakePlatform);
 
-      await player.generateThumbnails(
-        '/path/video.mp4',
-        [const Duration(milliseconds: 500)],
-        width: 240,
-      );
+      await player.generateThumbnails('/path/video.mp4', [
+        const Duration(milliseconds: 500),
+      ], width: 240);
 
       expect(fakePlatform.lastGenerateThumbnailsWidth, 240);
     });
@@ -830,25 +829,28 @@ void main() {
       expect(() => player.setAudioTrack(track), throwsStateError);
     });
 
-    test('calls platform.setAudioTrack with textureId and serialized track after load', () async {
-      final player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+    test(
+      'calls platform.setAudioTrack with textureId and serialized track after load',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
 
-      const track = AudioTrack(
-        path: '/music/bg.mp3',
-        offset: Duration(seconds: 1),
-        volume: 0.8,
-      );
-      await player.setAudioTrack(track);
+        const track = AudioTrack(
+          path: '/music/bg.mp3',
+          offset: Duration(seconds: 1),
+          volume: 0.8,
+        );
+        await player.setAudioTrack(track);
 
-      expect(fakePlatform.calls, contains('setAudioTrack'));
-      expect(fakePlatform.lastTextureId, 42);
-      expect(fakePlatform.lastAudioTrackPayload?['path'], '/music/bg.mp3');
-      expect(fakePlatform.lastAudioTrackPayload?['offsetMs'], 1000);
-      expect(fakePlatform.lastAudioTrackPayload?['volume'], 0.8);
-    });
+        expect(fakePlatform.calls, contains('setAudioTrack'));
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastAudioTrackPayload?['path'], '/music/bg.mp3');
+        expect(fakePlatform.lastAudioTrackPayload?['offsetMs'], 1000);
+        expect(fakePlatform.lastAudioTrackPayload?['volume'], 0.8);
+      },
+    );
   });
 
   group('removeAudioTrack', () {
@@ -859,9 +861,9 @@ void main() {
 
     test('calls platform.removeAudioTrack with textureId after load', () async {
       final player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
 
       await player.removeAudioTrack();
 
@@ -888,23 +890,26 @@ void main() {
       expect(() => player.addTextOverlay(sampleOverlay), throwsStateError);
     });
 
-    test('calls platform.addTextOverlay with textureId and serialized overlay after load', () async {
-      final player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+    test(
+      'calls platform.addTextOverlay with textureId and serialized overlay after load',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
 
-      await player.addTextOverlay(sampleOverlay);
+        await player.addTextOverlay(sampleOverlay);
 
-      expect(fakePlatform.calls, contains('addTextOverlay'));
-      expect(fakePlatform.lastTextureId, 42);
-      expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
-      expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
-      expect(fakePlatform.lastTextOverlayPayload?['startMs'], 500);
-      expect(fakePlatform.lastTextOverlayPayload?['endMs'], 3000);
-      expect(fakePlatform.lastTextOverlayPayload?['x'], 0.25);
-      expect(fakePlatform.lastTextOverlayPayload?['y'], 0.75);
-    });
+        expect(fakePlatform.calls, contains('addTextOverlay'));
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
+        expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
+        expect(fakePlatform.lastTextOverlayPayload?['startMs'], 500);
+        expect(fakePlatform.lastTextOverlayPayload?['endMs'], 3000);
+        expect(fakePlatform.lastTextOverlayPayload?['x'], 0.25);
+        expect(fakePlatform.lastTextOverlayPayload?['y'], 0.75);
+      },
+    );
   });
 
   group('updateTextOverlay', () {
@@ -913,19 +918,22 @@ void main() {
       expect(() => player.updateTextOverlay(sampleOverlay), throwsStateError);
     });
 
-    test('calls platform.updateTextOverlay with textureId and serialized overlay after load', () async {
-      final player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+    test(
+      'calls platform.updateTextOverlay with textureId and serialized overlay after load',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
 
-      await player.updateTextOverlay(sampleOverlay);
+        await player.updateTextOverlay(sampleOverlay);
 
-      expect(fakePlatform.calls, contains('updateTextOverlay'));
-      expect(fakePlatform.lastTextureId, 42);
-      expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
-      expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
-    });
+        expect(fakePlatform.calls, contains('updateTextOverlay'));
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
+        expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
+      },
+    );
   });
 
   group('removeTextOverlay', () {
@@ -934,17 +942,20 @@ void main() {
       expect(() => player.removeTextOverlay('text-1'), throwsStateError);
     });
 
-    test('calls platform.removeTextOverlay with textureId and overlay id after load', () async {
-      final player = NativeTimelinePlayer(platform: fakePlatform);
-      await player.load(
-        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
-      );
+    test(
+      'calls platform.removeTextOverlay with textureId and overlay id after load',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
 
-      await player.removeTextOverlay('text-1');
+        await player.removeTextOverlay('text-1');
 
-      expect(fakePlatform.calls, contains('removeTextOverlay'));
-      expect(fakePlatform.lastTextureId, 42);
-      expect(fakePlatform.lastRemovedTextOverlayId, 'text-1');
-    });
+        expect(fakePlatform.calls, contains('removeTextOverlay'));
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastRemovedTextOverlayId, 'text-1');
+      },
+    );
   });
 }

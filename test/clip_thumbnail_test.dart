@@ -4,7 +4,10 @@ import 'package:video_ultra_player/video_ultra_player.dart';
 void main() {
   group('ClipThumbnail.fromMap', () {
     test('produces ClipThumbnail with correct path and time', () {
-      final thumb = ClipThumbnail.fromMap({'path': '/tmp/a.jpg', 'timeMs': 1000});
+      final thumb = ClipThumbnail.fromMap({
+        'path': '/tmp/a.jpg',
+        'timeMs': 1000,
+      });
 
       expect(thumb.path, '/tmp/a.jpg');
       expect(thumb.time, const Duration(milliseconds: 1000));
@@ -18,7 +21,10 @@ void main() {
     });
 
     test('large timeMs converts correctly', () {
-      final thumb = ClipThumbnail.fromMap({'path': '/tmp/c.jpg', 'timeMs': 5500});
+      final thumb = ClipThumbnail.fromMap({
+        'path': '/tmp/c.jpg',
+        'timeMs': 5500,
+      });
 
       expect(thumb.time, const Duration(milliseconds: 5500));
     });

@@ -20,10 +20,9 @@ void main() {
     await file.writeAsBytes(<int>[1, 2, 3]);
     player = FakeTimelinePlayer();
     controller = EditorController(player: player);
-    await controller.replaceTimeline(
-      [TimelineClip(path: file.path, type: MediaType.video)],
-      source: 'test',
-    );
+    await controller.replaceTimeline([
+      TimelineClip(path: file.path, type: MediaType.video),
+    ], source: 'test');
     await controller.addTextOverlay();
   });
 
@@ -57,19 +56,20 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('sheet renders content field, swatches, sliders and delete button', (
-    WidgetTester tester,
-  ) async {
-    await pumpSheet(tester);
+  testWidgets(
+    'sheet renders content field, swatches, sliders and delete button',
+    (WidgetTester tester) async {
+      await pumpSheet(tester);
 
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.text('Texto'), findsWidgets);
-    expect(find.byType(Slider), findsNWidgets(3));
-    expect(find.byType(SegmentedButton<TimelineTextAlign>), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String?>), findsOneWidget);
-    expect(find.byType(RangeSlider), findsOneWidget);
-    expect(find.text('Excluir texto'), findsOneWidget);
-  });
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text('Texto'), findsWidgets);
+      expect(find.byType(Slider), findsNWidgets(3));
+      expect(find.byType(SegmentedButton<TimelineTextAlign>), findsOneWidget);
+      expect(find.byType(DropdownButtonFormField<String?>), findsOneWidget);
+      expect(find.byType(RangeSlider), findsOneWidget);
+      expect(find.text('Excluir texto'), findsOneWidget);
+    },
+  );
 
   testWidgets('submitting edited content commits the new text', (
     WidgetTester tester,

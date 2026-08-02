@@ -128,7 +128,8 @@ class _TextEditSheetState extends State<TextEditSheet> {
                   _ColorSwatch(
                     color: color,
                     selected: _draft.color == color.toARGB32(),
-                    onTap: () => _commit(_draft.copyWith(color: color.toARGB32())),
+                    onTap: () =>
+                        _commit(_draft.copyWith(color: color.toARGB32())),
                   ),
               ],
             ),
@@ -150,9 +151,8 @@ class _TextEditSheetState extends State<TextEditSheet> {
                 _ColorSwatch(
                   color: const Color(0x00000000),
                   selected: _draft.backgroundColor == 0x00000000,
-                  onTap: () => _commit(
-                    _draft.copyWith(backgroundColor: 0x00000000),
-                  ),
+                  onTap: () =>
+                      _commit(_draft.copyWith(backgroundColor: 0x00000000)),
                   isNone: true,
                 ),
               ],
@@ -187,9 +187,8 @@ class _TextEditSheetState extends State<TextEditSheet> {
               onChanged: (value) => setState(
                 () => _draft = _draft.copyWith(rotationDegrees: value),
               ),
-              onChangeEnd: (value) => _commit(
-                _draft.copyWith(rotationDegrees: value),
-              ),
+              onChangeEnd: (value) =>
+                  _commit(_draft.copyWith(rotationDegrees: value)),
             ),
             const SizedBox(height: 14),
             _sectionTitle(context, 'Alinhamento'),
@@ -340,7 +339,11 @@ class _ColorSwatch extends StatelessWidget {
         ),
         child: isNone
             ? const Center(
-                child: Icon(Icons.not_interested, size: 16, color: editorTextMuted),
+                child: Icon(
+                  Icons.not_interested,
+                  size: 16,
+                  color: editorTextMuted,
+                ),
               )
             : null,
       ),

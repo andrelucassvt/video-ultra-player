@@ -232,11 +232,7 @@ class _LaneHeaderColumn extends StatelessWidget {
             right: 0,
             height: _textTrackHeight,
             child: Center(
-              child: Icon(
-                Icons.title,
-                size: 20,
-                color: editorTextMuted,
-              ),
+              child: Icon(Icons.title, size: 20, color: editorTextMuted),
             ),
           ),
           Positioned(

@@ -96,21 +96,21 @@ class TimelineTextOverlay {
   /// method channel. Durations are expressed in milliseconds. Optional fields
   /// are omitted when `null`.
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'text': text,
-        'startMs': start.inMilliseconds,
-        'endMs': end.inMilliseconds,
-        'x': x,
-        'y': y,
-        'rotationDegrees': rotationDegrees,
-        'fontSize': fontSize,
-        'color': color,
-        if (fontFamily != null) 'fontFamily': fontFamily,
-        if (fontPath != null) 'fontPath': fontPath,
-        'backgroundColor': backgroundColor,
-        'opacity': opacity,
-        'textAlign': textAlign.name,
-      };
+    'id': id,
+    'text': text,
+    'startMs': start.inMilliseconds,
+    'endMs': end.inMilliseconds,
+    'x': x,
+    'y': y,
+    'rotationDegrees': rotationDegrees,
+    'fontSize': fontSize,
+    'color': color,
+    if (fontFamily != null) 'fontFamily': fontFamily,
+    if (fontPath != null) 'fontPath': fontPath,
+    'backgroundColor': backgroundColor,
+    'opacity': opacity,
+    'textAlign': textAlign.name,
+  };
 
   /// Returns a copy with the given fields replaced.
   TimelineTextOverlay copyWith({
@@ -128,23 +128,22 @@ class TimelineTextOverlay {
     int? backgroundColor,
     double? opacity,
     TimelineTextAlign? textAlign,
-  }) =>
-      TimelineTextOverlay(
-        id: id ?? this.id,
-        text: text ?? this.text,
-        start: start ?? this.start,
-        end: end ?? this.end,
-        x: x ?? this.x,
-        y: y ?? this.y,
-        rotationDegrees: rotationDegrees ?? this.rotationDegrees,
-        fontSize: fontSize ?? this.fontSize,
-        color: color ?? this.color,
-        fontFamily: fontFamily ?? this.fontFamily,
-        fontPath: fontPath ?? this.fontPath,
-        backgroundColor: backgroundColor ?? this.backgroundColor,
-        opacity: opacity ?? this.opacity,
-        textAlign: textAlign ?? this.textAlign,
-      );
+  }) => TimelineTextOverlay(
+    id: id ?? this.id,
+    text: text ?? this.text,
+    start: start ?? this.start,
+    end: end ?? this.end,
+    x: x ?? this.x,
+    y: y ?? this.y,
+    rotationDegrees: rotationDegrees ?? this.rotationDegrees,
+    fontSize: fontSize ?? this.fontSize,
+    color: color ?? this.color,
+    fontFamily: fontFamily ?? this.fontFamily,
+    fontPath: fontPath ?? this.fontPath,
+    backgroundColor: backgroundColor ?? this.backgroundColor,
+    opacity: opacity ?? this.opacity,
+    textAlign: textAlign ?? this.textAlign,
+  );
 
   @override
   bool operator ==(Object other) =>

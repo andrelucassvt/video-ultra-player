@@ -1,3 +1,25 @@
+## 2.1.0
+
+### Text overlays
+
+- Added the public `TimelineTextOverlay` model and the federated `addTextOverlay`, `updateTextOverlay`, and `removeTextOverlay` APIs.
+- Added native text rendering to preview and MP4 export on iOS and Android, including timeline visibility windows, normalized positioning, rotation, opacity, foreground/background colors, multiline alignment, system fonts, and custom font files.
+- Included text overlay mutations in the native undo/redo history.
+- Added a complete text editing flow to the example app with creation, selection, dragging, timing, styling, and deletion controls.
+
+### Example editor
+
+- Redesigned the editor with a light theme, consolidated toolbar, and dedicated media and text timeline lanes.
+- Added image clip duration editing and stable session storage for imported media files.
+- Improved media selection, export/error feedback, and automated editor coverage.
+
+### Fixes and performance
+
+- Fixed an iOS `AVPlayerItem.setVideoComposition` abort when adding text by keeping `AVVideoCompositionCoreAnimationTool` in the offline export pipeline and rendering text directly into preview texture frames.
+- Fixed upside-down iOS text and made preview/export reuse the same cached rasterization, with frame rendering serialized off the main thread.
+- Fixed Android freezes and Media3 bitmap errors when a text overlay is outside its time window by preserving valid text dimensions and hiding it through opacity.
+- Fixed the example preview showing a second selected-text copy or keeping it visible after its end time.
+
 ## 2.0.5
 
 - Fixed iOS crash/silent failure when loading a timeline with no audio clips: audio composition track is now created only when at least one clip has an audio track (`hasAnyClipAudio` guard in `TimelineComposition`).

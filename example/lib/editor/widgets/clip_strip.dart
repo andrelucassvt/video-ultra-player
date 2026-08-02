@@ -31,10 +31,11 @@ class ClipStrip extends StatelessWidget {
     for (var index = 0; index < clips.length; index++) {
       final clip = clips[index];
       final duration = durations[index];
-      final clipWidth = (duration.inMilliseconds /
-              Duration.millisecondsPerSecond *
-              controller.pixelsPerSecond)
-          .clamp(4.0, double.infinity);
+      final clipWidth =
+          (duration.inMilliseconds /
+                  Duration.millisecondsPerSecond *
+                  controller.pixelsPerSecond)
+              .clamp(4.0, double.infinity);
 
       children.add(
         DragTarget<int>(
@@ -152,7 +153,8 @@ class _ClipTileState extends State<_ClipTile> {
   @override
   void didUpdateWidget(covariant _ClipTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.duration != widget.duration || oldWidget.clip != widget.clip) {
+    if (oldWidget.duration != widget.duration ||
+        oldWidget.clip != widget.clip) {
       _draftWidth = null;
     }
   }

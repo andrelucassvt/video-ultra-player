@@ -53,14 +53,14 @@ class AudioTrack {
   /// Serialises this [AudioTrack] to a JSON-compatible map for the method
   /// channel. Optional fields are omitted when `null`.
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'path': path,
-        'offsetMs': offset.inMilliseconds,
-        'volume': volume,
-        if (trimStart != null) 'trimStartMs': trimStart!.inMilliseconds,
-        if (trimEnd != null) 'trimEndMs': trimEnd!.inMilliseconds,
-        if (fadeIn != null) 'fadeInMs': fadeIn!.inMilliseconds,
-        if (fadeOut != null) 'fadeOutMs': fadeOut!.inMilliseconds,
-      };
+    'path': path,
+    'offsetMs': offset.inMilliseconds,
+    'volume': volume,
+    if (trimStart != null) 'trimStartMs': trimStart!.inMilliseconds,
+    if (trimEnd != null) 'trimEndMs': trimEnd!.inMilliseconds,
+    if (fadeIn != null) 'fadeInMs': fadeIn!.inMilliseconds,
+    if (fadeOut != null) 'fadeOutMs': fadeOut!.inMilliseconds,
+  };
 
   /// Returns a copy with the given fields replaced.
   AudioTrack copyWith({
@@ -71,16 +71,15 @@ class AudioTrack {
     Duration? trimEnd,
     Duration? fadeIn,
     Duration? fadeOut,
-  }) =>
-      AudioTrack(
-        path: path ?? this.path,
-        offset: offset ?? this.offset,
-        volume: volume ?? this.volume,
-        trimStart: trimStart ?? this.trimStart,
-        trimEnd: trimEnd ?? this.trimEnd,
-        fadeIn: fadeIn ?? this.fadeIn,
-        fadeOut: fadeOut ?? this.fadeOut,
-      );
+  }) => AudioTrack(
+    path: path ?? this.path,
+    offset: offset ?? this.offset,
+    volume: volume ?? this.volume,
+    trimStart: trimStart ?? this.trimStart,
+    trimEnd: trimEnd ?? this.trimEnd,
+    fadeIn: fadeIn ?? this.fadeIn,
+    fadeOut: fadeOut ?? this.fadeOut,
+  );
 
   @override
   bool operator ==(Object other) =>
