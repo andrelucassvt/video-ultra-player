@@ -373,5 +373,87 @@ void main() {
       expect(calls.single.method, 'removeAudioTrack');
       expect(calls.single.arguments, {'textureId': 77});
     });
+
+    test('addTextOverlay sends correct payload', () async {
+      await platform.addTextOverlay(
+        77,
+        <String, dynamic>{
+          'id': 'text-1',
+          'text': 'Hello',
+          'startMs': 500,
+          'endMs': 3000,
+          'x': 0.25,
+          'y': 0.75,
+          'rotationDegrees': 0,
+          'fontSize': 0.08,
+          'color': 0xFFFFFFFF,
+          'backgroundColor': 0x00000000,
+          'opacity': 1.0,
+          'textAlign': 'center',
+        },
+      );
+      expect(calls.single.method, 'addTextOverlay');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'overlay': {
+          'id': 'text-1',
+          'text': 'Hello',
+          'startMs': 500,
+          'endMs': 3000,
+          'x': 0.25,
+          'y': 0.75,
+          'rotationDegrees': 0,
+          'fontSize': 0.08,
+          'color': 0xFFFFFFFF,
+          'backgroundColor': 0x00000000,
+          'opacity': 1.0,
+          'textAlign': 'center',
+        },
+      });
+    });
+
+    test('updateTextOverlay sends correct payload', () async {
+      await platform.updateTextOverlay(
+        77,
+        <String, dynamic>{
+          'id': 'text-1',
+          'text': 'Hello',
+          'startMs': 500,
+          'endMs': 3000,
+          'x': 0.25,
+          'y': 0.75,
+          'rotationDegrees': 0,
+          'fontSize': 0.08,
+          'color': 0xFFFFFFFF,
+          'backgroundColor': 0x00000000,
+          'opacity': 1.0,
+          'textAlign': 'center',
+        },
+      );
+      expect(calls.single.method, 'updateTextOverlay');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'overlay': {
+          'id': 'text-1',
+          'text': 'Hello',
+          'startMs': 500,
+          'endMs': 3000,
+          'x': 0.25,
+          'y': 0.75,
+          'rotationDegrees': 0,
+          'fontSize': 0.08,
+          'color': 0xFFFFFFFF,
+          'backgroundColor': 0x00000000,
+          'opacity': 1.0,
+          'textAlign': 'center',
+        },
+      });
+    });
+
+    test('removeTextOverlay sends correct payload', () async {
+      await platform.removeTextOverlay(77, 'text-1');
+      expect(calls.single.method, 'removeTextOverlay');
+      expect(calls.single.arguments, {'textureId': 77, 'overlayId': 'text-1'});
+    });
   });
 }

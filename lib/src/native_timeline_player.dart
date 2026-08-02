@@ -3,6 +3,7 @@ import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
+import 'package:video_ultra_player/src/models/timeline_text_overlay.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
 /// Controls a native timeline player that composes and plays a sequence of
@@ -328,6 +329,36 @@ class NativeTimelinePlayer {
   Future<void> removeAudioTrack() {
     _requireTextureId();
     return _platform.removeAudioTrack(textureId!);
+  }
+
+  // ── Text overlays ────────────────────────────────────────────────────────
+
+  /// Adds a text [overlay] to the loaded timeline.
+  ///
+  /// The overlay is burned into the composed video and appears in both the
+  /// preview and the exported MP4 during its `start`/`end` window.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> addTextOverlay(TimelineTextOverlay overlay) {
+    _requireTextureId();
+    return _platform.addTextOverlay(textureId!, overlay.toJson());
+  }
+
+  /// Updates the text overlay whose [TimelineTextOverlay.id] matches
+  /// [overlay]'s id.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> updateTextOverlay(TimelineTextOverlay overlay) {
+    _requireTextureId();
+    return _platform.updateTextOverlay(textureId!, overlay.toJson());
+  }
+
+  /// Removes the text overlay identified by [overlayId].
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> removeTextOverlay(String overlayId) {
+    _requireTextureId();
+    return _platform.removeTextOverlay(textureId!, overlayId);
   }
 
   // ── Thumbnail generation ────────────────────────────────────────────────

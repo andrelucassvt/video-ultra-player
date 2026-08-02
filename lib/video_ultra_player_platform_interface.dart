@@ -174,6 +174,36 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('removeAudioTrack() has not been implemented.');
   }
 
+  // ── Text overlays ────────────────────────────────────────────────────────
+
+  /// Adds a text overlay to the loaded timeline.
+  ///
+  /// [overlay] is a JSON-compatible map produced by
+  /// [TimelineTextOverlay.toJson].
+  Future<void> addTextOverlay(
+    int textureId,
+    Map<String, dynamic> overlay,
+  ) {
+    throw UnimplementedError('addTextOverlay() has not been implemented.');
+  }
+
+  /// Updates the text overlay with the same `id` as [overlay].
+  ///
+  /// [overlay] is a JSON-compatible map produced by
+  /// [TimelineTextOverlay.toJson].
+  Future<void> updateTextOverlay(
+    int textureId,
+    Map<String, dynamic> overlay,
+  ) {
+    throw UnimplementedError('updateTextOverlay() has not been implemented.');
+  }
+
+  /// Removes the text overlay identified by [overlayId] from the loaded
+  /// timeline.
+  Future<void> removeTextOverlay(int textureId, String overlayId) {
+    throw UnimplementedError('removeTextOverlay() has not been implemented.');
+  }
+
   /// Extracts and caches thumbnail frames from [videoPath] at each timestamp
   /// in [timestampsMs] (milliseconds) and returns a list of absolute
   /// file-system paths to the cached JPEG images.

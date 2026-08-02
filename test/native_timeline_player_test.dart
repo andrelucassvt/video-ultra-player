@@ -31,6 +31,8 @@ class MockVideoUltraPlayerPlatform
   List<int>? lastGenerateThumbnailsTimestampsMs;
   int? lastGenerateThumbnailsWidth;
   Map<String, dynamic>? lastAudioTrackPayload;
+  Map<String, dynamic>? lastTextOverlayPayload;
+  String? lastRemovedTextOverlayId;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
   final exportProgressController =
       StreamController<TimelineExportProgress>.broadcast();
@@ -252,6 +254,33 @@ class MockVideoUltraPlayerPlatform
   Future<void> removeAudioTrack(int textureId) async {
     calls.add('removeAudioTrack');
     lastTextureId = textureId;
+  }
+
+  @override
+  Future<void> addTextOverlay(
+    int textureId,
+    Map<String, dynamic> overlay,
+  ) async {
+    calls.add('addTextOverlay');
+    lastTextureId = textureId;
+    lastTextOverlayPayload = overlay;
+  }
+
+  @override
+  Future<void> updateTextOverlay(
+    int textureId,
+    Map<String, dynamic> overlay,
+  ) async {
+    calls.add('updateTextOverlay');
+    lastTextureId = textureId;
+    lastTextOverlayPayload = overlay;
+  }
+
+  @override
+  Future<void> removeTextOverlay(int textureId, String overlayId) async {
+    calls.add('removeTextOverlay');
+    lastTextureId = textureId;
+    lastRemovedTextOverlayId = overlayId;
   }
 }
 
@@ -838,6 +867,84 @@ void main() {
 
       expect(fakePlatform.calls, contains('removeAudioTrack'));
       expect(fakePlatform.lastTextureId, 42);
+    });
+  });
+
+  // ── Text overlays ────────────────────────────────────────────────────────
+
+  const sampleOverlay = TimelineTextOverlay(
+    id: 'text-1',
+    text: 'Hello',
+    start: Duration(milliseconds: 500),
+    end: Duration(seconds: 3),
+    x: 0.25,
+    y: 0.75,
+    fontSize: 0.08,
+  );
+
+  group('addTextOverlay', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.addTextOverlay(sampleOverlay), throwsStateError);
+    });
+
+    test('calls platform.addTextOverlay with textureId and serialized overlay after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+
+      await player.addTextOverlay(sampleOverlay);
+
+      expect(fakePlatform.calls, contains('addTextOverlay'));
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
+      expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
+      expect(fakePlatform.lastTextOverlayPayload?['startMs'], 500);
+      expect(fakePlatform.lastTextOverlayPayload?['endMs'], 3000);
+      expect(fakePlatform.lastTextOverlayPayload?['x'], 0.25);
+      expect(fakePlatform.lastTextOverlayPayload?['y'], 0.75);
+    });
+  });
+
+  group('updateTextOverlay', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.updateTextOverlay(sampleOverlay), throwsStateError);
+    });
+
+    test('calls platform.updateTextOverlay with textureId and serialized overlay after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+
+      await player.updateTextOverlay(sampleOverlay);
+
+      expect(fakePlatform.calls, contains('updateTextOverlay'));
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastTextOverlayPayload?['id'], 'text-1');
+      expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
+    });
+  });
+
+  group('removeTextOverlay', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.removeTextOverlay('text-1'), throwsStateError);
+    });
+
+    test('calls platform.removeTextOverlay with textureId and overlay id after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(
+        const [TimelineClip(path: '/a.mp4', type: MediaType.video)],
+      );
+
+      await player.removeTextOverlay('text-1');
+
+      expect(fakePlatform.calls, contains('removeTextOverlay'));
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastRemovedTextOverlayId, 'text-1');
     });
   });
 }
