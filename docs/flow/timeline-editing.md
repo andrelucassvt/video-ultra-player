@@ -1,24 +1,25 @@
 ---
 generated_at: 2026-07-31
-source_commit: 1e11b62
+source_commit: 21182b1
 source_state: clean
-verified_at: 2026-07-31
+verified_at: 2026-08-02
 status: current
 related_plans:
   - docs/plan/onda-1-quick-wins.md
+  - docs/plan/text-overlays/00-indice.md
 ---
 
 # Flow: Edição de Clipes e Undo/Redo
 
-> **Resumo:** Trim, split, insert, remove, move, replace, speed e alignment mutam a timeline já carregada sem perder o `textureId` nem a posição de playback, com histórico de undo/redo mantido no lado nativo.
+> **Resumo:** Trim, split, insert, remove, move, replace, speed, alignment e text overlays mutam a timeline já carregada sem perder o `textureId` nem a posição de playback, com histórico de undo/redo mantido no lado nativo.
 
 ## Visão Geral
 
 Todas as operações de edição pressupõem uma timeline carregada: o método Dart valida o índice, chama `_requireTextureId()` e envia o comando com `textureId` + índice(s) pelo mesmo `MethodChannel` do player. Nada é reenviado — o nativo já tem a lista de clipes e muta a sua própria cópia.
 
-No nativo, cada mutação obedece a três passos na mesma ordem, nas duas plataformas: **(1)** guardar um snapshot do modelo atual (lista de clipes + trilha de áudio externa) na pilha de undo; **(2)** aplicar a mutação na lista de clipes; **(3)** reconstruir a composição preservando playback. É o passo 3 que dá a sensação de edição "ao vivo": no iOS `rebuildPreservingPlayback` monta um `AVPlayerItem` novo, transfere o `AVPlayerItemVideoOutput` para ele, troca o item no `AVPlayer` e faz seek de tolerância zero para a posição anterior, retomando o play se estava tocando; no Android `rebuildCompositionPreservingPlayback` chama `setComposition(novaComposition, positionMs)` + `prepare()` e dá `play()` de volta. O `textureId` nunca muda, então o widget `Texture` do Flutter continua válido.
+No nativo, cada mutação obedece a três passos na mesma ordem, nas duas plataformas: **(1)** guardar um snapshot do modelo atual (lista de clipes + trilha de áudio externa + text overlays) na pilha de undo; **(2)** aplicar a mutação na lista de clipes; **(3)** reconstruir a composição preservando playback. É o passo 3 que dá a sensação de edição "ao vivo": no iOS `rebuildPreservingPlayback` monta um `AVPlayerItem` novo, transfere o `AVPlayerItemVideoOutput` para ele, troca o item no `AVPlayer` e faz seek de tolerância zero para a posição anterior, retomando o play se estava tocando; no Android `rebuildCompositionPreservingPlayback` chama `setComposition(novaComposition, positionMs)` + `prepare()` e dá `play()` de volta. O `textureId` nunca muda, então o widget `Texture` do Flutter continua válido.
 
-A única exceção é `setClipAlignment`: no iOS ele só recalcula o `AVVideoComposition` e o atribui ao item corrente (sem rebuild, sem interromper o player); no Android efeitos Media3 são imutáveis, então ele passa pelo rebuild completo como as outras operações. Essa é uma diferença real de comportamento entre plataformas — no Android arrastar o preview continuamente reconstrói a composição a cada chamada, e a UI deve commitar no fim do gesto.
+A única exceção é `setClipAlignment`: no iOS ele só recalcula o `AVVideoComposition` e o atribui ao item corrente (sem rebuild, sem interromper o player); no Android efeitos Media3 são imutáveis, então ele passa pelo rebuild completo como as outras operações. Text overlays seguem o padrão cirúrgico do iOS (`applyUpdatedVideoComposition`: snapshot → mutar `textOverlays` → re-gerar só a videoComposition → reatribuir, com `requestFrame` se pausado) e o rebuild completo no Android. Essa é uma diferença real de comportamento entre plataformas — no Android arrastar o preview continuamente reconstrói a composição a cada chamada, e a UI deve commitar no fim do gesto.
 
 O histórico vive em `TimelineEditModel` (Swift e Kotlin, implementações espelhadas): duas pilhas com limite de 50 snapshots, onde `pushSnapshot` sempre limpa o redo. `undo` tira o topo da pilha de undo, empurra o estado atual no redo e restaura; `redo` faz o inverso. Pilha vazia é no-op seguro que apenas re-emite estado. Os flags `canUndo`/`canRedo` viajam em cada evento de `TimelinePlayerState`, então a UI reflete a disponibilidade em tempo real sem consulta extra.
 
@@ -35,7 +36,7 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 4. **Roteamento nativo** — `ios/Classes/VideoUltraPlayerPlugin.swift` (`switch`) / `.../VideoUltraPlayerPlugin.kt` (`when` + `withController`)
    Resolvem o controller pelo `textureId`; no iOS cada `case` de edição embrulha a chamada em `do/catch` e responde `edit_failed`.
 5. **Snapshot** — `pushEditSnapshot()` → `TimelineEditModel.pushSnapshot`
-   Guarda `clips` + `audioTrack` atuais e limpa a pilha de redo.
+    Guarda `clips` + `audioTrack` + `textOverlays` atuais e limpa a pilha de redo.
 6. **Mutação do modelo** — `ios/Classes/TimelineComposition.swift` (`trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`) / `.../TimelineCompositionController.kt` (mesmos nomes, operando em `MutableList<TimelineClip>`)
    Índices inválidos retornam sem alterar nada. `insertClip` faz clamp em `[0, count]`.
 7. **Rebuild preservando playback** — `TimelinePlayerController.rebuildPreservingPlayback` (iOS) / `TimelineCompositionController.rebuildCompositionPreservingPlayback` (Android)
@@ -44,9 +45,11 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 8. **Emissão de estado** — `emitState()`
    Novas `clipDurationsMs`, novo `totalDuration`, `clipIndex`/`localPosition` recalculados e `canUndo`/`canRedo` atualizados.
 9. **Undo/redo** — `NativeTimelinePlayer.undo` / `redo` → nativo `undo()` / `redo()`
-   `makeEditSnapshot()` do estado atual → `editHistory.undo/redo(current:)` → `restoreEditSnapshot` → rebuild.
-10. **Reflexo na UI** — `example/lib/editor/widgets/playback_bar.dart`
-    Habilita os botões quando `state.canUndo && controller.canUndo` (o exemplo mantém um histórico local espelhado além do nativo).
+    `makeEditSnapshot()` do estado atual → `editHistory.undo/redo(current:)` → `restoreEditSnapshot` → rebuild. Textos voltam junto com clipes e áudio (snapshot inclui `textOverlays`).
+10. **Text overlays** — `NativeTimelinePlayer.addTextOverlay` / `updateTextOverlay` / `removeTextOverlay` → `TimelinePlayerController.addTextOverlay` (iOS, cirúrgico) / `TimelineCompositionController.addTextOverlay` (Android, rebuild completo)
+    Snapshot → mutar `textOverlays` → aplicar renderização. `updateTextOverlay`/`removeTextOverlay` com `id` inexistente são no-op que só re-emitem estado.
+11. **Reflexo na UI** — `example/lib/editor/editor_controller.dart`
+    Mantém a lista local `_textOverlays` + seleção; `commitTextOverlay` é a única porta de mutação (commit-only) e os snapshots locais `_EditorSnapshot` também guardam textos, mantendo undo/redo da UI coerente com o nativo.
 
 ### Caminhos alternativos
 
@@ -74,8 +77,10 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 | Nativo iOS | `ios/Classes/TimelineEditModel.swift` | Pilhas de snapshot |
 | Nativo Android | `.../TimelineCompositionController.kt` | Mutação da lista, rebuild, snapshots |
 | Nativo Android | `.../TimelineEditModel.kt` | Pilhas de snapshot |
-| Consumidor | `example/lib/editor/editor_controller.dart` | `trimClip`, `split`, `removeSelected`, `moveClip`, `setSelectedClipSpeed`, `undo`, `redo` e espelho local dos clipes |
-| Consumidor | `example/lib/editor/widgets/clip_trim_handles.dart`, `clip_strip.dart`, `bottom_toolbar.dart`, `speed_sheet.dart` | Gestos que disparam as edições |
+| Textos iOS | `ios/Classes/TextOverlayLayers.swift` | Árvore CALayer dos textos (janela e fontes) |
+| Textos Android | `.../TextOverlay.kt` | `TextOverlayDescriptor`, `textOverlaysForClip`, `TimelineTextOverlay` |
+| Consumidor | `example/lib/editor/editor_controller.dart` | `trimClip`, `split`, `removeSelected`, `moveClip`, `setSelectedClipSpeed`, `undo`, `redo`, `addTextOverlay`, `commitTextOverlay`, `removeSelectedTextOverlay` e espelho local dos clipes/textos |
+| Consumidor | `example/lib/editor/widgets/clip_trim_handles.dart`, `clip_strip.dart`, `speed_sheet.dart`, `text_edit_sheet.dart`, `text_track_row.dart` | Gestos e sheets que disparam as edições |
 | Testes | `test/native_timeline_player_test.dart` | Cobre validações e delegação de cada operação |
 | Testes | `test/video_ultra_player_method_channel_test.dart` | Cobre o payload enviado em cada comando |
 
@@ -85,7 +90,8 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 - **Snapshot antes da mutação** — `pushEditSnapshot()` é chamado antes de alterar o modelo em todas as operações, inclusive `setClipAlignment` e as de trilha de áudio.
 - **`pushSnapshot` limpa o redo** — `TimelineEditModel` nas duas plataformas.
 - **Histórico limitado a 50** — snapshots mais antigos são descartados (`removeFirst`).
-- **Snapshot guarda metadados, não mídia** — `TimelineEditSnapshot` contém a lista de descritores de clipe e a trilha de áudio; nenhum arquivo é copiado.
+- **Snapshot guarda metadados, não mídia** — `TimelineEditSnapshot` contém a lista de descritores de clipe, a trilha de áudio e os text overlays; nenhum arquivo é copiado.
+- **Mutações de texto são commit-only** — no Android toda mutação reconstrói a `Composition` (efeitos Media3 imutáveis); no iOS usa-se o rebuild cirúrgico da videoComposition. O app chama apenas no commit do gesto/controle.
 - **`trimEnd` é ponto absoluto na fonte** — `trimClip` no iOS zera `durationMs` para deixar `trimEnd` como única fonte de duração; no Android `resolvedDurationMs` já dá precedência a `trimEndMs`.
 - **Split gera corte seco** — o primeiro pedaço tem `transitionToNextMs = nil`.
 - **Split converte `durationMs` em `trimEnd`** — no iOS quando `trimEndMs == nil` e havia `durationMs`; no Android o segundo pedaço herda `trimEndMs ?: sourceDurationMs`.
@@ -96,8 +102,8 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 
 ## Observações
 
-- **Divergência iOS/Android em `setClipAlignment`:** inline no iOS, rebuild completo no Android. Efeito visível: no Android o preview reinicia o pipeline a cada chamada.
+- **Divergência iOS/Android em `setClipAlignment`:** inline no iOS, rebuild completo no Android. Efeito visível: no Android o preview reinicia o pipeline a cada chamada. Text overlays seguem o mesmo padrão (cirúrgico no iOS, rebuild no Android).
 - **Divergência em tratamento de erro (Android):** só três comandos têm `try/catch`; uma exceção em `trimClip`, `splitClip`, `moveClip`, `removeClip` ou `setClipSpeed` sobe pelo channel sem código de erro dedicado.
-- O app de exemplo mantém **dois** históricos: as pilhas nativas (fonte de `canUndo`/`canRedo`) e `_undoSnapshots`/`_redoSnapshots` em `EditorController`, que guardam a lista Dart de clipes e o índice selecionado. Os botões só habilitam quando ambos concordam, e um `undo` avança as duas pilhas em conjunto.
+- O app de exemplo mantém **dois** históricos: as pilhas nativas (fonte de `canUndo`/`canRedo`) e `_undoSnapshots`/`_redoSnapshots` em `EditorController`, que guardam a lista Dart de clipes, os text overlays e o índice/seleção atuais. Os botões só habilitam quando ambos concordam, e um `undo` avança as duas pilhas em conjunto.
 - `EditHistoryState` existe como modelo público e tem teste, mas nenhum caminho do channel o produz — os flags chegam dentro de `TimelinePlayerState`.
 - Depois de qualquer edição o exemplo limpa `_thumbnailRequests`, porque as durações resolvidas mudam e as thumbnails são cacheadas por `(path, width, timestamps)`.

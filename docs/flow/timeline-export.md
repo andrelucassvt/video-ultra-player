@@ -1,11 +1,12 @@
 ---
 generated_at: 2026-07-31
-source_commit: 1e11b62
+source_commit: 21182b1
 source_state: clean
-verified_at: 2026-07-31
+verified_at: 2026-08-02
 status: current
 related_plans:
   - docs/plan/onda-1-quick-wins.md
+  - docs/plan/text-overlays/00-indice.md
 ---
 
 # Flow: Exportação MP4 com Progresso
@@ -14,7 +15,7 @@ related_plans:
 
 ## Visão Geral
 
-Há duas portas de export, com contratos diferentes. `exportTimeline(clips)` é independente do player: não exige `load`, monta uma composição nova só para exportar e serve para exportar uma lista de clipes qualquer. `exportCurrentTimeline()` exige `load` e exporta o estado nativo corrente — mesma lista de clipes já editada, mesmo `renderSize`, mesma trilha de áudio externa. É essa segunda porta que garante a regra "o MP4 é exatamente o que o preview mostra", e é a usada pelo app de exemplo.
+Há duas portas de export, com contratos diferentes. `exportTimeline(clips)` é independente do player: não exige `load`, monta uma composição nova só para exportar e serve para exportar uma lista de clipes qualquer. `exportCurrentTimeline()` exige `load` e exporta o estado nativo corrente — mesma lista de clipes já editada, mesmo `renderSize`, mesma trilha de áudio externa e **os mesmos text overlays** queimados no preview (iOS via `animationTool` embutido na videoComposition; Android via `OverlayEffect` por clipe). É essa segunda porta que garante a regra "o MP4 é exatamente o que o preview mostra", e é a usada pelo app de exemplo.
 
 Em Dart, `NativeTimelinePlayer` protege as duas com um mutex simples: o campo `_exporting` faz uma segunda chamada concorrente lançar `StateError`, e é liberado num `finally`. O getter `exportProgress` só pode ser acessado enquanto `_exporting` é `true` — fora disso lança `StateError`. O stream vem do `EventChannel` `video_ultra_player/timeline_player/export`, que é **global** (não recebe `textureId`) e emite `{progress, state}` decodificado por `TimelineExportProgress.fromMap` com `progress` clampado em `[0, 1]` e `state` resolvido no enum `TimelineExportState` (fallback `idle`).
 
@@ -39,13 +40,13 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 6. **iOS — resolução do destino** — `ios/Classes/VideoUltraPlayerPlugin.swift` → `exportOutputURL` + `prepareOutputDirectory`
    Cria diretórios intermediários e remove arquivo existente.
 7. **iOS — montagem do asset** — `controller.buildCurrentExportAsset()` → `TimelineComposition.buildCurrentExportAsset(config:)` → `buildExportAsset`
-   Reconstrói a composição a partir da lista corrente e devolve `TimelineExportAsset(asset, videoComposition, audioMix)`.
+    Reconstrói a composição a partir da lista corrente e devolve `TimelineExportAsset(asset, videoComposition, audioMix)`; `makeVideoComposition()` embute o `animationTool` dos textos na videoComposition exportada.
 8. **iOS — sessão de export** — `runExportSession`
    `AVAssetExportSession(preset: HighestQuality)`, `outputFileType = .mp4`, `Timer` de 0,1 s emitindo `state: "exporting"`, resultado tratado na main queue.
 9. **Android — resolução do destino** — `.../TimelineCompositionController.kt` → `TimelineCompositionExporter.exportOutputFile`
    `File(outputPath)` ou `cacheDir/video_ultra_player_export_<uuid>.mp4`; cria diretório pai e apaga arquivo existente.
-10. **Android — montagem da composição** — `startExportCurrentTimeline` → `exportFromClips` → `buildTimelineComposition(clips, renderSize, audioTrack)`
-    Os mesmos builders usados no preview.
+10. **Android — montagem da composição** — `startExportCurrentTimeline` → `exportFromClips` → `buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)`
+     Os mesmos builders usados no preview, incluindo a lista corrente de overlays (re-ancorada por clipe via `textOverlaysForClip`).
 11. **Android — Transformer** — `Transformer.Builder(context).addListener{...}.build()` → `start(composition, path)`
     `progressRunnable` de 100 ms com `ProgressHolder`; `complete {}` entrega o resultado uma vez só.
 12. **Publicação do progresso** — `TimelineExportProgressStreamHandler.emit` (iOS) / `ExportProgressStreamHandler.emit` (Android)
@@ -91,8 +92,8 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 - **Um export por instância de player** — `_exporting` em `native_timeline_player.dart`; nada impede dois `NativeTimelinePlayer` diferentes exportarem em paralelo.
 - **`exportProgress` só durante export** — o getter lança `StateError` fora da janela ativa, e o stream é recriado a cada export (`_exportProgressStream = null`).
 - **`exportTimeline` não precisa de `load`** — trabalha só com a lista recebida; no iOS cria uma `TimelineComposition` própria que é descartada no `onDispose`.
-- **`exportCurrentTimeline` reflete a edição** — reconstrói a partir da lista corrente e inclui a trilha de áudio externa ativa.
-- **`exportTimeline` ignora trilha externa** — no Android, `TimelineCompositionExporter.export` passa `audioTrack = null`; no iOS a composição nova nasce sem trilha externa.
+- **`exportCurrentTimeline` reflete a edição** — reconstrói a partir da lista corrente, inclui a trilha de áudio externa ativa e queima os text overlays do preview (iOS: `animationTool` na videoComposition; Android: overlays passados a `exportFromClips`).
+- **`exportTimeline` ignora trilha externa e textos** — no Android, `TimelineCompositionExporter.export` passa `audioTrack = null` e `textOverlays = emptyList()`; no iOS a composição nova nasce sem trilha externa e sem overlays. Paridade com a trilha de áudio.
 - **Canal de progresso é global** — sem `textureId`; com dois players exportando ao mesmo tempo os eventos se misturariam.
 - **Progresso sempre clampado** — nos dois nativos na emissão e novamente em `TimelineExportProgress.fromMap`.
 - **Estado inicial é `idle`** — `onListen` emite `{progress: 0.0, state: "idle"}` imediatamente nas duas plataformas.

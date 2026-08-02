@@ -44,7 +44,7 @@ API pública (`NativeTimelinePlayer`, todas exigem `load`): `addTextOverlay(over
 | 2 | `02-ios-nativo.md` | Textos renderizados no preview e export iOS, com undo/redo | 1 | pendente |
 | 3 | `03-android-nativo.md` | Textos renderizados no preview e export Android, com undo/redo + testes Kotlin | 1 | pendente |
 | 4 | `04-example-app.md` | Editor de texto completo no app exemplo (adicionar, arrastar, editar, remover) | 2, 3 | pendente |
-| 5 | `05-flows.md` | Flows atualizados + novo `text-overlay.md` + AGENTS.md revisado | 2, 3, 4 | pendente |
+| 5 | `05-flows.md` | Flows atualizados + novo `text-overlay.md` + AGENTS.md revisado | 2, 3, 4 | concluída |
 
 ## Riscos e Mitigações (globais)
 

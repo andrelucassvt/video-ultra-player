@@ -1,12 +1,13 @@
 ---
 generated_at: 2026-07-31
-source_commit: 1e11b62
+source_commit: b234395
 source_state: clean
-verified_at: 2026-07-31
+verified_at: 2026-08-02
 status: current
 related_plans:
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/onda-2-identidade-editor.md
+  - docs/plan/text-overlays/00-indice.md
 ---
 
 # Flow: Camada Nativa iOS
@@ -23,7 +24,7 @@ Em `load`, o plugin monta os `TimelineClipDescriptor` e instancia `TimelinePlaye
 
 A composição em si é responsabilidade de `TimelineComposition.build`. Ela prepara cada clipe (`PreparedClip`) resolvendo o asset — imagens são convertidas em MP4 temporário por `makeImageVideo` usando `AVAssetWriter`, com cache por path — calcula a janela efetiva de trim, insere o range na única trilha de vídeo e aplica `scaleTimeRange` para obter a velocidade pedida. O áudio dos clipes vai para uma segunda trilha, criada **somente** se algum clipe tiver áudio, e é escalado separadamente porque sua duração de fonte pode divergir da do vídeo. Cada clipe inserido gera um `TimelineSegment` com a duração já escalada, o que mantém `totalDuration`, `seekToClip`, `clipDurationsMs` e `playbackState` coerentes. Por fim, a trilha de áudio externa (se houver) entra como uma terceira trilha, o `AVAudioMix` é montado com volumes e ramps, e o `AVMutableVideoComposition` recebe uma instrução por segmento com o transform de cover-crop calculado a partir de `preferredTransform`, `renderSize`, `scale` e `alignment`.
 
-Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo de clipes da `TimelineComposition` → `rebuildPreservingPlayback(positionMs:)`, que reconstrói o `AVPlayerItem` do zero, move o `AVPlayerItemVideoOutput` para o novo item, troca o item no player, refaz o observer de fim e faz seek para a posição salva, retomando o play se estava tocando. `setClipAlignment` é a exceção: só recalcula o `AVVideoComposition` e o atribui ao item atual, sem rebuild.
+Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo de clipes da `TimelineComposition` → `rebuildPreservingPlayback(positionMs:)`, que reconstrói o `AVPlayerItem` do zero, move o `AVPlayerItemVideoOutput` para o novo item, troca o item no player, refaz o observer de fim e faz seek para a posição salva, retomando o play se estava tocando. `setClipAlignment` é a exceção original: só recalcula o `AVVideoComposition` e o atribui ao item atual, sem rebuild. Text overlays adotam esse mesmo padrão cirúrgico via `applyUpdatedVideoComposition()` (snapshot → mutar `textOverlays` → re-gerar só a videoComposition → reatribuir; seek de tolerância zero + `requestFrame` se pausado) — os textos queimados vivem no `animationTool` da própria videoComposition, então preview e export compartilham o mesmo caminho de renderização em `makeVideoComposition()`.
 
 `ThumbnailGenerator` é um singleton independente do player: extrai frames com `AVAssetImageGenerator` em fila global e cacheia JPEGs em `NSTemporaryDirectory()/vup_thumbs/`.
 
@@ -32,7 +33,7 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 1. **Registro** — `ios/Classes/VideoUltraPlayerPlugin.swift` → `register(with:)`
    Instancia o plugin com `registrar.textures()`, registra o method channel como delegate e os dois event channels com seus handlers.
 2. **Roteamento** — `handle(_:result:)`
-   `switch call.method` sobre `load`, `exportTimeline`, `exportCurrentTimeline`, `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `undo`, `redo`, `setAudioTrack`, `removeAudioTrack`, `generateThumbnails`, `dispose`; qualquer outro cai em `FlutterMethodNotImplemented`.
+    `switch call.method` sobre `load`, `exportTimeline`, `exportCurrentTimeline`, `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `undo`, `redo`, `setAudioTrack`, `removeAudioTrack`, `addTextOverlay`, `updateTextOverlay`, `removeTextOverlay`, `generateThumbnails`, `dispose`; qualquer outro cai em `FlutterMethodNotImplemented`. Os cases de texto parseiam `args["overlay"]` com `TextOverlayDescriptor(dictionary:)` e respondem `invalid_arguments` quando o parse falha.
 3. **Parsing de entrada** — `clips(from:result:)` + `TimelineClipDescriptor(dictionary:)` + `TimelineCompositionConfig(dictionary:)`
    `speed` é clampado em `[0.5, 2.0]` e `scale` tem mínimo `0.01` já no parse.
 4. **Criação do controller** — `TimelinePlayerController.init(clips:config:textureRegistry:)`
@@ -44,7 +45,7 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 7. **Áudio externo e mix** — `TimelineComposition.build` (bloco `currentAudioTrack`) + `makeAudioMix`
    Insere a trilha externa no `offsetMs` com clamp pelo tempo restante da timeline e aplica volume, fade-in e fade-out via `setVolumeRamp`.
 8. **Composição de vídeo** — `makeVideoComposition` → `singleLayerInstruction` → `layerInstruction` → `transform(for:)`
-   Uma instrução por segmento, ordenada por tempo; o transform faz cover-crop usando `coverScale * clip.scale` e desloca conforme `alignment`.
+    Uma instrução por segmento, ordenada por tempo; o transform faz cover-crop usando `coverScale * clip.scale` e desloca conforme `alignment`. Quando `textOverlays` não está vazio, o final do método anexa `videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)`, com a árvore de textos por cima do vídeo.
 9. **Textura** — `ios/Classes/TimelineTexture.swift` → `init` / `start` / `onDisplayLink` / `copyPixelBuffer`
    `AVPlayerItemVideoOutput` com `kCVPixelFormatType_32BGRA` + `IOSurfaceProperties`; o `CADisplayLink` mapeia `hostTime → itemTime`, copia o buffer sob `NSLock` e chama `textureFrameAvailable`.
 10. **Estado** — `TimelinePlayerController.emitState`
@@ -55,11 +56,13 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
     `composition.makeEditSnapshot()` → `editHistory.undo/redo(current:)` → `restoreEditSnapshot` → rebuild. Pilha vazia é no-op que só re-emite estado.
 13. **Alinhamento sem rebuild** — `setClipAlignment(clipIndex:x:y:)`
     `pushEditSnapshot()` + `composition.updateAlignment(...)` e atribuição direta em `player.currentItem?.videoComposition`.
-14. **Export** — `exportTimeline` / `exportCurrentTimeline` → `runExportSession`
-    `AVAssetExportSession` com preset `HighestQuality`, `videoComposition` e `audioMix` da composição, `Timer` de 0,1 s publicando `exporter.progress` e resultado no `DispatchQueue.main`.
-15. **Thumbnails** — `ios/Classes/ThumbnailGenerator.swift` → `ThumbnailGenerator.shared.generate(...)`
+14. **Text overlays** — `addTextOverlay` / `updateTextOverlay` / `removeTextOverlay(id:)` → `applyUpdatedVideoComposition()`
+    `pushEditSnapshot()` → mutação em `TimelineComposition.textOverlays` → `updatedVideoComposition()` (wrapper de `makeVideoComposition()`) → `player.currentItem?.videoComposition = ...`; se pausado, seek de tolerância zero + `texture.requestFrame()` para o frame pausado refletir o texto. A janela de cada `CATextLayer` é `[AVCoreAnimationBeginTimeAtZero + start, + end)` com `fillMode = .forwards`.
+15. **Export** — `exportTimeline` / `exportCurrentTimeline` → `runExportSession`
+    `AVAssetExportSession` com preset `HighestQuality`, `videoComposition` e `audioMix` da composição, `Timer` de 0,1 s publicando `exporter.progress` e resultado no `DispatchQueue.main`. O `animationTool` vai embutido na videoComposition exportada por `exportCurrentTimeline`; o `exportTimeline(clips)` standalone monta uma `TimelineComposition` nova, sem overlays.
+16. **Thumbnails** — `ios/Classes/ThumbnailGenerator.swift` → `ThumbnailGenerator.shared.generate(...)`
     Fila `.userInitiated`, `AVAssetImageGenerator` com tolerância zero, cache por `hashPath(videoPath)_ts_width.jpg`; o resultado volta para a main thread antes de `result(paths)`.
-16. **Dispose** — `TimelinePlayerController.dispose`
+17. **Dispose** — `TimelinePlayerController.dispose`
     Remove o time observer e os observers de notificação, pausa o player, `texture.dispose()`, `unregisterTexture(textureId)` e `composition.dispose()` (apaga os MP4s temporários de imagem).
 
 ### Caminhos alternativos
@@ -70,6 +73,8 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 - **Erro de edição:** cada `case` de edição captura o `throw` do controller e responde `edit_failed` com o erro em `details`.
 - **Índice fora de faixa:** os métodos de edição do controller e da composição fazem `guard clips.indices.contains(index)` e retornam sem alterar nada.
 - **`removeAudioTrack` sem trilha:** apenas re-emite estado, sem rebuild.
+- **`updateTextOverlay`/`removeTextOverlay` com id inexistente:** no-op no `TimelineComposition` (busca por `id` não encontra) + re-renderização inócua da mesma composição.
+- **Fonte custom inválida:** `TextOverlayLayers.resolveFont` registra via `CTFontManagerRegisterFontsForURL` (erro de re-registro ignorado), resolve o PostScript name e cai em `UIFont.systemFont` — nunca falha o load.
 - **Falha de export:** `export_failed` em três pontos — falha ao criar a sessão, status `.failed/.cancelled` e qualquer status inesperado; em todos, o handler de progresso emite `state: "failed"`.
 - **Falha na geração do MP4 de imagem:** `cannotCreateImageVideo` / `invalidClip`, propagado como `load_failed`.
 - **`onListen` sem `textureId`:** devolve `FlutterError(code: "invalid_arguments")` e o stream não abre.
@@ -80,7 +85,8 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 |--------|---------|------------------|
 | Plugin / roteamento | `ios/Classes/VideoUltraPlayerPlugin.swift` | Canais, mapa de controllers, parsing de argumentos, export, stream handlers |
 | Controller | `ios/Classes/VideoUltraPlayerPlugin.swift` → `TimelinePlayerController` | `AVPlayer`, observers, rebuild preservando playback, emissão de estado |
-| Composição | `ios/Classes/TimelineComposition.swift` | Descritores, `AVMutableComposition`, segmentos, `AVVideoComposition`, `AVAudioMix`, imagem→MP4 |
+| Composição | `ios/Classes/TimelineComposition.swift` | Descritores, `AVMutableComposition`, segmentos, `AVVideoComposition`, `AVAudioMix`, imagem→MP4, estado de `textOverlays` |
+| Textos | `ios/Classes/TextOverlayLayers.swift` | Árvore `CALayer`/`CATextLayer`, resolução de fonte (sistema e `fontPath`), janela `beginTime`/`duration` |
 | Textura | `ios/Classes/TimelineTexture.swift` | `AVPlayerItemVideoOutput`, `CADisplayLink`, `copyPixelBuffer` |
 | Histórico | `ios/Classes/TimelineEditModel.swift` | `TimelineEditSnapshot` e pilhas undo/redo (limite 50) |
 | Thumbnails | `ios/Classes/ThumbnailGenerator.swift` | `AVAssetImageGenerator` + cache em disco |
@@ -99,6 +105,9 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 - **`renderSize` sempre par** — `evenSize` arredonda para cima em ambas as dimensões (requisito dos encoders H.264).
 - **Histórico limitado a 50 snapshots** — `TimelineEditModel(limit:)`; `pushSnapshot` limpa a pilha de redo.
 - **Um `AVPlayerItemVideoOutput` por item** — `replacePlayerItem` adiciona o output ao novo item, o que automaticamente o desanexa do antigo; por isso a ordem em `rebuildPreservingPlayback` importa.
+- **Textos vivem no `animationTool` da videoComposition** — `makeVideoComposition()` é o único ponto de criação e anexa `AVVideoCompositionCoreAnimationTool` quando há overlays; por isso preview e export (`exporter.videoComposition`) queimam os mesmos textos.
+- **Janela de texto por `beginTime`/`duration`** — `TextOverlayLayers`: `beginTime = AVCoreAnimationBeginTimeAtZero + startSeconds`, `duration = end - start` clampado pela duração total, `fillMode = .forwards`; `isRemovedOnCompletion` não existe em `CALayer` (é de `CAAnimation`) e o fallback documentado é keyframe de opacity.
+- **`fontPath` vence `fontFamily`** — `resolveFont` tenta o arquivo custom primeiro (PostScript name via Core Text) e depois a família de sistema; fallback sempre para `systemFont`.
 - **Export usa exatamente o preview** — `buildCurrentExportAsset` reconstrói a partir da mesma lista `clips` e do mesmo `currentConfig`.
 - **Thumbnails são cacheadas por `(path, timestamp, width)`** — `ThumbnailGenerator.generate` devolve o arquivo existente sem re-extrair.
 
@@ -114,6 +123,7 @@ Edição segue um padrão único: `pushEditSnapshot()` → mutação no modelo d
 - `TimelineTexture.onDisplayLink` mantém `NSLog` de diagnóstico até capturar o primeiro frame, com comentário "remove once working" — é ruído em produção.
 - `makeImageVideo` roda de forma síncrona na thread do channel: escreve todos os frames do MP4 com `Thread.sleep` de 5 ms enquanto o writer não aceita dados, e bloqueia num `DispatchSemaphore` até `finishWriting`. Para imagens longas isso segura a thread.
 - `transitionToNextMs` é parseado do mapa Dart, mas nenhuma instrução de vídeo o usa — não existe crossfade implementado; todo limite entre clipes é corte seco.
+- `TimelineEditSnapshot` agora inclui `textOverlays`, então undo/redo restauram textos junto com clipes e áudio; o rebuild completo passa pelo mesmo `makeVideoComposition()`.
 - O plugin não implementa `onDetachedFromEngine` (não é `FlutterPlugin` com `detachFromEngine` explícito): os controllers só são liberados pelo `dispose` explícito vindo do Dart.
 - `TimelineComposition.moveClip` valida `to <= clips.count - 1` e depois insere em `min(to, clips.count)`, o que difere sutilmente do Android (que valida `toIndex in clips.indices` antes de remover) — o comportamento coincide para os casos válidos.
 - Não há teste automatizado desta camada; `example/ios/RunnerTests/RunnerTests.swift` pertence ao app de exemplo.

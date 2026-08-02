@@ -58,6 +58,10 @@ NativeTimelinePlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPla
 - `ClipTransition`/`crossfade` é serializado e parseado, mas **nenhuma plataforma o aplica**: todo limite entre clipes é corte seco.
 - `ClipThumbnail` e `EditHistoryState` são modelos públicos sem caminho ativo no channel (`generateThumbnails` devolve `List<String>`; `canUndo`/`canRedo` chegam em `TimelinePlayerState`).
 - Não recrie aqui a Clean Architecture de app (`presentation/domain/data`, Cubits, GetIt, GoRouter) — este repo é um plugin.
+- Android: timestamps de overlay/efeito no Media3 são **relativos ao `EditedMediaItem`, não à timeline** — re-ancore a janela por clipe (`textOverlaysForClip`) subtraindo o `clipStartMs` do segmento.
+- Android: `Typeface.createFromFile` faz I/O por frame — cacheie o `Typeface` por path (`companion object`); fonte custom inválida deve cair em fallback, nunca falhar o load.
+- iOS: a janela de um `CATextLayer` no CoreAnimationTool é expressa por `beginTime`/`duration`/`fillMode` do próprio layer (`isRemovedOnCompletion` é de `CAAnimation`, não existe em `CALayer`); se o texto vazar a janela no teste manual, use keyframe de `opacity` ancorado em `AVCoreAnimationBeginTimeAtZero` (fallback documentado em `TextOverlayLayers.swift`).
+- iOS: além do rebuild completo (`rebuildPreservingPlayback`), mutações de texto usam o rebuild **cirúrgico** da `videoComposition` (`applyUpdatedVideoComposition`) — re-gera só a videoComposition e reatribui ao item, com seek de tolerância zero + `texture.requestFrame()` se pausado.
 
 ## Não fazer
 

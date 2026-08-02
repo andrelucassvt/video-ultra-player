@@ -1,15 +1,16 @@
 ---
 generated_at: 2026-08-02
-source_commit: 2a72e48
+source_commit: 21182b1
 source_state: clean
 verified_at: 2026-08-02
 status: current
-related_plans: []
+related_plans:
+  - docs/plan/text-overlays/00-indice.md
 ---
 
 # Flow: API Reference (superfície pública do plugin)
 
-> **Resumo:** Catálogo completo da API pública de `video_ultra_player` — todo método de playback, edição, áudio, thumbnail e export, com sua assinatura Dart, validações, nome no `MethodChannel`, payload e ponto de tratamento em iOS e Android.
+> **Resumo:** Catálogo completo da API pública de `video_ultra_player` — todo método de playback, edição, áudio, texto, thumbnail e export, com sua assinatura Dart, validações, nome no `MethodChannel`, payload e ponto de tratamento em iOS e Android.
 
 ## Visão Geral
 
@@ -19,7 +20,7 @@ Cada chamada pública atravessa as mesmas quatro camadas federadas: a API públi
 
 O `textureId` devolvido por `load` é a identidade da sessão: com exceção de `load`, `exportTimeline` e `generateThumbnails`, **todo método exige que `load` tenha completado** e envia o `textureId` no payload. Chamar qualquer um deles antes disso lança `StateError` já no Dart, via o guard privado `_requireTextureId()`.
 
-As **22 operações do canal de métodos são implementadas nas duas plataformas** — a paridade iOS/Android está completa no commit analisado. Dois canais de eventos complementam a superfície: `.../events` (estado por `textureId`) e `.../export` (progresso de export, global).
+As **25 operações do canal de métodos são implementadas nas duas plataformas** — a paridade iOS/Android está completa no commit analisado. Dois canais de eventos complementam a superfície: `.../events` (estado por `textureId`) e `.../export` (progresso de export, global).
 
 ## Passo a Passo
 
@@ -105,6 +106,16 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 | `setAudioTrack` | `Future<void> setAudioTrack(AudioTrack track)` | `setAudioTrack` | `textureId`, `track` |
 | `removeAudioTrack` | `Future<void> removeAudioTrack()` | `removeAudioTrack` | `textureId` |
 
+### Text overlays
+
+| Método | Assinatura | Channel | Payload |
+|---|---|---|---|
+| `addTextOverlay` | `Future<void> addTextOverlay(TimelineTextOverlay overlay)` | `addTextOverlay` | `textureId`, `overlay` |
+| `updateTextOverlay` | `Future<void> updateTextOverlay(TimelineTextOverlay overlay)` | `updateTextOverlay` | `textureId`, `overlay` |
+| `removeTextOverlay` | `Future<void> removeTextOverlay(String overlayId)` | `removeTextOverlay` | `textureId`, `overlayId` |
+
+`updateTextOverlay` casa por `TimelineTextOverlay.id` (no-op quando o id não existe). Os três exigem `load` completo; no iOS o parse falho do overlay responde `FlutterError("invalid_arguments")` em vez de silenciar (`VideoUltraPlayerPlugin.swift` cases `addTextOverlay`/`updateTextOverlay`).
+
 ### Thumbnails
 
 | Método | Assinatura | Channel | Payload | Retorno |
@@ -160,6 +171,25 @@ Factory com validação (`baseWidth` deve ser positivo, senão `ArgumentError`) 
 | `fadeIn` | `Duration?` | `null` | `fadeInMs` (omitido se nulo) |
 | `fadeOut` | `Duration?` | `null` | `fadeOutMs` (omitido se nulo) |
 
+### `TimelineTextOverlay` (`.../timeline_text_overlay.dart`)
+
+Imutável, com `toJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts no construtor: `x`/`y` em `[0.0, 1.0]`, `fontSize` em `(0.0, 1.0]`, `opacity` em `[0.0, 1.0]`. A ordenação `end > start` não é assertada em const (comparação de `Duration` não é const-evaluable) — é documentada e tratada pelo nativo/app.
+
+| Campo | Tipo | Default | Chave JSON | Nota |
+|---|---|---|---|---|
+| `id` | `String` | obrigatório | `id` | Gerado pelo app; identidade de update/remove. |
+| `text` | `String` | obrigatório | `text` | Multi-linha via `\n`. |
+| `start` / `end` | `Duration` | obrigatórios | `startMs` / `endMs` | Janela na timeline `[start, end)`; `end` clampado pela duração total. |
+| `x` / `y` | `double` | obrigatórios | `x` / `y` | Centro em fração do frame; `(0,0)` = canto superior esquerdo. |
+| `rotationDegrees` | `double` | `0` | `rotationDegrees` | Graus. |
+| `fontSize` | `double` | obrigatório | `fontSize` | Fração da altura do vídeo. |
+| `color` | `int` | `0xFFFFFFFF` | `color` | ARGB. |
+| `fontFamily` | `String?` | `null` | `fontFamily` | Fonte de sistema; omitida quando nula. |
+| `fontPath` | `String?` | `null` | `fontPath` | `.ttf`/`.otf`; precedência sobre `fontFamily`; omitido quando nulo. |
+| `backgroundColor` | `int` | `0x00000000` | `backgroundColor` | ARGB; alpha 0 = sem fundo. |
+| `opacity` | `double` | `1.0` | `opacity` | `[0.0, 1.0]`. |
+| `textAlign` | `TimelineTextAlign` | `center` | `textAlign` | Serializado por `.name` (`left`/`center`/`right`). |
+
 ### `TimelinePlayerState` (`.../timeline_player_state.dart`)
 
 Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial()` (tudo zerado/pausado) e `copyWith`.
@@ -198,6 +228,7 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 | `OutputAspectRatio` | `timeline_composition_config.dart` | `ratio16x9`, `ratio9x16`, `ratio1x1`, `original` |
 | `TransitionType` | `clip_transition.dart` | `none`, `crossfade` |
 | `TimelineExportState` | `timeline_export_progress.dart` | `idle`, `exporting`, `completed`, `failed` |
+| `TimelineTextAlign` | `timeline_text_overlay.dart` | `left`, `center`, `right` |
 
 ---
 
@@ -210,11 +241,11 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 | Contrato | `lib/video_ultra_player_platform_interface.dart` | `VideoUltraPlayerPlatform`: assinaturas + `instance` com `PlatformInterface.verifyToken`. |
 | Implementação default | `lib/video_ultra_player_method_channel.dart` | `MethodChannelVideoUltraPlayer`: `MethodChannel` + dois `EventChannel`. |
 | Modelos | `lib/src/models/*.dart` | 8 modelos/enums serializáveis (tudo em milissegundos). |
-| Nativo iOS | `ios/Classes/VideoUltraPlayerPlugin.swift` | `handle(_:result:)` com os 22 `case`; controllers em `TimelinePlayerController`. |
-| Nativo Android | `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt` | `onMethodCall` com os mesmos 22 métodos; `withController` resolve o `textureId`. |
+| Nativo iOS | `ios/Classes/VideoUltraPlayerPlugin.swift` | `handle(_:result:)` com os 25 `case`; controllers em `TimelinePlayerController`. |
+| Nativo Android | `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt` | `onMethodCall` com os mesmos 25 métodos; `withController` resolve o `textureId`. |
 | Testes | `test/native_timeline_player_test.dart` | Validações da API pública com platform fake. |
 | Testes | `test/video_ultra_player_method_channel_test.dart` | Nome do método e payload exato de cada comando. |
-| Testes | `test/{timeline_clip,audio_track,timeline_player_state,timeline_export_progress,timeline_composition_config,clip_thumbnail,edit_history_state}_test.dart` | Serialização/desserialização dos modelos. |
+| Testes | `test/{timeline_clip,audio_track,timeline_text_overlay,timeline_player_state,timeline_export_progress,timeline_composition_config,clip_thumbnail,edit_history_state}_test.dart` | Serialização/desserialização dos modelos. |
 
 ## Regras de Negócio Relevantes
 
@@ -242,10 +273,10 @@ Validações que rodam **no Dart**, antes de qualquer `invokeMethod` — todas e
 
 ## Observações
 
-- **Paridade iOS/Android completa** no commit analisado: os 22 métodos do canal estão implementados nas duas plataformas.
+- **Paridade iOS/Android completa** no commit analisado: os 25 métodos do canal estão implementados nas duas plataformas.
 - **`ClipTransition` não tem efeito visual.** É serializado por `TimelineClip.toJson`, mas o nativo lê apenas o `durationMs` — `TimelineComposition.swift:58` e `TimelineCompositionController.kt:877` guardam um `transitionToNextMs` e **descartam o `type`**; nenhuma plataforma aplica o crossfade. Todo limite entre clipes é corte seco e `TransitionType.crossfade` é, hoje, equivalente a `none`.
 - **`ClipThumbnail` e `EditHistoryState` são modelos órfãos no caminho ativo.** `generateThumbnails` devolve `List<String>` (não `List<ClipThumbnail>`) e `canUndo`/`canRedo` chegam dentro de `TimelinePlayerState` — nenhum dos dois é construído pelo código do plugin, apesar de exportados publicamente.
 - **`setClipAlignment` está fora do bloco "Editing operations"** em `native_timeline_player.dart` (aparece antes do separador de comentário), embora seja uma mutação de edição como as demais.
 - **`VideoUltraPlayerPlatform` tem um cabeçalho `// ── Thumbnail generation ──` vazio** na linha 161, imediatamente seguido pelo bloco de áudio; `generateThumbnails` está declarado depois, sob o cabeçalho de áudio.
 - Os doc comments dos modelos referenciam `NativeTimelinePlayer` e `TimelineClip` sem importá-los (`clip_thumbnail.dart`, `timeline_player_state.dart`, `audio_track.dart`, `timeline_composition_config.dart`), então esses links não resolvem na dartdoc gerada.
-- Este documento cobre a **superfície**; o comportamento interno de cada operação está em [`native-timeline-player.md`](native-timeline-player.md), [`timeline-editing.md`](timeline-editing.md), [`timeline-export.md`](timeline-export.md), [`audio-track-overlay.md`](audio-track-overlay.md) e [`thumbnail-generation.md`](thumbnail-generation.md).
+- Este documento cobre a **superfície**; o comportamento interno de cada operação está em [`native-timeline-player.md`](native-timeline-player.md), [`timeline-editing.md`](timeline-editing.md), [`timeline-export.md`](timeline-export.md), [`audio-track-overlay.md`](audio-track-overlay.md), [`text-overlay.md`](text-overlay.md) e [`thumbnail-generation.md`](thumbnail-generation.md).

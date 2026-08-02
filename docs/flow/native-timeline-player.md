@@ -79,7 +79,7 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 | Nativo Android | `.../VideoUltraPlayerPlugin.kt` | Roteamento de métodos, mapa de controllers, stream handlers |
 | Nativo Android | `.../TimelineCompositionController.kt` | `CompositionPlayer`, `Surface`, segmentos, emissão de estado |
 | Consumidor | `example/lib/editor/editor_controller.dart` | `replaceTimeline`, `playOrPause`, seek com throttle |
-| Consumidor | `example/lib/editor/widgets/preview_area.dart`, `playback_bar.dart` | `Texture` e controles de playback |
+| Consumidor | `example/lib/editor/widgets/preview_area.dart`, `editor_toolbar.dart` | `Texture` e controles de playback |
 | Testes | `test/native_timeline_player_test.dart` | Todas as chamadas contra um `VideoUltraPlayerPlatform` fake |
 | Testes | `test/video_ultra_player_method_channel_test.dart` | Nomes de método e payloads enviados ao canal |
 | Testes | `test/timeline_player_state_test.dart`, `test/timeline_clip_test.dart` | Decodificação de estado e serialização de clipe |
