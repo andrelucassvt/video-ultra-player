@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player_example/editor/editor_controller.dart';
 import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 
@@ -71,8 +72,51 @@ class EditorTopBar extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(width: 12),
+          _ExportButton(controller: controller),
         ],
       ),
+    );
+  }
+}
+
+class _ExportButton extends StatelessWidget {
+  const _ExportButton({required this.controller});
+
+  final EditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<TimelineExportProgress>(
+      stream: controller.exportProgressStream,
+      initialData: const TimelineExportProgress.idle(),
+      builder: (context, snapshot) {
+        final progress = snapshot.data ?? const TimelineExportProgress.idle();
+        final percent = (progress.progress * 100).round();
+        final enabled =
+            !controller.loading &&
+            !controller.exporting &&
+            controller.hasTimeline;
+
+        return FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: editorAccent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+          onPressed: enabled ? controller.export : null,
+          icon: controller.exporting
+              ? const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Icon(Icons.upload, size: 18),
+          label: Text(controller.exporting ? '$percent%' : 'Exportar'),
+        );
+      },
     );
   }
 }

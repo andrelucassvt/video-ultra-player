@@ -127,8 +127,6 @@ class EditorToolbar extends StatelessWidget {
               ),
               icon: const Icon(Icons.add, size: 18),
             ),
-            const SizedBox(width: 8),
-            _ExportButton(controller: controller),
           ],
         ),
       ),
@@ -161,42 +159,6 @@ class _PlayButton extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _ExportButton extends StatelessWidget {
-  const _ExportButton({required this.controller});
-
-  final EditorController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<TimelineExportProgress>(
-      stream: controller.exportProgressStream,
-      initialData: const TimelineExportProgress.idle(),
-      builder: (context, snapshot) {
-        final progress = snapshot.data ?? const TimelineExportProgress.idle();
-        final percent = (progress.progress * 100).round();
-        final enabled =
-            !controller.loading &&
-            !controller.exporting &&
-            controller.hasTimeline;
-
-        return TextButton.icon(
-          onPressed: enabled ? controller.export : null,
-          icon: controller.exporting
-              ? const SizedBox.square(
-                  dimension: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: editorAccent,
-                  ),
-                )
-              : const Icon(Icons.upload, size: 18),
-          label: Text(controller.exporting ? '$percent%' : 'Exportar'),
-        );
-      },
     );
   }
 }
