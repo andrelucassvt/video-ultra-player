@@ -8,14 +8,26 @@ import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
+import 'package:video_ultra_player_example/editor/media_clip.dart';
+import 'package:video_ultra_player_example/editor/media_session/editor_media_session_service.dart';
+import 'package:video_ultra_player_example/editor/media_session/editor_media_session_service_impl.dart';
+
+const editorMediaUnavailableError = 'editor_media_unavailable';
+const editorMediaImportFailedError = 'editor_media_import_failed';
 
 class EditorController extends ChangeNotifier {
-  EditorController({NativeTimelinePlayer? player, ImagePicker? picker})
-    : _player = player ?? NativeTimelinePlayer(),
-      _picker = picker ?? ImagePicker();
+  EditorController({
+    NativeTimelinePlayer? player,
+    ImagePicker? picker,
+    EditorMediaSessionService? mediaSession,
+  }) : _player = player ?? NativeTimelinePlayer(),
+       _picker = picker ?? ImagePicker(),
+       _mediaSession = mediaSession ?? EditorMediaSessionServiceImpl();
 
   final NativeTimelinePlayer _player;
   final ImagePicker _picker;
+  final EditorMediaSessionService _mediaSession;
+  final Set<String> _sessionOwnedPaths = <String>{};
 
   Stream<TimelinePlayerState>? _stateStream;
   Stream<TimelineExportProgress>? _exportProgressStream;
@@ -46,6 +58,7 @@ class EditorController extends ChangeNotifier {
   Duration? _queuedSeekPosition;
   final List<_EditorSnapshot> _undoSnapshots = <_EditorSnapshot>[];
   final List<_EditorSnapshot> _redoSnapshots = <_EditorSnapshot>[];
+  int _loadGeneration = 0;
   bool _disposed = false;
 
   Stream<TimelinePlayerState>? get stateStream => _stateStream;
@@ -86,6 +99,13 @@ class EditorController extends ChangeNotifier {
   String? get audioTrackName => _audioTrack?.path.split(RegExp(r'[/\\]')).last;
   bool get hasSelectedClip =>
       _selectedClipIndex >= 0 && _selectedClipIndex < _clips.length;
+  bool get hasSelectedImageClip =>
+      hasSelectedClip && _clips[_selectedClipIndex].type == MediaType.image;
+  Duration get minImageClipDuration => const Duration(seconds: 1);
+  Duration get maxImageClipDuration => const Duration(seconds: 15);
+  Duration get selectedClipImageDuration => hasSelectedImageClip
+      ? (_clips[_selectedClipIndex].duration ?? kDefaultImageClipDuration)
+      : kDefaultImageClipDuration;
   double get selectedClipSpeed =>
       hasSelectedClip ? _clips[_selectedClipIndex].speed : 1.0;
   bool get canUndo => _undoSnapshots.isNotEmpty;
@@ -140,31 +160,54 @@ class EditorController extends ChangeNotifier {
     }
   }
 
-  Future<void> pickVideos() async {
-    if (_loading) return;
+  Future<void> pickMedia() async {
+    if (_loading || _isPicking) return;
+    _isPicking = true;
     _setBusy(loading: true);
 
+    final importedPaths = <String>[];
     try {
-      final videos = await _picker.pickMultiVideo();
-      if (videos.isEmpty) {
+      final files = await _picker.pickMultipleMedia();
+      if (files.isEmpty) {
         _setBusy(loading: false);
         return;
       }
 
+      for (final file in files) {
+        final ownedPath = await _mediaSession.importFile(file.path);
+        if (_disposed) {
+          unawaited(_releaseSessionFile(ownedPath));
+          return;
+        }
+        importedPaths.add(ownedPath);
+      }
+
+      _sessionOwnedPaths.addAll(importedPaths);
       await replaceTimeline(
-        videos
-            .map(
-              (video) => TimelineClip(path: video.path, type: MediaType.video),
-            )
-            .toList(growable: false),
-        source: 'Gallery videos',
+        importedPaths.map(timelineClipFromPath).toList(growable: false),
+        source: 'Gallery media',
       );
     } on PlatformException catch (error) {
-      _setError(error.message ?? error.code);
+      if (error.code != 'multiple_request') {
+        _setError(error.message ?? error.code);
+      }
       _setBusy(loading: false);
-    } catch (error) {
-      _setError(error);
+    } catch (error, stackTrace) {
+      log(
+        '[EditorController] pickMedia: failed to import selected media',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _setError(editorMediaImportFailedError);
       _setBusy(loading: false);
+    } finally {
+      if (_disposed || _error != null) {
+        _sessionOwnedPaths.removeAll(importedPaths);
+        for (final path in importedPaths) {
+          unawaited(_releaseSessionFile(path));
+        }
+      }
+      _isPicking = false;
     }
   }
 
@@ -173,10 +216,34 @@ class EditorController extends ChangeNotifier {
     required String source,
     AudioTrack? audioTrack,
   }) async {
+    final loadGeneration = ++_loadGeneration;
+    if (!await _mediaFilesExist(clips, audioTrack: audioTrack)) {
+      if (_isCurrentLoad(loadGeneration)) {
+        _error = editorMediaUnavailableError;
+        _loading = false;
+        _notify();
+      }
+      return;
+    }
+    if (!_isCurrentLoad(loadGeneration)) return;
+
     await _player.dispose();
+    if (!_isCurrentLoad(loadGeneration)) return;
+    _textureId = null;
+    _stateStream = null;
+
     final textureId = await _player.load(clips, config: compositionConfig);
+    if (!_isCurrentLoad(loadGeneration)) {
+      await _player.dispose();
+      return;
+    }
+
     if (audioTrack != null) {
       await _player.setAudioTrack(audioTrack);
+      if (!_isCurrentLoad(loadGeneration)) {
+        await _player.dispose();
+        return;
+      }
     }
 
     _textureId = textureId;
@@ -204,6 +271,7 @@ class EditorController extends ChangeNotifier {
     _redoSnapshots.clear();
     _error = null;
     _loading = false;
+    _releaseOrphanedSessionFiles(clips);
     _notify();
   }
 
@@ -254,7 +322,7 @@ class EditorController extends ChangeNotifier {
 
       // O temp foi removido por _saveToGallery; a galeria é a cópia visível.
       _exportPath = null;
-      _exportMessage = 'Salvo na galeria';
+      _exportMessage = 'gallery_saved';
       _exporting = false;
       _notify();
     } catch (error) {
@@ -267,7 +335,7 @@ class EditorController extends ChangeNotifier {
   Future<void> _saveToGallery(String path) async {
     final hasAccess = await Gal.requestAccess(toAlbum: false);
     if (!hasAccess) {
-      throw Exception('Permissão da galeria negada');
+      throw Exception('gallery_permission_denied');
     }
 
     await Gal.putVideo(path);
@@ -464,6 +532,33 @@ class EditorController extends ChangeNotifier {
       await _player.setClipSpeed(clipIndex, nextSpeed);
       _pushSnapshot(snapshot);
       _clips[clipIndex] = clip.copyWith(speed: nextSpeed);
+      _thumbnailRequests.clear();
+      _notify();
+    } catch (error) {
+      _setError(error);
+    }
+  }
+
+  Future<void> setSelectedClipImageDuration(Duration duration) async {
+    if (_textureId == null || !hasSelectedClip) return;
+    final clipIndex = _selectedClipIndex;
+    final clip = _clips[clipIndex];
+    if (clip.type != MediaType.image) return;
+
+    final nextDuration = Duration(
+      milliseconds: duration.inMilliseconds.clamp(
+        minImageClipDuration.inMilliseconds,
+        maxImageClipDuration.inMilliseconds,
+      ),
+    );
+    if (clip.duration == nextDuration) return;
+
+    final snapshot = _makeSnapshot();
+    try {
+      final nextClip = clip.copyWith(duration: nextDuration);
+      await _player.replaceClip(clipIndex, nextClip);
+      _pushSnapshot(snapshot);
+      _clips[clipIndex] = nextClip;
       _thumbnailRequests.clear();
       _notify();
     } catch (error) {
@@ -751,6 +846,11 @@ class EditorController extends ChangeNotifier {
     _notify();
   }
 
+  void clearExportMessage() {
+    _exportMessage = null;
+    _notify();
+  }
+
   void setPlaybackError(Object error) {
     if (_error != null) return;
     _setError(error);
@@ -765,9 +865,27 @@ class EditorController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _loadGeneration++;
     _seekThrottleTimer?.cancel();
     _stateSubscription?.cancel();
-    _player.dispose();
+    unawaited(
+      _player.dispose().catchError((Object error, StackTrace stackTrace) {
+        log(
+          '[EditorController] failed to dispose native player',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
+    unawaited(
+      _mediaSession.clearSession().catchError((Object error, StackTrace stack) {
+        log(
+          '[EditorController] failed to clear media session',
+          error: error,
+          stackTrace: stack,
+        );
+      }),
+    );
     super.dispose();
   }
 
@@ -883,6 +1001,50 @@ class EditorController extends ChangeNotifier {
       flush: true,
     );
     return file.path;
+  }
+
+  Future<bool> _mediaFilesExist(
+    List<TimelineClip> clips, {
+    AudioTrack? audioTrack,
+  }) async {
+    for (final clip in clips) {
+      if (!await File(clip.path).exists()) return false;
+    }
+
+    if (audioTrack != null && !await File(audioTrack.path).exists()) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _isCurrentLoad(int generation) {
+    return !_disposed && generation == _loadGeneration;
+  }
+
+  /// Releases session-owned files that the [nextClips] no longer reference
+  /// (e.g. after switching back to the sample timeline).
+  void _releaseOrphanedSessionFiles(List<TimelineClip> nextClips) {
+    final activePaths = nextClips.map((clip) => clip.path).toSet();
+    final orphaned = _sessionOwnedPaths
+        .where((path) => !activePaths.contains(path))
+        .toList(growable: false);
+    if (orphaned.isEmpty) return;
+    _sessionOwnedPaths.removeAll(orphaned);
+    for (final path in orphaned) {
+      unawaited(_releaseSessionFile(path));
+    }
+  }
+
+  Future<void> _releaseSessionFile(String path) async {
+    try {
+      await _mediaSession.releaseFile(path);
+    } catch (error, stackTrace) {
+      log(
+        '[EditorController] failed to release session media',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   void _setBusy({required bool loading}) {

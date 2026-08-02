@@ -3,6 +3,7 @@ import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player_example/editor/editor_controller.dart';
 import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 import 'package:video_ultra_player_example/editor/widgets/aspect_ratio_sheet.dart';
+import 'package:video_ultra_player_example/editor/widgets/duration_sheet.dart';
 import 'package:video_ultra_player_example/editor/widgets/speed_sheet.dart';
 import 'package:video_ultra_player_example/editor/widgets/text_edit_sheet.dart';
 
@@ -59,6 +60,13 @@ class EditorToolbar extends StatelessWidget {
                   ? () => showSpeedSheet(context, controller)
                   : null,
               icon: const Icon(Icons.speed, size: 20),
+            ),
+            IconButton(
+              tooltip: 'Duração',
+              onPressed: canEditSelected && controller.hasSelectedImageClip
+                  ? () => showImageDurationSheet(context, controller)
+                  : null,
+              icon: const Icon(Icons.timelapse, size: 20),
             ),
             IconButton(
               tooltip: 'Proporção',

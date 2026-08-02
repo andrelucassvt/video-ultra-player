@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
@@ -10,12 +12,16 @@ import 'test_fakes.dart';
 void main() {
   late FakeTimelinePlayer player;
   late EditorController controller;
+  late Directory tempDir;
 
   setUp(() async {
+    tempDir = await Directory.systemTemp.createTemp('text_sheet_test_');
+    final file = File('${tempDir.path}/a.mp4');
+    await file.writeAsBytes(<int>[1, 2, 3]);
     player = FakeTimelinePlayer();
     controller = EditorController(player: player);
     await controller.replaceTimeline(
-      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
+      [TimelineClip(path: file.path, type: MediaType.video)],
       source: 'test',
     );
     await controller.addTextOverlay();
@@ -24,6 +30,9 @@ void main() {
   tearDown(() async {
     controller.dispose();
     await player.close();
+    if (await tempDir.exists()) {
+      await tempDir.delete(recursive: true);
+    }
   });
 
   Future<void> pumpSheet(WidgetTester tester) async {

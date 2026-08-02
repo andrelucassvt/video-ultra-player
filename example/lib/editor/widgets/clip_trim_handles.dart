@@ -56,50 +56,116 @@ class _ClipTrimHandlesState extends State<ClipTrimHandles> {
   @override
   Widget build(BuildContext context) {
     final durationLabel = _formatSeconds(_trimEnd - _trimStart);
+    final isImage = widget.clip.type == MediaType.image;
 
-    return Stack(
-      children: [
-        Align(
-          alignment: Alignment.topCenter,
-          child: Container(
-            margin: const EdgeInsets.only(top: 5),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.68),
-              borderRadius: BorderRadius.circular(999),
+    return Semantics(
+      selected: true,
+      child: Stack(
+        children: [
+          if (isImage)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  key: const ValueKey<String>('image-selection-overlay'),
+                  decoration: BoxDecoration(
+                    color: editorAccent.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: editorAccent, width: 2),
+                  ),
+                ),
+              ),
             ),
-            child: Text(
-              durationLabel,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: Colors.white,
-                fontSize: 10,
+          Align(
+            alignment: Alignment.topCenter,
+            child: Container(
+              margin: const EdgeInsets.only(top: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.68),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                durationLabel,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Colors.white,
+                  fontSize: 10,
+                ),
               ),
             ),
           ),
-        ),
-        if (widget.clip.type == MediaType.video) ...[
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            child: _TrimHandle(
-              icon: Icons.keyboard_arrow_left,
-              onPanUpdate: (details) => _updateStart(details.delta.dx),
-              onPanEnd: _commit,
+          if (widget.clip.type == MediaType.video) ...[
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: _TrimHandle(
+                icon: Icons.keyboard_arrow_left,
+                onPanUpdate: (details) => _updateStart(details.delta.dx),
+                onPanEnd: _commit,
+              ),
             ),
-          ),
-          Positioned(
-            right: 0,
-            top: 0,
-            bottom: 0,
-            child: _TrimHandle(
-              icon: Icons.keyboard_arrow_right,
-              onPanUpdate: (details) => _updateEnd(details.delta.dx),
-              onPanEnd: _commit,
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: _TrimHandle(
+                icon: Icons.keyboard_arrow_right,
+                onPanUpdate: (details) => _updateEnd(details.delta.dx),
+                onPanEnd: _commit,
+              ),
             ),
-          ),
+          ] else ...[
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                child: Container(
+                  key: const ValueKey<String>('image-selection-left-edge'),
+                  width: 10,
+                  decoration: BoxDecoration(
+                    color: editorAccent,
+                    borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(6),
+                      right: Radius.circular(3),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: editorAccent.withValues(alpha: 0.28),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                child: Container(
+                  key: const ValueKey<String>('image-selection-right-edge'),
+                  width: 10,
+                  decoration: BoxDecoration(
+                    color: editorAccent,
+                    borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(3),
+                      right: Radius.circular(6),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: editorAccent.withValues(alpha: 0.28),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 

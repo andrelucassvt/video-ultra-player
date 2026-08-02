@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player_example/editor/editor_controller.dart';
-import 'package:video_ultra_player_example/editor/theme/editor_theme.dart';
 import 'package:video_ultra_player_example/editor/widgets/editor_toolbar.dart';
 import 'package:video_ultra_player_example/editor/widgets/editor_top_bar.dart';
 import 'package:video_ultra_player_example/editor/widgets/preview_area.dart';
@@ -19,6 +18,7 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   late final EditorController _controller;
+  bool _statusMessageScheduled = false;
 
   @override
   void initState() {
@@ -51,6 +51,7 @@ class _EditorScreenState extends State<EditorScreen> {
               initialData: const TimelinePlayerState.initial(),
               builder: (context, snapshot) {
                 _capturePlaybackError(snapshot);
+                _maybeShowStatusMessage(context);
                 final state =
                     snapshot.data ?? const TimelinePlayerState.initial();
 
@@ -71,16 +72,6 @@ class _EditorScreenState extends State<EditorScreen> {
                     ),
                     EditorToolbar(controller: _controller, state: state),
                     TimelineSection(controller: _controller, state: state),
-                    if (_controller.error != null)
-                      _EditorStatusBar(
-                        message: _controller.error!,
-                        isError: true,
-                      )
-                    else if (_controller.exportMessage != null)
-                      _EditorStatusBar(
-                        message: _controller.exportMessage!,
-                        isError: false,
-                      ),
                   ],
                 );
               },
@@ -89,6 +80,60 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       ),
     );
+  }
+
+  String _resolveError(String error) {
+    if (error.contains('gallery_permission_denied')) {
+      return 'Permissão da galeria negada';
+    }
+    if (error == editorMediaUnavailableError) {
+      return 'Mídia indisponível: o arquivo não foi encontrado';
+    }
+    if (error == editorMediaImportFailedError) {
+      return 'Falha ao importar a mídia. Tente adicionar novamente.';
+    }
+    return error;
+  }
+
+  String _resolveExportMessage(String message) {
+    if (message == 'gallery_saved') return 'Salvo na galeria';
+    return message;
+  }
+
+  void _maybeShowStatusMessage(BuildContext context) {
+    if (_statusMessageScheduled) return;
+    final error = _controller.error;
+    final exportMessage = _controller.exportMessage;
+    if (error == null && exportMessage == null) return;
+
+    _statusMessageScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _statusMessageScheduled = false;
+      if (!mounted) return;
+      if (error != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(_resolveError(error)),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.red.shade900,
+            ),
+          );
+        _controller.clearError();
+      } else if (exportMessage != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(_resolveExportMessage(exportMessage)),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green.shade900,
+            ),
+          );
+        _controller.clearExportMessage();
+      }
+    });
   }
 
   void _capturePlaybackError(AsyncSnapshot<TimelinePlayerState> snapshot) {
@@ -104,29 +149,5 @@ class _EditorScreenState extends State<EditorScreen> {
         _controller.setPlaybackError('Playback error: $error');
       }
     });
-  }
-}
-
-class _EditorStatusBar extends StatelessWidget {
-  const _EditorStatusBar({required this.message, required this.isError});
-
-  final String message;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      color: isError ? Colors.red.shade900 : editorSurfaceHigh,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Text(
-        message,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: isError ? Colors.white : editorText,
-        ),
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
   }
 }

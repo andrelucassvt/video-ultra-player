@@ -16,6 +16,7 @@ void main() {
     expect(find.text('00:00 / 00:00'), findsOneWidget);
     expect(find.byIcon(Icons.call_split), findsOneWidget);
     expect(find.byIcon(Icons.speed), findsOneWidget);
+    expect(find.byIcon(Icons.timelapse), findsOneWidget);
     expect(find.byIcon(Icons.aspect_ratio), findsOneWidget);
     expect(find.byIcon(Icons.delete_outline), findsOneWidget);
     expect(find.byIcon(Icons.undo), findsOneWidget);
@@ -38,6 +39,7 @@ void main() {
     for (final icon in [
       Icons.call_split,
       Icons.speed,
+      Icons.timelapse,
       Icons.aspect_ratio,
       Icons.delete_outline,
       Icons.undo,

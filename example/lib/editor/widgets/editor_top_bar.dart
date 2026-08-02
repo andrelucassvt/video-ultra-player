@@ -28,7 +28,7 @@ class EditorTopBar extends StatelessWidget {
                 case _TimelineSourceAction.sample:
                   controller.loadSample();
                 case _TimelineSourceAction.gallery:
-                  controller.pickVideos();
+                  controller.pickMedia();
               }
             },
             itemBuilder: (context) => const [
@@ -38,7 +38,7 @@ class EditorTopBar extends StatelessWidget {
               ),
               PopupMenuItem(
                 value: _TimelineSourceAction.gallery,
-                child: Text('Clips'),
+                child: Text('Galeria'),
               ),
             ],
             child: Row(

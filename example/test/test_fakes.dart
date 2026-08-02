@@ -5,7 +5,11 @@ import 'package:video_ultra_player/video_ultra_player.dart';
 /// In-memory player for widget tests: records channel-like calls and keeps a
 /// local overlay list, mirroring the native behavior.
 class FakeTimelinePlayer extends NativeTimelinePlayer {
-  FakeTimelinePlayer();
+  FakeTimelinePlayer({this.loadGate});
+
+  /// When set, [load] waits on this gate instead of returning immediately —
+  /// used to simulate a load that completes after the controller is disposed.
+  final Completer<int>? loadGate;
 
   final List<String> calls = <String>[];
   final List<TimelineTextOverlay> overlays = <TimelineTextOverlay>[];
@@ -18,6 +22,10 @@ class FakeTimelinePlayer extends NativeTimelinePlayer {
     TimelineCompositionConfig? config,
   }) async {
     calls.add('load');
+    final gate = loadGate;
+    if (gate != null) {
+      return gate.future;
+    }
     return 42;
   }
 
@@ -43,6 +51,16 @@ class FakeTimelinePlayer extends NativeTimelinePlayer {
   Future<void> removeTextOverlay(String overlayId) async {
     calls.add('removeTextOverlay:$overlayId');
     overlays.removeWhere((o) => o.id == overlayId);
+  }
+
+  @override
+  Future<void> replaceClip(int clipIndex, TimelineClip clip) async {
+    calls.add('replaceClip:$clipIndex');
+  }
+
+  @override
+  Future<void> dispose() async {
+    calls.add('dispose');
   }
 
   Future<void> close() => _stateController.close();
