@@ -42,6 +42,8 @@ NativeTimelinePlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPla
 - Toda capacidade nova é federada nas quatro camadas: `platform_interface` → `method_channel` → iOS **e** Android. A API pública nunca instancia `MethodChannel`.
 - Nome do channel = nome do pacote (`video_ultra_player/...`). **Nunca** `com.luma_vid/...` (resíduo de outro contexto).
 - Toda mutação nativa segue: `pushEditSnapshot()` → mutar a lista de clipes → rebuild preservando `textureId` e posição (`rebuildPreservingPlayback` / `rebuildCompositionPreservingPlayback`).
+- Mudar **resolução/proporção** usa `setCompositionConfig`, nunca `dispose` + `load`: config de saída não invalida a mídia já carregada. Config de saída também **não** entra no histórico de undo.
+- Trabalho bloqueante (abrir extractor, ler trilhas, encodar still) **nunca** roda na thread da plataforma — vai para a `buildQueue` no iOS e para o `mediaMetadataExecutor` no Android, com só a criação de textura/player voltando para a main.
 - Durações trafegam sempre em milissegundos; `trimEnd` é **ponto absoluto na fonte**, não duração, e tem precedência sobre `duration` para vídeo.
 - Android é Kotlin DSL (`build.gradle.kts`) — edite `dependencies {}` em sintaxe Kotlin, não Groovy.
 - Toda funcionalidade nova ou ajuste em funcionalidade existente deve priorizar **desempenho fluido em todas as plataformas** (sem jank, sem trabalho pesado na thread de UI) e **simplicidade de uso para o usuário final** (menos passos, menos fricção, UX clara).
@@ -61,7 +63,10 @@ NativeTimelinePlayer → VideoUltraPlayerPlatform → MethodChannelVideoUltraPla
 - Android: timestamps de overlay/efeito no Media3 são **relativos ao `EditedMediaItem`, não à timeline** — re-ancore a janela por clipe (`textOverlaysForClip`) subtraindo o `clipStartMs` do segmento.
 - Android: `Typeface.createFromFile` faz I/O por frame — cacheie o `Typeface` por path (`companion object`); fonte custom inválida deve cair em fallback, nunca falhar o load.
 - iOS: a janela de um `CATextLayer` no CoreAnimationTool é expressa por `beginTime`/`duration`/`fillMode` do próprio layer (`isRemovedOnCompletion` é de `CAAnimation`, não existe em `CALayer`); se o texto vazar a janela no teste manual, use keyframe de `opacity` ancorado em `AVCoreAnimationBeginTimeAtZero` (fallback documentado em `TextOverlayLayers.swift`).
-- iOS: além do rebuild completo (`rebuildPreservingPlayback`), mutações de texto usam o rebuild **cirúrgico** da `videoComposition` (`applyUpdatedVideoComposition`) — re-gera só a videoComposition e reatribui ao item, com seek de tolerância zero + `texture.requestFrame()` se pausado.
+- iOS: além do rebuild completo (`rebuildPreservingPlayback`), mutações de texto usam o rebuild **cirúrgico** da `videoComposition` (`applyUpdatedVideoComposition`) — re-gera só a videoComposition e reatribui ao item, com seek de tolerância zero + `texture.requestFrame()` se pausado. `setCompositionConfig` usa o mesmo caminho cirúrgico: só `renderSize` e os transforms dependem da config, então a `AVMutableComposition` nunca precisa ser refeita.
+- iOS: o MP4 de clipe de imagem vem do `ImageClipVideoCache` (de processo, sobrevive ao `dispose` do controller — `TimelineComposition.dispose()` é no-op). Não recrie um cache por composição: era isso que fazia toda troca de proporção re-encodar as stills.
+- Android: metadados de origem passam pelo `SourceMetadataCache` e por **um** passe de `MediaMetadataRetriever` por clipe (duração + dimensões + rotação juntos). Dois retrievers por clipe na thread errada era a causa do travamento no load.
+- O estado de playback é deduplicado antes de cruzar o canal nas duas plataformas, e o ticker Android cai para 250 ms com o player pausado — ao adicionar campo novo ao payload, inclua-o no `EmittedState` correspondente, senão a mudança não é emitida.
 
 ## Não fazer
 

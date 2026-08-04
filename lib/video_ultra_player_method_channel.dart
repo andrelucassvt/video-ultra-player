@@ -129,6 +129,17 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<void> setCompositionConfig(
+    int textureId,
+    Map<String, dynamic> config,
+  ) {
+    return methodChannel.invokeMethod<void>(
+      'setCompositionConfig',
+      <String, Object?>{'textureId': textureId, 'config': config},
+    );
+  }
+
+  @override
   Future<void> dispose(int textureId) {
     return methodChannel.invokeMethod<void>('dispose', _textureArgs(textureId));
   }

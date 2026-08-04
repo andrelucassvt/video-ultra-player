@@ -31,14 +31,36 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
 private const val DEFAULT_WIDTH = 1280
 private const val DEFAULT_HEIGHT = 720
 private const val DEFAULT_IMAGE_DURATION_MS = 2_000L
+
+/** State polling cadence while playing — roughly one update per frame. */
 private const val STATE_INTERVAL_MS = 33L
+
+/**
+ * Polling cadence while paused. A paused player only changes state through an
+ * explicit command, and every command already emits — the slow tick is just a
+ * safety net, so it must not keep the main thread busy at frame rate.
+ */
+private const val IDLE_STATE_INTERVAL_MS = 250L
 private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
+
+/**
+ * Shared pool for blocking source-metadata reads. Bounded so a long timeline
+ * cannot spawn one thread per clip.
+ */
+private val mediaMetadataExecutor: ExecutorService = Executors.newFixedThreadPool(
+    max(2, min(4, Runtime.getRuntime().availableProcessors()))
+) { runnable ->
+    Thread(runnable, "video-ultra-player-metadata").apply { isDaemon = true }
+}
 
 internal class TimelineCompositionController(
     private val context: Context,
@@ -58,22 +80,79 @@ internal class TimelineCompositionController(
     private var eventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
+    private var lastEmittedState: EmittedState? = null
+
+    /** Everything reported on the state channel, compared to suppress duplicates. */
+    private data class EmittedState(
+        val globalPosition: Long,
+        val clipIndex: Int,
+        val localPosition: Long,
+        val isPlaying: Boolean,
+        val totalDuration: Long,
+        val clipDurationsMs: List<Long>,
+        val canUndo: Boolean,
+        val canRedo: Boolean
+    )
 
     private val stateRunnable = object : Runnable {
         override fun run() {
             emitState()
             if (!disposed) {
-                mainHandler.postDelayed(this, STATE_INTERVAL_MS)
+                val interval = if (player?.isPlaying == true) {
+                    STATE_INTERVAL_MS
+                } else {
+                    IDLE_STATE_INTERVAL_MS
+                }
+                mainHandler.postDelayed(this, interval)
             }
         }
     }
 
+    /**
+     * Loads [rawClips] without blocking the caller's thread.
+     *
+     * Source metadata extraction happens on [mediaMetadataExecutor]; only the
+     * texture and player creation — which must run on the main thread — is
+     * posted back. [onReady] receives the texture ID, [onError] any failure.
+     */
     fun load(
         rawClips: List<*>,
-        rawConfig: Map<*, *>?
+        rawConfig: Map<*, *>?,
+        onReady: (Long) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        mediaMetadataExecutor.execute {
+            try {
+                val config = TimelineCompositionConfig.from(rawConfig)
+                val resolvedClips = parseTimelineClips(context, rawClips)
+                mainHandler.post {
+                    // The caller is always answered — leaving the Dart future
+                    // pending would hang the UI waiting on a load that is gone.
+                    if (disposed) {
+                        onError(IllegalStateException("Player disposed while loading."))
+                        return@post
+                    }
+                    val textureId = try {
+                        attach(config, resolvedClips)
+                    } catch (error: Throwable) {
+                        onError(error)
+                        return@post
+                    }
+                    onReady(textureId)
+                }
+            } catch (error: Throwable) {
+                mainHandler.post { onError(error) }
+            }
+        }
+    }
+
+    /** Main-thread half of [load]: registers the texture and starts the player. */
+    private fun attach(
+        config: TimelineCompositionConfig,
+        resolvedClips: List<TimelineClip>
     ): Long {
-        compositionConfig = TimelineCompositionConfig.from(rawConfig)
-        clips = parseTimelineClips(context, rawClips).toMutableList()
+        compositionConfig = config
+        clips = resolvedClips.toMutableList()
         renderSize = outputSizeFor(compositionConfig, clips.first())
         rebuildSegments()
 
@@ -122,7 +201,45 @@ internal class TimelineCompositionController(
 
     fun setEventSink(eventSink: EventChannel.EventSink?) {
         this.eventSink = eventSink
+        lastEmittedState = null
         emitState()
+    }
+
+    /**
+     * Switches output resolution/aspect ratio in place.
+     *
+     * Media3 effects are immutable, so the `Composition` still has to be
+     * rebuilt — but the already-resolved clip metadata, the player, the surface
+     * and the texture ID are all reused, and playback position and play state
+     * are preserved. That avoids the texture swap (and its black flash) plus
+     * the full metadata re-read a dispose/load cycle would cost.
+     */
+    fun setCompositionConfig(rawConfig: Map<*, *>?) {
+        val nextConfig = TimelineCompositionConfig.from(rawConfig)
+        if (nextConfig == compositionConfig) {
+            emitState()
+            return
+        }
+        compositionConfig = nextConfig
+
+        val firstClip = clips.firstOrNull()
+        if (firstClip == null) {
+            emitState()
+            return
+        }
+
+        val nextSize = outputSizeFor(nextConfig, firstClip)
+        if (nextSize == renderSize) {
+            emitState()
+            return
+        }
+        renderSize = nextSize
+
+        textureEntry?.surfaceTexture()?.setDefaultBufferSize(nextSize.width, nextSize.height)
+        surface?.let { activeSurface ->
+            player?.setVideoSurface(activeSurface, Size(nextSize.width, nextSize.height))
+        }
+        rebuildCompositionPreservingPlayback()
     }
 
     fun play() {
@@ -382,23 +499,40 @@ internal class TimelineCompositionController(
         emitState()
     }
 
+    /**
+     * Emits playback state, skipping the channel round-trip when nothing
+     * changed. Without this a paused player would push ~30 identical messages
+     * per second, waking the Dart UI on every one.
+     */
     private fun emitState() {
+        val sink = eventSink ?: return
         val currentPlayer = player
         val positionMs = currentPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
         val segmentIndex = segmentIndexFor(positionMs)
         val segment = segments.getOrNull(segmentIndex)
-        eventSink?.success(
+        val state = EmittedState(
+            globalPosition = positionMs.coerceAtMost(totalDurationMs),
+            clipIndex = segmentIndex,
+            localPosition = (segment?.let { positionMs - it.startMs } ?: 0L).coerceAtLeast(0L),
+            isPlaying = currentPlayer?.isPlaying == true,
+            totalDuration = totalDurationMs,
+            clipDurationsMs = segments.map { it.durationMs },
+            canUndo = editHistory.canUndo,
+            canRedo = editHistory.canRedo
+        )
+        if (state == lastEmittedState) return
+        lastEmittedState = state
+
+        sink.success(
             mapOf(
-                "globalPosition" to positionMs.coerceAtMost(totalDurationMs),
-                "clipIndex" to segmentIndex,
-                "localPosition" to (
-                    segment?.let { positionMs - it.startMs } ?: 0L
-                    ).coerceAtLeast(0L),
-                "isPlaying" to (currentPlayer?.isPlaying == true),
-                "totalDuration" to totalDurationMs,
-                "clipDurationsMs" to segments.map { it.durationMs },
-                "canUndo" to editHistory.canUndo,
-                "canRedo" to editHistory.canRedo
+                "globalPosition" to state.globalPosition,
+                "clipIndex" to state.clipIndex,
+                "localPosition" to state.localPosition,
+                "isPlaying" to state.isPlaying,
+                "totalDuration" to state.totalDuration,
+                "clipDurationsMs" to state.clipDurationsMs,
+                "canUndo" to state.canUndo,
+                "canRedo" to state.canRedo
             )
         )
     }
@@ -738,28 +872,36 @@ private fun constantSpeedProvider(speed: Float): SpeedProvider {
     }
 }
 
+/**
+ * Resolves every clip's source metadata, fanning the work out across
+ * [mediaMetadataExecutor]. A `MediaMetadataRetriever` pass costs tens of
+ * milliseconds per file, so N clips resolve in roughly the time of the slowest
+ * one instead of the sum. Must not be called from the main thread.
+ */
 private fun parseTimelineClips(
     context: Context,
     rawClips: List<*>
 ): List<TimelineClip> {
     require(rawClips.isNotEmpty()) { "Timeline must contain at least one clip." }
 
-    return rawClips.map { raw ->
+    val parsed = rawClips.map { raw ->
         TimelineClip.from(raw as? Map<*, *> ?: error("Invalid timeline clip."))
-    }.map { clip ->
-        resolveClip(context, clip)
     }
+    if (parsed.size == 1) {
+        return listOf(resolveClip(context, parsed.first()))
+    }
+
+    return parsed
+        .map { clip -> mediaMetadataExecutor.submit(Callable { resolveClip(context, clip) }) }
+        .map { it.get() }
 }
 
 private fun resolveClip(context: Context, clip: TimelineClip): TimelineClip {
-    val sourceSize = resolveSourceSize(context, clip)
-    val sourceDurationMs = if (clip.type == TimelineMediaType.VIDEO) {
-        resolveSourceDurationMs(context, clip)
-    } else 0L
+    val metadata = SourceMetadataCache.get(context, clip.path, clip.type)
     return clip.copy(
-        sourceDurationMs = sourceDurationMs,
-        sourceWidth = sourceSize.width,
-        sourceHeight = sourceSize.height
+        sourceDurationMs = if (clip.type == TimelineMediaType.VIDEO) metadata.durationMs else 0L,
+        sourceWidth = metadata.width,
+        sourceHeight = metadata.height
     )
 }
 
@@ -767,74 +909,106 @@ private fun resolveAudioTrack(
     context: Context,
     track: AudioTrackDescriptor
 ): AudioTrackDescriptor {
-    return track.copy(sourceDurationMs = resolveAudioSourceDurationMs(context, track.path))
+    val metadata = SourceMetadataCache.get(context, track.path, TimelineMediaType.VIDEO)
+    return track.copy(sourceDurationMs = metadata.durationMs)
 }
 
-private fun resolveSourceDurationMs(context: Context, clip: TimelineClip): Long {
-    val retriever = MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
-        retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull()
-            ?.let { max(it, 1L) }
-            ?: DEFAULT_IMAGE_DURATION_MS
-    } finally {
-        retriever.release()
+/** Source metadata extracted in a single [MediaMetadataRetriever] pass. */
+internal data class SourceMediaMetadata(
+    val durationMs: Long,
+    val width: Int,
+    val height: Int
+)
+
+/**
+ * Process-wide cache of source metadata, keyed by path plus the file's size and
+ * last-modified stamp so an edited or replaced file is re-read.
+ *
+ * Reloading a timeline, switching aspect ratio or re-importing the same media
+ * therefore costs a map lookup rather than a fresh extractor pass per clip.
+ */
+internal object SourceMetadataCache {
+    private const val MAX_ENTRIES = 64
+
+    private data class Key(
+        val path: String,
+        val lastModified: Long,
+        val length: Long,
+        val type: TimelineMediaType
+    )
+
+    private val entries = object : LinkedHashMap<Key, SourceMediaMetadata>(
+        MAX_ENTRIES,
+        0.75f,
+        true
+    ) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<Key, SourceMediaMetadata>
+        ): Boolean = size > MAX_ENTRIES
     }
-}
 
-private fun resolveAudioSourceDurationMs(context: Context, path: String): Long {
-    val retriever = MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(context, Uri.fromFile(File(path)))
-        retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull()
-            ?.let { max(it, 1L) }
-            ?: DEFAULT_IMAGE_DURATION_MS
-    } finally {
-        retriever.release()
+    @Synchronized
+    private fun cached(key: Key): SourceMediaMetadata? = entries[key]
+
+    @Synchronized
+    private fun store(key: Key, value: SourceMediaMetadata) {
+        entries[key] = value
     }
-}
 
-private fun resolveSourceSize(
-    context: Context,
-    clip: TimelineClip
-): TimelineRenderSize {
-    if (clip.type == TimelineMediaType.IMAGE) {
-        val options = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
+    fun get(context: Context, path: String, type: TimelineMediaType): SourceMediaMetadata {
+        val file = File(path)
+        val key = Key(path, file.lastModified(), file.length(), type)
+        cached(key)?.let { return it }
+        val resolved = extract(context, path, type)
+        store(key, resolved)
+        return resolved
+    }
+
+    private fun extract(
+        context: Context,
+        path: String,
+        type: TimelineMediaType
+    ): SourceMediaMetadata {
+        if (type == TimelineMediaType.IMAGE) {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, options)
+            return SourceMediaMetadata(
+                durationMs = 0L,
+                width = evenDimension(options.outWidth.takeIf { it > 0 } ?: DEFAULT_WIDTH),
+                height = evenDimension(options.outHeight.takeIf { it > 0 } ?: DEFAULT_HEIGHT)
+            )
         }
-        BitmapFactory.decodeFile(clip.path, options)
-        return TimelineRenderSize(
-            width = evenDimension(options.outWidth.takeIf { it > 0 } ?: DEFAULT_WIDTH),
-            height = evenDimension(options.outHeight.takeIf { it > 0 } ?: DEFAULT_HEIGHT)
-        )
-    }
 
-    val retriever = MediaMetadataRetriever()
-    return try {
-        retriever.setDataSource(context, Uri.fromFile(File(clip.path)))
-        val width = retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-            ?.toIntOrNull()
-            ?: DEFAULT_WIDTH
-        val height = retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-            ?.toIntOrNull()
-            ?: DEFAULT_HEIGHT
-        val rotation = retriever
-            .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
-            ?.toIntOrNull()
-            ?: 0
-        if (rotation == 90 || rotation == 270) {
-            TimelineRenderSize(evenDimension(height), evenDimension(width))
-        } else {
-            TimelineRenderSize(evenDimension(width), evenDimension(height))
+        // One retriever pass yields duration, dimensions and rotation together;
+        // opening the extractor is the expensive part, not reading the keys.
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, Uri.fromFile(File(path)))
+            val durationMs = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.let { max(it, 1L) }
+                ?: DEFAULT_IMAGE_DURATION_MS
+            val width = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull()
+                ?: DEFAULT_WIDTH
+            val height = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull()
+                ?: DEFAULT_HEIGHT
+            val rotation = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull()
+                ?: 0
+            if (rotation == 90 || rotation == 270) {
+                SourceMediaMetadata(durationMs, evenDimension(height), evenDimension(width))
+            } else {
+                SourceMediaMetadata(durationMs, evenDimension(width), evenDimension(height))
+            }
+        } finally {
+            retriever.release()
         }
-    } finally {
-        retriever.release()
     }
 }
 

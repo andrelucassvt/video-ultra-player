@@ -60,6 +60,8 @@ class EditorController extends ChangeNotifier {
   final List<_EditorSnapshot> _redoSnapshots = <_EditorSnapshot>[];
   int _loadGeneration = 0;
   bool _disposed = false;
+  bool _configUpdateInFlight = false;
+  bool _configUpdatePending = false;
 
   Stream<TimelinePlayerState>? get stateStream => _stateStream;
   Stream<TimelineExportProgress>? get exportProgressStream =>
@@ -404,7 +406,7 @@ class EditorController extends ChangeNotifier {
     if (_aspectRatio == aspectRatio) return;
     _aspectRatio = aspectRatio;
     _notify();
-    await reload();
+    await _applyCompositionConfig();
   }
 
   Future<void> setBaseWidth(int width) async {
@@ -412,7 +414,34 @@ class EditorController extends ChangeNotifier {
     if (_baseWidth == next) return;
     _baseWidth = next;
     _notify();
-    await reload();
+    await _applyCompositionConfig();
+  }
+
+  /// Pushes the current output config to the native compositor **in place**.
+  ///
+  /// This replaces the old dispose/reload cycle: the texture, clips, overlays,
+  /// audio track, undo history and playback position all survive, so switching
+  /// proportion or resolution no longer blanks the preview or re-decodes the
+  /// sources. Bursts (rapid taps through the sheet) coalesce into a single
+  /// trailing native call.
+  Future<void> _applyCompositionConfig() async {
+    if (_textureId == null) return;
+    if (_configUpdateInFlight) {
+      _configUpdatePending = true;
+      return;
+    }
+
+    _configUpdateInFlight = true;
+    try {
+      do {
+        _configUpdatePending = false;
+        await _player.setCompositionConfig(compositionConfig);
+      } while (_configUpdatePending && !_disposed);
+    } catch (error) {
+      _setError(error);
+    } finally {
+      _configUpdateInFlight = false;
+    }
   }
 
   Future<void> setClipAlignment(int clipIndex, double x, double y) async {
@@ -897,8 +926,10 @@ class EditorController extends ChangeNotifier {
 
     _queuedSeekPosition = null;
     unawaited(_player.seekTo(position).catchError(_setError));
+    // The composition renders at 30 fps, so scrubbing faster than one seek per
+    // frame only piles up frame-accurate seeks the preview can never show.
     _seekThrottleTimer = Timer(
-      const Duration(milliseconds: 16),
+      const Duration(milliseconds: 33),
       _flushPreviewSeek,
     );
   }

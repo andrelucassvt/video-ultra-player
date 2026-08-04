@@ -114,6 +114,13 @@ void main() {
     await platform.seekToClip(77, 1);
     await platform.setVolume(77, 0.25);
     await platform.setClipAlignment(77, 2, -1, 1);
+    await platform.setCompositionConfig(
+      77,
+      TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio9x16,
+        baseWidth: 720,
+      ).toJson(),
+    );
     await platform.dispose(77);
 
     expect(calls.map((call) => call.method), [
@@ -123,8 +130,13 @@ void main() {
       'seekToClip',
       'setVolume',
       'setClipAlignment',
+      'setCompositionConfig',
       'dispose',
     ]);
+    expect(calls[6].arguments, {
+      'textureId': 77,
+      'config': {'aspectRatio': 'ratio9x16', 'baseWidth': 720},
+    });
     expect(calls[2].arguments, {'textureId': 77, 'positionMs': 300});
     expect(calls[3].arguments, {'textureId': 77, 'clipIndex': 1});
     expect(calls[4].arguments, {'textureId': 77, 'volume': 0.25});

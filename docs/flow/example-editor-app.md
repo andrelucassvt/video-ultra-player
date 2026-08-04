@@ -24,7 +24,7 @@ O `build` da `EditorScreen` combina dois níveis de reatividade: um `AnimatedBui
 
 A tela é uma `Column`: `EditorTopBar` (reset, menu de origem da timeline e resolução 720p/1080p), `PreviewArea` (`Texture` + pan/crop por arrasto + ghost de texto arrastável), `EditorToolbar` (play circular + tempo, dividir/velocidade/duração (imagens)/proporção/texto/excluir, undo/redo, slider de zoom e export com percentual — rolável horizontalmente em telas estreitas), `TimelineSection` (coluna fixa de lane headers + régua, faixa de clipes, faixa de textos, faixa de áudio e playhead em scroll horizontal).
 
-Duas convenções de interação atravessam a UI. A primeira: **scrub usa seek throttled, edição commita no release**. O arrasto do playhead chama `previewSeek`, que enfileira a posição e libera no máximo um seek a cada 16 ms; ao soltar, `commitSeek` cancela o timer e faz o seek definitivo. Trim, velocidade, duração de imagem e volume só chamam o nativo no fim do gesto, porque cada um desses comandos reconstrói a composição. A segunda: **a UI mantém um espelho local dos clipes**. Depois de cada mutação bem-sucedida o controller atualiza `_clips` por conta própria (`_splitLocalClip`, `copyWith`, `removeAt`), porque o nativo devolve apenas durações — não a lista de clipes.
+Duas convenções de interação atravessam a UI. A primeira: **scrub usa seek throttled, edição commita no release**. O arrasto do playhead chama `previewSeek`, que enfileira a posição e libera no máximo um seek a cada 33 ms (um por frame da composição); ao soltar, `commitSeek` cancela o timer e faz o seek definitivo. Trim, velocidade, duração de imagem e volume só chamam o nativo no fim do gesto, porque cada um desses comandos reconstrói a composição. A segunda: **a UI mantém um espelho local dos clipes**. Depois de cada mutação bem-sucedida o controller atualiza `_clips` por conta própria (`_splitLocalClip`, `copyWith`, `removeAt`), porque o nativo devolve apenas durações — não a lista de clipes.
 
 O carregamento de mídia tem três origens: os assets do demo (copiados para `systemTemp` porque o nativo só trabalha com paths de arquivo), a galeria via `ImagePicker.pickMultipleMedia` — cada arquivo é primeiro importado por `EditorMediaSessionService` para uma sessão controlada em Application Support (o path temporário do picker pode ser purgado pelo sistema a qualquer momento) e convertido por `timelineClipFromPath`, que infere vídeo/imagem pela extensão — e o áudio via `FilePicker`. Toda troca de timeline passa por `replaceTimeline`, que valida a existência dos arquivos, descarta o player anterior, carrega a nova lista com guarda de geração, reaplica a trilha de áudio se houver e reseta seleção, caches e histórico.
 
@@ -49,7 +49,7 @@ O carregamento de mídia tem três origens: os assets do demo (copiados para `sy
 9. **Timeline** — `example/lib/editor/widgets/timeline_section.dart`
    `contentWidth` derivado de `pixelsPerSecond`; `Row` com a coluna fixa de lane headers (`_LaneHeaderColumn`, ~40 px, ícones de filme, texto e áudio fora do scroll) e o scroll horizontal que empilha `TimelineRuler`, `ClipStrip`, `TextTrackRow`, `AudioTrackRow` e `TimelinePlayhead` num `Stack`. Tempo e zoom vivem na `EditorToolbar`, não mais num header interno.
 10. **Scrub** — `_startPlayheadDrag` / `_updatePlayheadDrag` / `_endPlayheadDrag`
-    Converte pixels em `Duration`, mostra `_dragPosition` localmente e chama `previewSeek` (throttle de 16 ms) e `commitSeek` no fim. Toque na régua vai direto para `commitSeek`.
+    Converte pixels em `Duration`, mostra `_dragPosition` localmente e chama `previewSeek` (throttle de 33 ms) e `commitSeek` no fim. Toque na régua vai direto para `commitSeek`.
 11. **Faixa de clipes** — `example/lib/editor/widgets/clip_strip.dart`
     Largura de cada tile proporcional à duração resolvida; `InkWell` → `selectClip` (que também faz `seekToClip`); `LongPressDraggable`/`DragTarget` → `moveClip`; `_ClipThumbnailRail` busca thumbnails do clipe.
 12. **Trim** — `example/lib/editor/widgets/clip_trim_handles.dart`
@@ -60,8 +60,8 @@ O carregamento de mídia tem três origens: os assets do demo (copiados para `sy
     Vazio → `addAudioTrack` (`FilePicker` com extensões de áudio); ativo → slider de volume (`setAudioVolumePreview` no arrasto, `commitAudioVolume` no release) e remover.
 15. **Textos** — `example/lib/editor/widgets/text_track_row.dart` + `text_edit_sheet.dart`
     Faixa vazia → "Adicionar texto"; com overlays, um bloco por overlay posicionado por `start`/`end` na escala de `pixelsPerSecond`, destaque quando selecionado, tap → `selectTextOverlay` + sheet. O sheet edita conteúdo, cor/fundo (swatches), tamanho/opacidade/rotação (sliders), alinhamento (`SegmentedButton`), fonte (dropdown com fallback nativo), janela (`RangeSlider`) e excluir — tudo via `commitTextOverlay` no commit do controle.
-16. **Config de saída** — `setAspectRatio` / `setBaseWidth`
-    Alteram `compositionConfig` e chamam `reload()`, que refaz `replaceTimeline` com os mesmos clipes e a mesma trilha.
+16. **Config de saída** — `setAspectRatio` / `setBaseWidth` → `_applyCompositionConfig`
+    Alteram `compositionConfig` e chamam `_player.setCompositionConfig(...)`, que muda resolução/proporção **no lugar**: a textura, os clipes, os textos, a trilha de áudio, o histórico nativo e a posição de playback sobrevivem — nada é redecodificado e o preview não pisca. Cliques em rajada coalescem: enquanto uma chamada está em voo, `_configUpdatePending` marca que falta aplicar e só uma chamada final (com o estado mais recente) é emitida.
 17. **Export** — `EditorToolbar._ExportButton` → `controller.export`
     Cria `systemTemp/video_ultra_player_example_exports`, chama `exportCurrentTimeline(outputPath:)`, assina `exportProgress` para o percentual, salva na galeria com `Gal.putVideo` e apaga o temporário. Sucesso define o sentinel `gallery_saved`; permissão negada lança `gallery_permission_denied` — ambos resolvidos na `EditorScreen`.
 18. **Undo/redo** — `EditorToolbar` → `controller.undo()` / `redo()`
@@ -124,7 +124,7 @@ O carregamento de mídia tem três origens: os assets do demo (copiados para `sy
 - **Load tardio não sobrevive à tela** — `_loadGeneration`/`_isCurrentLoad`: `dispose()` invalida a geração e qualquer textura que chegar depois é liberada imediatamente.
 - **Troca de timeline sempre dispõe a anterior** — `replaceTimeline` chama `_player.dispose()` antes do novo `load`.
 - **Play no fim reinicia** — `playOrPause` faz seek para zero quando falta menos de 100 ms para o fim.
-- **Scrub é throttled em 16 ms** — `previewSeek`/`_flushPreviewSeek`; `commitSeek` cancela o timer e faz o seek final.
+- **Scrub é throttled em 33 ms** — `previewSeek`/`_flushPreviewSeek`; a composição renderiza a 30 fps, então seeks mais frequentes que um por frame só acumulam seeks de tolerância zero que o preview nunca chega a mostrar. `commitSeek` cancela o timer e faz o seek final.
 - **Edição commita no release** — trim, velocidade, duração de imagem, volume de áudio e textos só chamam o nativo no fim do gesto, porque cada comando reconstrói a composição (Android) ou re-renderiza a videoComposition (iOS). O ghost do preview atualiza só a cópia local durante o arrasto.
 - **`selectClip` também faz seek** — seleciona o índice e chama `seekToClip`.
 - **Texto default na posição de playback** — `addTextOverlay` cria "Texto" no centro, `start` na posição atual e `end` = `start + 3 s` (clampado pela duração total quando conhecida).
@@ -133,7 +133,7 @@ O carregamento de mídia tem três origens: os assets do demo (copiados para `sy
 - **Excluir exige mais de um clipe** — `removeSelected` retorna se `_clips.length <= 1`.
 - **`pixelsPerSecond` entre 44 e 132** — `setPixelsPerSecond` faz clamp; define a escala de toda a timeline.
 - **`baseWidth` entre 1 e 4096** — `setBaseWidth` faz clamp; o menu oferece 720 e 1080.
-- **Mudar proporção ou resolução recarrega** — `setAspectRatio`/`setBaseWidth` chamam `reload()`, que refaz o `load` com a config nova.
+- **Mudar proporção ou resolução NÃO recarrega** — `setAspectRatio`/`setBaseWidth` passam por `_applyCompositionConfig` → `setCompositionConfig`, que reaproveita a composição nativa já carregada. `reload()` continua existindo, mas só para recarregar a mesma timeline de fato.
 - **Undo exige acordo entre nativo e local** — a `EditorToolbar` usa `state.canUndo && controller.canUndo`; o controller mantém `_undoSnapshots`/`_redoSnapshots` com limite de 50.
 - **Espelho local após cada mutação** — o controller atualiza `_clips` explicitamente (`_splitLocalClip` replica a semântica de trim do nativo, inclusive multiplicando a posição local por `speed`); o mesmo vale para `_textOverlays` (add/commit/remove atualizam a lista local).
 - **Snapshots locais incluem textos** — `_EditorSnapshot` guarda `textOverlays` e `selectedTextOverlayId`, então undo/redo da UI restauram a seleção junto com os clipes.

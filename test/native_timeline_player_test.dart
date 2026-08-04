@@ -112,6 +112,16 @@ class MockVideoUltraPlayerPlatform
   }
 
   @override
+  Future<void> setCompositionConfig(
+    int textureId,
+    Map<String, dynamic> config,
+  ) async {
+    calls.add('setCompositionConfig');
+    lastTextureId = textureId;
+    lastConfig = config;
+  }
+
+  @override
   Future<void> dispose(int textureId) async {
     calls.add('dispose');
     lastTextureId = textureId;
@@ -437,6 +447,60 @@ void main() {
     final player = NativeTimelinePlayer();
 
     expect(() => player.exportTimeline(const []), throwsArgumentError);
+  });
+
+  test('setCompositionConfig forwards the new config in place', () async {
+    final player = NativeTimelinePlayer();
+    await player.load(
+      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
+      config: TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio9x16,
+      ),
+    );
+
+    await player.setCompositionConfig(
+      TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.ratio1x1,
+        baseWidth: 720,
+      ),
+    );
+
+    expect(fakePlatform.calls, ['load', 'setCompositionConfig']);
+    expect(fakePlatform.lastTextureId, 42);
+    expect(fakePlatform.lastConfig, {
+      'aspectRatio': 'ratio1x1',
+      'baseWidth': 720,
+    });
+    // The texture survives — no dispose/load cycle.
+    expect(player.textureId, 42);
+  });
+
+  test('setCompositionConfig skips the channel when nothing changed', () async {
+    final config = TimelineCompositionConfig(
+      aspectRatio: OutputAspectRatio.ratio16x9,
+    );
+    final player = NativeTimelinePlayer();
+    await player.load(
+      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
+      config: config,
+    );
+
+    await player.setCompositionConfig(config);
+    await player.setCompositionConfig(
+      TimelineCompositionConfig(aspectRatio: OutputAspectRatio.ratio16x9),
+    );
+
+    expect(fakePlatform.calls, ['load']);
+    expect(player.compositionConfig, config);
+  });
+
+  test('setCompositionConfig requires a loaded timeline', () {
+    final player = NativeTimelinePlayer();
+
+    expect(
+      () => player.setCompositionConfig(TimelineCompositionConfig()),
+      throwsStateError,
+    );
   });
 
   test('commands forward texture id and arguments', () async {

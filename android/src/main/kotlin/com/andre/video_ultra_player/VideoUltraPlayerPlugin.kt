@@ -106,6 +106,24 @@ class VideoUltraPlayerPlugin :
                 controller.setClipAlignment(clipIndex, x, y)
                 result.success(null)
             }
+            "setCompositionConfig" -> withController(call, result) { controller ->
+                val config = (call.arguments as? Map<*, *>)?.get("config") as? Map<*, *>
+                if (config == null) {
+                    result.error("invalid_arguments", "Expected config.", null)
+                    return@withController
+                }
+                try {
+                    controller.setCompositionConfig(config)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.e("VideoUltraPlayer", "setCompositionConfig failed", error)
+                    result.error(
+                        "edit_failed",
+                        "setCompositionConfig failed: ${error.message ?: error.toString()}",
+                        Log.getStackTraceString(error)
+                    )
+                }
+            }
             "trimClip" -> withController(call, result) { controller ->
                 val clipIndex = numberArg(call.arguments, "clipIndex")?.toInt()
                 if (clipIndex == null) {
@@ -330,18 +348,25 @@ class VideoUltraPlayerPlugin :
             return
         }
 
-        try {
-            val controller = TimelineCompositionController(context, registry)
-            val textureId = controller.load(clips, config)
-            controllers[textureId] = controller
-            result.success(textureId)
-        } catch (error: Throwable) {
-            result.error(
-                "load_failed",
-                "Unable to build native timeline composition.",
-                error.message
-            )
-        }
+        // Source metadata extraction is blocking I/O, so `load` resolves it off
+        // the main thread and calls back once the player is attached.
+        val controller = TimelineCompositionController(context, registry)
+        controller.load(
+            rawClips = clips,
+            rawConfig = config,
+            onReady = { textureId ->
+                controllers[textureId] = controller
+                result.success(textureId)
+            },
+            onError = { error ->
+                controller.dispose()
+                result.error(
+                    "load_failed",
+                    "Unable to build native timeline composition.",
+                    error.message
+                )
+            }
+        )
     }
 
     private fun exportTimeline(
