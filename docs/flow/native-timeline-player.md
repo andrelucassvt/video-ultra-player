@@ -33,9 +33,9 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 3. **Method channel** — `lib/video_ultra_player_method_channel.dart` → `MethodChannelVideoUltraPlayer.load`
    `invokeMethod<int>('load', {'clips', 'config'})`; lança `StateError` se o nativo devolver `null`.
 4. **Plugin nativo (iOS)** — `ios/Classes/VideoUltraPlayerPlugin.swift` → `load(_:result:)`
-   Exige `textureRegistry` (erro `not_attached` sem ele), converte os mapas em `TimelineClipDescriptor` (erro `invalid_clip` se algum falhar) e cria um `TimelinePlayerController`.
+   Exige `textureRegistry` (erro `not_attached` sem ele), converte os mapas em `TimelineClipDescriptor` (erro `invalid_clip` se algum falhar) e chama `TimelinePlayerController.make(...)`, que monta a composição fora da thread da plataforma e responde pelo `completion`.
    - **Plugin nativo (Android)** — `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt` → `load(call, result)`
-     Exige `applicationContext` + `textureRegistry` e delega a `TimelineCompositionController.load(clips, config)`.
+     Exige `applicationContext` + `textureRegistry` e delega a `TimelineCompositionController.load(clips, config, onReady, onError)`, que resolve os metadados num pool de background e volta para a main só para criar textura e player.
 5. **Construção da composição** — `ios/Classes/TimelineComposition.swift` → `build` / `.../TimelineCompositionController.kt` → `buildTimelineComposition`
    Insere os clipes em sequência, aplica trim, speed, alinhamento/escala e resolve o `renderSize` a partir do `config`.
 6. **Registro da textura** — `ios/Classes/TimelineTexture.swift` + `FlutterTextureRegistry.register` / `textureRegistry.createSurfaceTexture()` + `Surface` no Android
@@ -50,8 +50,10 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
     Publica `globalPosition`, `clipIndex`, `localPosition`, `isPlaying`, `totalDuration`, `clipDurationsMs`, `canUndo`, `canRedo`.
 11. **Comandos de playback** — `play` / `pause` / `seekTo` / `seekToClip` / `setVolume`
     Cada um resolve o controller pelo `textureId` (erro `not_found` se não existir) e emite estado ao final. `seekToClip` usa `TimelineComposition.startTime(forClipIndex:)` no iOS e `segments.getOrNull(clipIndex)?.startMs` no Android.
-12. **Encerramento** — `NativeTimelinePlayer.dispose`
-    Zera `_textureId` e `_stateStream` antes de chamar o nativo, que remove o controller do mapa e libera player, textura e arquivos temporários.
+12. **Troca de resolução/proporção** — `NativeTimelinePlayer.setCompositionConfig`
+    Caminho dedicado que evita o ciclo `dispose` + `load`: no-op se a config não mudou, senão manda `{'textureId', 'config'}` pelo channel. No iOS só a `AVVideoComposition` é re-gerada e reatribuída ao item (`TimelineComposition.updateConfig`); no Android a `Composition` é reconstruída (efeitos Media3 são imutáveis), mas player, `Surface` e `textureId` são reaproveitados. Nas duas plataformas clipes, textos, trilha de áudio, histórico nativo e posição de playback sobrevivem, e nada é redecodificado.
+13. **Encerramento** — `NativeTimelinePlayer.dispose`
+    Zera `_textureId`, `_stateStream` e `_config` antes de chamar o nativo, que remove o controller do mapa e libera player, textura e arquivos temporários.
 
 ### Caminhos alternativos
 
@@ -91,10 +93,12 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 - **`volume` em `[0.0, 1.0]`** — validado em Dart (`RangeError`) e reforçado no nativo (`min/max` no iOS, `coerceIn` no Android).
 - **`speed` em `[0.5, 2.0]`** — `assert` no construtor de `TimelineClip`, `RangeError` em `setClipSpeed`, clamp nos dois nativos.
 - **`trimEnd` é ponto absoluto na fonte, não duração** — documentado em `timeline_clip.dart` e implementado em `effectiveRange` (iOS) / `resolvedDurationMs` (Android); tem precedência sobre `duration` para vídeo.
-- **Clipes de imagem ignoram trim** — usam `duration` (fallback 2000 ms) e viram vídeo: MP4 temporário via `AVAssetWriter` no iOS, `setImageDurationMs` + `setFrameRate(30)` no Android.
+- **Clipes de imagem ignoram trim** — usam `duration` (fallback 2000 ms) e viram vídeo: MP4 via `AVAssetWriter` no iOS (encodado uma vez por processo pelo `ImageClipVideoCache`, a 6 fps e com o lado maior limitado a 1920 px), `setImageDurationMs` + `setFrameRate(30)` no Android.
 - **`clipDurations` reflete a duração exibida** — já com speed aplicado (`scaledVideoDuration` no iOS, `scaledDurationMs` no Android).
 - **Fim da timeline não faz loop** — `didPlayToEnd` pausa no iOS; para tocar de novo o app precisa dar seek para zero (é o que `EditorController.playOrPause` faz ao detectar posição no fim).
 - **`renderSize` vem do `config`** — `original` usa o tamanho do primeiro clipe; as outras proporções derivam de `baseWidth`, sempre arredondado para dimensão par.
+- **Config de saída é trocada no lugar, não recarregada** — `setCompositionConfig` preserva `textureId` e todo o estado editado; `load` continua sendo só para trocar a timeline de fato. A config aplicada fica em `NativeTimelinePlayer.compositionConfig` e alimenta o `exportCurrentTimeline`, então "export = preview" continua valendo depois da troca.
+- **Config de saída não entra no histórico** — nenhuma plataforma empurra snapshot em `setCompositionConfig`; undo não deve reverter proporção.
 - **Estado trafega em milissegundos** — o nativo emite números e `TimelinePlayerState.fromMap` converte para `Duration`.
 
 ## Dependências Externas
@@ -106,7 +110,8 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 ## Observações
 
 - `stateStream` é cacheado por instância e só é invalidado em `load`/`dispose`.
-- No Android o estado é emitido por polling de 33 ms enquanto o controller vive; no iOS o `addPeriodicTimeObserver` só dispara com o player andando, então cada comando chama `emitState()` explicitamente para cobrir o resto.
+- No Android o estado é emitido por polling com cadência adaptativa (33 ms tocando, 250 ms pausado); no iOS o `addPeriodicTimeObserver` só dispara com o player andando, então cada comando chama `emitState()` explicitamente para cobrir o resto.
+- As duas plataformas deduplicam o estado antes de cruzar o canal (comparam com o último payload emitido) e `NativeTimelinePlayer.stateStream` ainda aplica `.distinct()` em Dart, então um player parado não acorda a árvore de widgets.
 - `TimelineTexture.observeInitialItemReady` faz um seek de tolerância zero na primeira vez que o item fica `readyToPlay`: sem isso o `AVPlayerItemVideoOutput` não entrega frame algum enquanto pausado e a `Texture` fica preta.
 - `TimelinePlayerState.clipDurations` pode vir vazio antes do primeiro estado nativo; `EditorController.resolvedClipDurations` cai num cálculo local nesse caso.
 - Não há teste automatizado do caminho nativo — a cobertura Dart usa um platform fake e `android/src/test/.../VideoUltraPlayerPluginTest.kt` só cobre `notImplemented()`.

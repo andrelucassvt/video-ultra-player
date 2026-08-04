@@ -188,9 +188,10 @@ final class TimelineComposition {
   private var clips: [TimelineClipDescriptor] = []
   private var segments: [TimelineSegment] = []
   private var composition: AVMutableComposition?
-  private var imageVideoCache: [String: URL] = [:]
-  private var generatedImageVideoURLs: [URL] = []
   private var renderSize = CGSize(width: 1280, height: 720)
+  /// Renderable size of the first clip, kept so `.original` can be resolved on
+  /// a config change without re-reading the source tracks.
+  private var firstRenderableSize = CGSize(width: 1280, height: 720)
   private var audioMix: AVAudioMix?
   /// Currently set external audio track descriptor (nil = no external audio).
   private(set) var currentAudioTrack: AudioTrackDescriptor?
@@ -259,7 +260,7 @@ final class TimelineComposition {
         )
       : nil
 
-    let firstRenderableSize = preparedClips.first?.renderableSize ?? renderSize
+    firstRenderableSize = preparedClips.first?.renderableSize ?? renderSize
     renderSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
 
     var startTime = CMTime.zero
@@ -542,6 +543,21 @@ final class TimelineComposition {
     return makeVideoComposition(includeTextOverlays: false)
   }
 
+  /// Applies a new output resolution/aspect ratio without touching the
+  /// underlying `AVMutableComposition`.
+  ///
+  /// Only the render size and the per-segment transforms depend on the config,
+  /// so the source tracks stay loaded and no clip is re-decoded. Returns the
+  /// regenerated video composition, or `nil` when the size is unchanged or the
+  /// timeline has not been built yet.
+  func updateConfig(_ config: TimelineCompositionConfig) -> AVVideoComposition? {
+    guard composition != nil else { return nil }
+    let nextSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
+    guard nextSize != renderSize else { return nil }
+    renderSize = nextSize
+    return makeVideoComposition(includeTextOverlays: false)
+  }
+
   func playbackState(at time: CMTime) -> (clipIndex: Int, localPosition: CMTime) {
     guard !segments.isEmpty else {
       return (0, .zero)
@@ -567,13 +583,9 @@ final class TimelineComposition {
     return segments.map { Int64((CMTimeGetSeconds($0.duration) * 1_000).rounded()) }
   }
 
-  func dispose() {
-    for url in generatedImageVideoURLs {
-      try? FileManager.default.removeItem(at: url)
-    }
-    generatedImageVideoURLs.removeAll()
-    imageVideoCache.removeAll()
-  }
+  /// Image renders live in the shared `ImageClipVideoCache`, which outlives
+  /// individual compositions — there is nothing per-instance left to release.
+  func dispose() {}
 
   // MARK: - Private
 
@@ -773,25 +785,18 @@ final class TimelineComposition {
   }
 
   /// Returns the source `AVURLAsset` for a clip, generating a temporary MP4 for images.
+  ///
+  /// Image renders come from the process-wide `ImageClipVideoCache`, so a
+  /// rebuild (or a second timeline using the same still) never re-encodes.
   private func resolvedAsset(for clip: TimelineClipDescriptor) throws -> AVURLAsset {
     if clip.type == .video {
       return AVURLAsset(url: URL(fileURLWithPath: clip.path))
     }
 
-    // For images, use cached MP4 if the path hasn't changed
-    if let cachedURL = imageVideoCache[clip.path],
-       FileManager.default.fileExists(atPath: cachedURL.path) {
-      return AVURLAsset(url: cachedURL)
-    }
-
-    guard let image = UIImage(contentsOfFile: clip.path) else {
-      throw TimelineCompositionError.invalidClip
-    }
-
-    let duration = cmTime(fromMilliseconds: clip.durationMs ?? 2_000)
-    let url = try makeImageVideo(from: image, duration: duration)
-    generatedImageVideoURLs.append(url)
-    imageVideoCache[clip.path] = url
+    let url = try ImageClipVideoCache.shared.videoURL(
+      forImageAt: clip.path,
+      durationMs: clip.durationMs ?? 2_000
+    )
     return AVURLAsset(url: url)
   }
 
@@ -834,125 +839,6 @@ final class TimelineComposition {
     }
 
     return (trimStart, cmTime(fromMilliseconds: 2_000))
-  }
-
-  private func makeImageVideo(from image: UIImage, duration: CMTime) throws -> URL {
-    let targetSize = evenSize(image.size == .zero ? renderSize : image.size)
-    let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "video_ultra_player_image_\(UUID().uuidString).mp4"
-    )
-
-    let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
-    let input = AVAssetWriterInput(
-      mediaType: .video,
-      outputSettings: [
-        AVVideoCodecKey: AVVideoCodecType.h264,
-        AVVideoWidthKey: Int(targetSize.width),
-        AVVideoHeightKey: Int(targetSize.height),
-      ]
-    )
-    input.expectsMediaDataInRealTime = false
-
-    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-      assetWriterInput: input,
-      sourcePixelBufferAttributes: [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
-        kCVPixelBufferWidthKey as String: Int(targetSize.width),
-        kCVPixelBufferHeightKey as String: Int(targetSize.height),
-      ]
-    )
-
-    guard writer.canAdd(input) else {
-      throw TimelineCompositionError.cannotCreateImageVideo
-    }
-    writer.add(input)
-
-    guard writer.startWriting() else {
-      throw writer.error ?? TimelineCompositionError.cannotCreateImageVideo
-    }
-    writer.startSession(atSourceTime: .zero)
-
-    let fps: Int32 = 30
-    let frameCount = max(1, Int(ceil(CMTimeGetSeconds(duration) * Double(fps))))
-    for frame in 0..<frameCount {
-      while !input.isReadyForMoreMediaData {
-        Thread.sleep(forTimeInterval: 0.005)
-      }
-      autoreleasepool {
-        if let pixelBuffer = makePixelBuffer(image: image, size: targetSize) {
-          adaptor.append(
-            pixelBuffer,
-            withPresentationTime: CMTime(value: Int64(frame), timescale: fps)
-          )
-        }
-      }
-    }
-
-    input.markAsFinished()
-    let semaphore = DispatchSemaphore(value: 0)
-    writer.finishWriting {
-      semaphore.signal()
-    }
-    semaphore.wait()
-
-    if writer.status == .failed {
-      throw writer.error ?? TimelineCompositionError.cannotCreateImageVideo
-    }
-
-    return outputURL
-  }
-
-  private func makePixelBuffer(image: UIImage, size: CGSize) -> CVPixelBuffer? {
-    var pixelBuffer: CVPixelBuffer?
-    let attributes = [
-      kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue as Any,
-      kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue as Any,
-    ] as CFDictionary
-
-    let width = Int(size.width)
-    let height = Int(size.height)
-    CVPixelBufferCreate(
-      kCFAllocatorDefault,
-      width,
-      height,
-      kCVPixelFormatType_32ARGB,
-      attributes,
-      &pixelBuffer
-    )
-
-    guard let pixelBuffer else {
-      return nil
-    }
-
-    CVPixelBufferLockBaseAddress(pixelBuffer, [])
-    defer {
-      CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-    }
-
-    guard
-      let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
-      let context = CGContext(
-        data: baseAddress,
-        width: width,
-        height: height,
-        bitsPerComponent: 8,
-        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-      )
-    else {
-      return nil
-    }
-
-    // CGContext manual tem origem bottom-left; UIImage espera top-left.
-    context.translateBy(x: 0, y: size.height)
-    context.scaleBy(x: 1, y: -1)
-
-    context.clear(CGRect(origin: .zero, size: size))
-    UIGraphicsPushContext(context)
-    image.draw(in: CGRect(origin: .zero, size: size))
-    UIGraphicsPopContext()
-    return pixelBuffer
   }
 
   private func normalizedSize(

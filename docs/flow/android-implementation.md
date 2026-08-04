@@ -35,25 +35,27 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 1. **Attach** — `.../VideoUltraPlayerPlugin.kt` → `onAttachedToEngine`
    Guarda contexto e `textureRegistry`; abre `video_ultra_player/timeline_player`, `.../events` e `.../export`.
 2. **Roteamento** — `onMethodCall`
-    `when (call.method)` sobre `load`, `exportTimeline`, `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `setAudioTrack`, `removeAudioTrack`, `addTextOverlay`, `updateTextOverlay`, `removeTextOverlay`, `undo`, `redo`, `generateThumbnails`, `exportCurrentTimeline`, `dispose`; o resto vira `result.notImplemented()`.
+    `when (call.method)` sobre `load`, `exportTimeline`, `play`, `pause`, `seekTo`, `seekToClip`, `setVolume`, `setClipAlignment`, `setCompositionConfig`, `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip`, `setClipSpeed`, `setAudioTrack`, `removeAudioTrack`, `addTextOverlay`, `updateTextOverlay`, `removeTextOverlay`, `undo`, `redo`, `generateThumbnails`, `exportCurrentTimeline`, `dispose`; o resto vira `result.notImplemented()`.
 3. **Resolução do controller** — `withController(call, result, block)`
    `numberArg(arguments, "textureId")` → `controllers[textureId]`.
-4. **Load** — `.../TimelineCompositionController.kt` → `load(rawClips, rawConfig)`
-   `TimelineCompositionConfig.from` → `parseTimelineClips` → `outputSizeFor` → `rebuildSegments`.
-5. **Resolução de metadados** — `resolveClip` → `resolveSourceDurationMs` / `resolveSourceSize`
-   `MediaMetadataRetriever` para vídeo (inclusive rotação 90/270, que troca largura e altura) e `BitmapFactory` com `inJustDecodeBounds` para imagem.
+4. **Load** — `.../TimelineCompositionController.kt` → `load(rawClips, rawConfig, onReady, onError)`
+   **Assíncrono.** `TimelineCompositionConfig.from` + `parseTimelineClips` rodam no `mediaMetadataExecutor` (pool fixo de 2–4 threads daemon) porque extrair metadados é I/O bloqueante; a metade que precisa da main thread vive em `attach(config, resolvedClips)` (`outputSizeFor` → `rebuildSegments` → textura → player) e responde por `onReady`/`onError`. O chamador é sempre respondido — deixar o `Future` do Dart pendurado travaria a UI.
+5. **Resolução de metadados** — `parseTimelineClips` → `resolveClip` → `SourceMetadataCache.get`
+   Um único passe de `MediaMetadataRetriever` por clipe devolve duração, largura, altura e rotação juntos (abrir o extractor é o custo, não ler as chaves); rotação 90/270 troca largura e altura. Imagem usa `BitmapFactory` com `inJustDecodeBounds`. Os clipes são resolvidos em paralelo, então N clipes custam ~o mais lento e não a soma. O `SourceMetadataCache` é de processo, chaveado por path + `lastModified` + `length` + tipo, com LRU de 64 entradas.
 6. **Textura e player** — `textureRegistry.createSurfaceTexture()` → `Surface(entry.surfaceTexture())` → `CompositionPlayer.Builder(context).build()`
    `setVideoSurface(surface, Size(renderSize))`, `addListener { onPlayerError }`, `setComposition(...)`, `prepare()`.
 7. **Composição** — `buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)`
     `editedMediaItemFor` por clipe + `EditedMediaItemSequence.withAudioAndVideoFrom`; adiciona `audioSequenceFor` quando há trilha externa dentro da duração da timeline. Para cada clipe, `textOverlaysForClip` filtra os overlays que intersectam a janela do clipe e re-ancora `startMs`/`endMs` (timestamps do Media3 são relativos ao item).
 8. **Efeitos por clipe** — `effectsFor(clip, renderSize, clipOverlays)`
     `Crop` derivado de `scale`/`alignment` quando `scale > 1.0001`, seguido de `Presentation.createForWidthAndHeight(..., LAYOUT_SCALE_TO_FIT_WITH_CROP)` e, se o clipe tem overlays, um `OverlayEffect` de `TimelineTextOverlay` depois do `Presentation` — o texto não passa pelo crop/scale do clipe.
-9. **Estado** — `stateRunnable` → `emitState()` a cada `STATE_INTERVAL_MS` (33 ms)
-   Emite `globalPosition`, `clipIndex` (`segmentIndexFor`), `localPosition`, `isPlaying`, `totalDuration`, `clipDurationsMs`, `canUndo`, `canRedo`.
+9. **Estado** — `stateRunnable` → `emitState()`
+   Cadência adaptativa: `STATE_INTERVAL_MS` (33 ms) tocando, `IDLE_STATE_INTERVAL_MS` (250 ms) pausado — pausado o estado só muda por comando, e todo comando já emite. `emitState` monta um `EmittedState` (`globalPosition`, `clipIndex` via `segmentIndexFor`, `localPosition`, `isPlaying`, `totalDuration`, `clipDurationsMs`, `canUndo`, `canRedo`) e só cruza o canal quando ele difere do anterior. `setEventSink` zera o último estado para que a primeira emissão sempre passe.
 10. **Playback** — `play` / `pause` / `seekTo` / `seekToClip` / `setVolume`
     `seekTo` faz `coerceIn(0, totalDurationMs)`; `seekToClip` usa `segments.getOrNull(clipIndex)?.startMs`; `setVolume` faz `coerceIn(0.0, 1.0)`.
 11. **Edição** — `trimClip` / `splitClip` / `insertClip` / `removeClip` / `moveClip` / `replaceClip` / `setClipSpeed` / `setClipAlignment`
     Cada um valida o índice, chama `pushEditSnapshot()`, muta `clips` e chama `rebuildCompositionPreservingPlayback()`.
+11b. **Resolução/proporção** — `setCompositionConfig(rawConfig)`
+    Efeitos Media3 são imutáveis, então a `Composition` ainda é reconstruída — mas os metadados já resolvidos, o player, a `Surface` e o `textureId` são reaproveitados, e posição/estado de play sobrevivem. Recalcula `outputSizeFor`, atualiza `setDefaultBufferSize` + `setVideoSurface` e chama `rebuildCompositionPreservingPlayback()`. Não empurra snapshot de edição — config de saída não é undo-ável. No-op quando a config ou o tamanho resultante não mudam.
 12. **Trilha de áudio** — `setAudioTrack(rawTrack)` / `removeAudioTrack()`
     `AudioTrackDescriptor.from` + `resolveAudioTrack` (resolve `sourceDurationMs`) e rebuild; remover sem trilha ativa só re-emite estado.
 13. **Text overlays** — `addTextOverlay(rawOverlay)` / `updateTextOverlay(rawOverlay)` / `removeTextOverlay(overlayId)`
@@ -115,7 +117,11 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 - **`volume` clampado em `[0.0, 1.0]`** — em `AudioTrackDescriptor.from` e em `setVolume`.
 - **Dimensões sempre pares** — `evenDimension` em `outputSizeFor` e `resolveSourceSize`.
 - **Histórico limitado a 50 snapshots** — `TimelineEditModel`; `pushSnapshot` limpa a pilha de redo.
-- **Rotação da fonte é respeitada** — `resolveSourceSize` inverte largura/altura quando `METADATA_KEY_VIDEO_ROTATION` é 90 ou 270.
+- **Rotação da fonte é respeitada** — `SourceMetadataCache.extract` inverte largura/altura quando `METADATA_KEY_VIDEO_ROTATION` é 90 ou 270.
+- **`load` não bloqueia a main thread** — a extração de metadados vai para o `mediaMetadataExecutor` e só a criação de textura/player volta para a main; `onReady`/`onError` sempre respondem, inclusive quando o controller é disposto durante o load.
+- **Metadados de origem são cacheados por processo** — `SourceMetadataCache` evita reabrir o extractor a cada reload/re-import; a chave inclui `lastModified` e `length`, então arquivo trocado é relido.
+- **Trocar proporção/resolução não recria a textura** — `setCompositionConfig` reaproveita player, `Surface` e `textureId`; só a `Composition` é reconstruída (imutabilidade do Media3). Evita o flash preto e a releitura de metadados de um ciclo dispose/load.
+- **Estado é deduplicado e tem cadência adaptativa** — `emitState` compara com o último `EmittedState`; o ticker cai para 250 ms com o player pausado.
 - **Export do estado atual inclui a trilha externa** — `startExportCurrentTimeline` captura `clips`, `renderSize` e `audioTrack` correntes antes de criar o exporter.
 - **Overlays são re-ancorados por clipe** — `textOverlaysForClip`: timestamps de efeito no Media3 são relativos ao `EditedMediaItem`; a função intersecta `[clipStartMs, clipStartMs + clipDurationMs)` e subtrai `clipStartMs` da janela (clamps em 0 e na duração do clipe). Overlay que não intersecta nenhum clipe não vira efeito.
 - **`OverlayEffect` entra depois do `Presentation`** — `effectsFor` adiciona os textos ao final da lista de efeitos de vídeo, para não serem cortados/escalados pelo crop do clipe.

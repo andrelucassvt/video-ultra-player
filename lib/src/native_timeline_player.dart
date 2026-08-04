@@ -37,6 +37,12 @@ class NativeTimelinePlayer {
   Stream<TimelinePlayerState>? _stateStream;
   Stream<TimelineExportProgress>? _exportProgressStream;
   bool _exporting = false;
+  TimelineCompositionConfig? _config;
+
+  /// The composition config currently applied to the loaded timeline.
+  ///
+  /// Returns `null` before the first [load].
+  TimelineCompositionConfig? get compositionConfig => _config;
 
   /// The Flutter texture ID registered by the native compositor after [load].
   ///
@@ -50,10 +56,13 @@ class NativeTimelinePlayer {
   /// native layer, including position and playback-state changes.
   ///
   /// Throws a [StateError] if [load] has not been called first.
+  /// Consecutive identical states are filtered out so an idle (paused) player
+  /// never wakes the widget tree.
   Stream<TimelinePlayerState> get stateStream {
     final textureId = _requireTextureId();
     return _stateStream ??= _platform
         .stateStream(textureId)
+        .distinct()
         .asBroadcastStream();
   }
 
@@ -88,13 +97,32 @@ class NativeTimelinePlayer {
       );
     }
 
+    final resolvedConfig = config ?? TimelineCompositionConfig();
     final textureId = await _platform.load(
       clips.map((clip) => clip.toJson()).toList(growable: false),
-      config: (config ?? TimelineCompositionConfig()).toJson(),
+      config: resolvedConfig.toJson(),
     );
     _textureId = textureId;
+    _config = resolvedConfig;
     _stateStream = null;
     return textureId;
+  }
+
+  /// Changes the output resolution and aspect ratio of the loaded timeline
+  /// **in place**.
+  ///
+  /// Unlike a dispose/[load] cycle, this preserves the texture ID, the clip
+  /// list, text overlays, the external audio track, the native undo history
+  /// and the playback position — so switching aspect ratio or resolution does
+  /// not re-decode the sources nor blank the preview.
+  ///
+  /// No-ops when [config] equals the currently applied one. Requires [load]
+  /// to have completed; throws [StateError] otherwise.
+  Future<void> setCompositionConfig(TimelineCompositionConfig config) async {
+    final textureId = _requireTextureId();
+    if (_config == config) return;
+    await _platform.setCompositionConfig(textureId, config.toJson());
+    _config = config;
   }
 
   /// Exports [clips] to a video file and returns the output file path.
@@ -393,6 +421,7 @@ class NativeTimelinePlayer {
     }
     _textureId = null;
     _stateStream = null;
+    _config = null;
     await _platform.dispose(textureId);
   }
 

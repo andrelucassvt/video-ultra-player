@@ -68,9 +68,14 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 | Método | Assinatura | Channel | Payload | Retorno |
 |---|---|---|---|---|
 | `load` | `Future<int> load(List<TimelineClip>, {TimelineCompositionConfig? config})` | `load` | `clips`, `config` | `textureId` |
+| `setCompositionConfig` | `Future<void> setCompositionConfig(TimelineCompositionConfig config)` | `setCompositionConfig` | `textureId`, `config` | — |
 | `dispose` | `Future<void> dispose()` | `dispose` | `textureId` | — |
 
-`load` reseta o cache de `stateStream` e usa `TimelineCompositionConfig()` como default quando `config` é omitido.
+`load` reseta o cache de `stateStream`, usa `TimelineCompositionConfig()` como default quando `config` é omitido e guarda a config aplicada em `compositionConfig`.
+
+`setCompositionConfig` troca resolução/proporção **no lugar**: `textureId`, clipes, textos, trilha de áudio, histórico nativo e posição de playback sobrevivem — é o caminho a usar em vez de `dispose` + `load` quando só a saída muda. Exige `load` concluído (`StateError` caso contrário) e é no-op quando a config é igual à atual.
+
+`stateStream` aplica `.distinct()`, então estados idênticos consecutivos (player parado) não acordam a árvore de widgets.
 
 ### Playback
 

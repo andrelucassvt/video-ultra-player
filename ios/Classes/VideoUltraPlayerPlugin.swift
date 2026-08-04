@@ -90,6 +90,10 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         y: CGFloat(y.doubleValue)
       )
       result(nil)
+    case "setCompositionConfig":
+      guard let controller = controller(for: call, result: result) else { return }
+      controller.setCompositionConfig(compositionConfig(from: call.arguments))
+      result(nil)
     case "trimClip":
       guard let controller = controller(for: call, result: result),
             let args = call.arguments as? [String: Any],
@@ -328,22 +332,37 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     guard let clips = clips(from: call.arguments, result: result) else { return }
     let config = compositionConfig(from: call.arguments)
 
-    do {
-      let controller = try TimelinePlayerController(
-        clips: clips,
-        config: config,
-        textureRegistry: textureRegistry
-      )
-      controllers[controller.textureId] = controller
-      result(controller.textureId)
-    } catch {
-      result(
-        FlutterError(
-          code: "load_failed",
-          message: "Unable to build native timeline composition.",
-          details: "\(error)"
+    // Composition assembly reads and decodes the sources, so it runs off the
+    // platform thread; only texture registration comes back to main.
+    TimelinePlayerController.make(
+      clips: clips,
+      config: config,
+      textureRegistry: textureRegistry
+    ) { [weak self] outcome in
+      switch outcome {
+      case .success(let controller):
+        guard let self else {
+          controller.dispose()
+          result(
+            FlutterError(
+              code: "load_failed",
+              message: "Plugin was detached before the timeline finished loading.",
+              details: nil
+            )
+          )
+          return
+        }
+        self.controllers[controller.textureId] = controller
+        result(controller.textureId)
+      case .failure(let error):
+        result(
+          FlutterError(
+            code: "load_failed",
+            message: "Unable to build native timeline composition.",
+            details: "\(error)"
+          )
         )
-      )
+      }
     }
   }
 
@@ -574,27 +593,86 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
 }
 
 private final class TimelinePlayerController {
-  let textureId: Int64
-  var eventSink: FlutterEventSink?
+  /// Serial queue where compositions are assembled. Reading source tracks and
+  /// rendering stills are blocking operations — keeping them off the platform
+  /// thread is what stops `load` from freezing the UI.
+  private static let buildQueue = DispatchQueue(
+    label: "video_ultra_player.timeline.build",
+    qos: .userInitiated
+  )
 
-  private let composition = TimelineComposition()
+  /// Snapshot of everything reported on the state channel, used to suppress
+  /// duplicate events (a paused player would otherwise emit 30 identical
+  /// messages per second).
+  private struct EmittedState: Equatable {
+    let globalPosition: Int64
+    let clipIndex: Int
+    let localPosition: Int64
+    let isPlaying: Bool
+    let totalDuration: Int64
+    let clipDurations: [Int64]
+    let canUndo: Bool
+    let canRedo: Bool
+  }
+
+  let textureId: Int64
+  var eventSink: FlutterEventSink? {
+    didSet { lastEmittedState = nil }
+  }
+
+  private let composition: TimelineComposition
   private let player: AVPlayer
   private let texture: TimelineTexture
   private let textureRegistry: FlutterTextureRegistry
   private let editHistory = TimelineEditModel()
   private var timeObserver: Any?
   private var currentConfig: TimelineCompositionConfig
+  private var lastEmittedState: EmittedState?
   /// One-shot observer that forces the first frame once the initial item is ready.
   private var firstFrameObserver: NSKeyValueObservation?
 
-  init(
+  /// Builds the composition off the platform thread and hands back a ready
+  /// controller on the main thread, where texture registration must happen.
+  static func make(
     clips: [TimelineClipDescriptor],
     config: TimelineCompositionConfig,
+    textureRegistry: FlutterTextureRegistry,
+    completion: @escaping (Result<TimelinePlayerController, Error>) -> Void
+  ) {
+    buildQueue.async {
+      let composition = TimelineComposition()
+      do {
+        let playerItem = try composition.build(clips: clips, config: config)
+        DispatchQueue.main.async {
+          completion(
+            .success(
+              TimelinePlayerController(
+                composition: composition,
+                playerItem: playerItem,
+                config: config,
+                textureRegistry: textureRegistry
+              )
+            )
+          )
+        }
+      } catch {
+        composition.dispose()
+        DispatchQueue.main.async {
+          completion(.failure(error))
+        }
+      }
+    }
+  }
+
+  private init(
+    composition: TimelineComposition,
+    playerItem: AVPlayerItem,
+    config: TimelineCompositionConfig,
     textureRegistry: FlutterTextureRegistry
-  ) throws {
+  ) {
+    self.composition = composition
     self.textureRegistry = textureRegistry
     self.currentConfig = config
-    let playerItem = try composition.build(clips: clips, config: config)
     // Attach the video output to the item BEFORE handing it to AVPlayer so
     // the output is part of the rendering pipeline from the very first frame.
     let tex = TimelineTexture(playerItem: playerItem, textureRegistry: textureRegistry)
@@ -661,6 +739,39 @@ private final class TimelinePlayerController {
       return
     }
     player.currentItem?.videoComposition = videoComposition
+    emitState()
+  }
+
+  /// Switches output resolution/aspect ratio in place.
+  ///
+  /// The `AVMutableComposition` (and therefore every decoded source) is left
+  /// untouched — only the video composition is regenerated and reassigned, the
+  /// same surgical path used for text-overlay mutations. Clips, overlays, undo
+  /// history, texture ID and playback position all survive.
+  func setCompositionConfig(_ config: TimelineCompositionConfig) {
+    currentConfig = config
+    guard let videoComposition = composition.updateConfig(config) else {
+      emitState()
+      return
+    }
+
+    player.currentItem?.videoComposition = videoComposition
+    texture.updateTextOverlays(
+      composition.textOverlays,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
+
+    if player.rate == 0 {
+      let time = player.currentTime()
+      player.seek(
+        to: time,
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+      ) { [weak self] _ in
+        self?.texture.requestFrame()
+      }
+    }
     emitState()
   }
 
@@ -790,6 +901,8 @@ private final class TimelinePlayerController {
 
   // MARK: - State
 
+  /// Emits the current playback state, skipping the channel round-trip when
+  /// nothing changed since the last emission.
   func emitState() {
     guard let eventSink else {
       return
@@ -797,15 +910,28 @@ private final class TimelinePlayerController {
 
     let currentTime = player.currentTime()
     let segmentState = composition.playbackState(at: currentTime)
+    let state = EmittedState(
+      globalPosition: currentTime.timelineMilliseconds,
+      clipIndex: segmentState.clipIndex,
+      localPosition: segmentState.localPosition.timelineMilliseconds,
+      isPlaying: player.rate != 0,
+      totalDuration: composition.totalDuration.timelineMilliseconds,
+      clipDurations: composition.clipDurationsMs,
+      canUndo: editHistory.canUndo,
+      canRedo: editHistory.canRedo
+    )
+    guard state != lastEmittedState else { return }
+    lastEmittedState = state
+
     eventSink([
-      "globalPosition": currentTime.timelineMilliseconds,
-      "clipIndex": segmentState.clipIndex,
-      "localPosition": segmentState.localPosition.timelineMilliseconds,
-      "isPlaying": player.rate != 0,
-      "totalDuration": composition.totalDuration.timelineMilliseconds,
-      "clipDurationsMs": composition.clipDurationsMs,
-      "canUndo": editHistory.canUndo,
-      "canRedo": editHistory.canRedo,
+      "globalPosition": state.globalPosition,
+      "clipIndex": state.clipIndex,
+      "localPosition": state.localPosition,
+      "isPlaying": state.isPlaying,
+      "totalDuration": state.totalDuration,
+      "clipDurationsMs": state.clipDurations,
+      "canUndo": state.canUndo,
+      "canRedo": state.canRedo,
     ])
   }
 

@@ -73,6 +73,20 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('setClipAlignment() has not been implemented.');
   }
 
+  /// Changes the output resolution/aspect ratio of the loaded composition
+  /// in place, preserving [textureId], clips, overlays and playback position.
+  ///
+  /// [config] is a JSON-compatible map produced by
+  /// [TimelineCompositionConfig.toJson].
+  Future<void> setCompositionConfig(
+    int textureId,
+    Map<String, dynamic> config,
+  ) {
+    throw UnimplementedError(
+      'setCompositionConfig() has not been implemented.',
+    );
+  }
+
   Future<void> dispose(int textureId) {
     throw UnimplementedError('dispose() has not been implemented.');
   }

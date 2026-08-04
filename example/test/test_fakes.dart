@@ -58,6 +58,25 @@ class FakeTimelinePlayer extends NativeTimelinePlayer {
     calls.add('replaceClip:$clipIndex');
   }
 
+  /// Config updates applied in place, in order.
+  final List<TimelineCompositionConfig> appliedConfigs =
+      <TimelineCompositionConfig>[];
+
+  /// Gate that holds [setCompositionConfig] open so a test can observe how
+  /// concurrent requests coalesce.
+  Completer<void>? configGate;
+
+  @override
+  Future<void> setCompositionConfig(TimelineCompositionConfig config) async {
+    calls.add('setCompositionConfig');
+    appliedConfigs.add(config);
+    final gate = configGate;
+    if (gate != null) {
+      configGate = null;
+      await gate.future;
+    }
+  }
+
   @override
   Future<void> dispose() async {
     calls.add('dispose');

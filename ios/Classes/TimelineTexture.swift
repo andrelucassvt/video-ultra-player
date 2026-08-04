@@ -20,8 +20,6 @@ final class TimelineTexture: NSObject, FlutterTexture {
   // Flutter's rasterizer thread — protected by bufferLock.
   private var pixelBufferCache: CVPixelBuffer?
   private let bufferLock = NSLock()
-  // Diagnostic flag — set to true once first frame is captured (remove when fixed).
-  private var _didCaptureFirstFrame = false
 
   var textureId: Int64?
 
@@ -107,22 +105,6 @@ final class TimelineTexture: NSObject, FlutterTexture {
     // Use the display link's own timestamp for accurate item-time mapping,
     // then immediately copy the buffer while that time is still valid.
     let itemTime = videoOutput.itemTime(forHostTime: displayLink.timestamp)
-
-    // Diagnostic: log until we capture a frame (remove once working).
-    if !_didCaptureFirstFrame {
-      let valid = itemTime.isNumeric
-      let hasNew = valid && videoOutput.hasNewPixelBuffer(forItemTime: itemTime)
-      NSLog("[TimelineTexture] tick textureId=%lld itemTimeValid=%d hasNew=%d", textureId, valid ? 1 : 0, hasNew ? 1 : 0)
-      if !hasNew { return }
-      guard let pixelBuffer = videoOutput.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil) else {
-        NSLog("[TimelineTexture] copyPixelBuffer returned nil despite hasNew=true")
-        return
-      }
-      NSLog("[TimelineTexture] FIRST FRAME captured!")
-      _didCaptureFirstFrame = true
-      enqueueFrame(pixelBuffer, itemTime: itemTime, textureId: textureId)
-      return
-    }
 
     guard videoOutput.hasNewPixelBuffer(forItemTime: itemTime),
           let pixelBuffer = videoOutput.copyPixelBuffer(

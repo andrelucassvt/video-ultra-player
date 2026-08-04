@@ -89,6 +89,70 @@ void main() {
     },
   );
 
+  test('aspect ratio change reuses the loaded composition', () async {
+    final player = FakeTimelinePlayer();
+    final controller = EditorController(player: player);
+    final dir = await Directory.systemTemp.createTemp('vc_ratio_test_');
+    final file = File('${dir.path}/a.mp4');
+    await file.writeAsBytes(<int>[1, 2, 3]);
+
+    await controller.replaceTimeline([
+      TimelineClip(path: file.path, type: MediaType.video),
+    ], source: 'test');
+    player.calls.clear();
+
+    await controller.addTextOverlay();
+    await controller.setAspectRatio(OutputAspectRatio.ratio1x1);
+
+    expect(player.appliedConfigs.single.aspectRatio, OutputAspectRatio.ratio1x1);
+    // No teardown: the texture, the overlays and the clips all survive.
+    expect(player.calls, isNot(contains('dispose')));
+    expect(player.calls, isNot(contains('load')));
+    expect(controller.textureId, 42);
+    expect(controller.textOverlays, hasLength(1));
+    expect(controller.clips, hasLength(1));
+    expect(controller.loading, isFalse);
+
+    controller.dispose();
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  });
+
+  test('rapid output changes coalesce into a single trailing call', () async {
+    final player = FakeTimelinePlayer();
+    final controller = EditorController(player: player);
+    final dir = await Directory.systemTemp.createTemp('vc_ratio_burst_');
+    final file = File('${dir.path}/a.mp4');
+    await file.writeAsBytes(<int>[1, 2, 3]);
+
+    await controller.replaceTimeline([
+      TimelineClip(path: file.path, type: MediaType.video),
+    ], source: 'test');
+
+    // Hold the first call open so the next three land while it is in flight.
+    final gate = Completer<void>();
+    player.configGate = gate;
+    final first = controller.setAspectRatio(OutputAspectRatio.ratio1x1);
+    unawaited(controller.setAspectRatio(OutputAspectRatio.ratio16x9));
+    unawaited(controller.setBaseWidth(720));
+    unawaited(controller.setAspectRatio(OutputAspectRatio.ratio9x16));
+    gate.complete();
+    await first;
+
+    // Two native calls total: the in-flight one plus one trailing update
+    // carrying the final state — not one per tap.
+    expect(player.appliedConfigs, hasLength(2));
+    expect(player.appliedConfigs.last.aspectRatio, OutputAspectRatio.ratio9x16);
+    expect(player.appliedConfigs.last.baseWidth, 720);
+    expect(controller.aspectRatio, OutputAspectRatio.ratio9x16);
+
+    controller.dispose();
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  });
+
   test(
     'pickMedia imports media into the session and replaces the timeline',
     () async {
