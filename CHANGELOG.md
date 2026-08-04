@@ -1,3 +1,21 @@
+## 2.2.0
+
+### In-place output config
+
+- Added `NativeTimelinePlayer.setCompositionConfig(TimelineCompositionConfig config)` and the underlying federated `setCompositionConfig` platform call — changes output resolution/aspect ratio without a dispose/load cycle, preserving the texture ID, clip list, text overlays, audio track, undo history, and playback position. Previously the example app routed aspect-ratio changes through dispose + load, which blanked the preview and silently dropped overlays and undo history.
+- Added `NativeTimelinePlayer.compositionConfig` getter to read the config currently applied to the loaded timeline.
+- iOS applies the change through the existing surgical `videoComposition` rebuild path (only render size and per-segment transforms depend on config, so the underlying composition is untouched and nothing is re-decoded).
+
+### Performance
+
+- Loading no longer blocks the platform thread: iOS composition assembly (reading source tracks, rendering stills) runs on a dedicated build queue, and Android metadata extraction runs on a bounded pool resolving clips in parallel — only texture/player creation returns to the main thread on either platform.
+- Android now does a single `MediaMetadataRetriever` pass per clip (duration, dimensions, and rotation together) behind a process-wide `SourceMetadataCache` keyed by path, mtime, and size, instead of two passes.
+- iOS still-image renders now live in a shared `ImageClipVideoCache` that survives controller disposal, encode at 6 fps, and cap the canvas at 1920 px, instead of re-encoding every still to MP4 on each rebuild at full photo resolution.
+- Reduced channel traffic: both platforms deduplicate the emitted state payload, `NativeTimelinePlayer.stateStream` applies `distinct()` in Dart, and the Android playback ticker drops to 250 ms while paused instead of pushing ~30 identical messages per second.
+- Scrub throttle increased from 16 ms to 33 ms to match the composition's 30 fps render rate, avoiding queued seek frames the preview never shows.
+- Rapid taps through an aspect-ratio/resolution picker now coalesce into a single trailing native call instead of one rebuild per tap.
+- Removed a per-display-tick debug log left in the iOS texture.
+
 ## 2.1.1
 
 - Fixed iOS text-overlay export crashes on affected Simulator runtimes by compositing overlays as an additional Core Animation input track instead of post-processing the rendered video layer.
