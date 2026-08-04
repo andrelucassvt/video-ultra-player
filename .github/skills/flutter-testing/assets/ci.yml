@@ -1,0 +1,71 @@
+# .github/workflows/ci.yml
+# Marque este job como obrigatório nas branch protection rules —
+# gauntlet que não bloqueia merge é decoração.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  FLUTTER_VERSION: '3.35.0'   # fixe a versão; 'master' quebra a suíte sozinho
+
+jobs:
+  gauntlet:
+    runs-on: ubuntu-latest     # golden tests rodam em UM SO só
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Instalar lcov
+        run: sudo apt-get update && sudo apt-get install -y lcov
+
+      - name: Dependências
+        run: flutter pub get
+
+      - name: Formatação
+        run: dart format --set-exit-if-changed lib test
+
+      - name: Análise estática
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Testes
+        run: flutter test --coverage --test-randomize-ordering-seed=random
+
+      - name: Cobertura mínima
+        run: |
+          lcov --remove coverage/lcov.info \
+            '**/*.g.dart' '**/*.freezed.dart' '**/*.mocks.dart' \
+            -o coverage/lcov_clean.info
+          lcov --summary coverage/lcov_clean.info
+          PCT=$(lcov --summary coverage/lcov_clean.info 2>&1 | grep -oP 'lines\.*: \K[0-9.]+' | head -1)
+          awk -v p="$PCT" 'BEGIN { exit (p+0 >= 80) ? 0 : 1 }' \
+            || { echo "Cobertura $PCT% abaixo de 80%"; exit 1; }
+
+      - name: Artefatos de golden que falharam
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-failures
+          path: '**/failures/**'
+
+  integration:
+    runs-on: macos-latest
+    if: github.ref == 'refs/heads/main'   # lento demais para todo PR
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - uses: futureware-tech/simulator-action@v3
+        with:
+          model: 'iPhone 15'
+      - run: flutter test integration_test
