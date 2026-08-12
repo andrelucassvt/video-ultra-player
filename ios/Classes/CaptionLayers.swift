@@ -75,6 +75,17 @@ struct CaptionStyleDescriptor {
   }
 }
 
+/// A disjoint visual state for one caption cue.
+///
+/// Karaoke captions use one full-text variant at a time: either the base text
+/// or the text with exactly one highlighted word. Keeping these windows
+/// disjoint prevents Core Animation from compositing duplicate glyphs.
+struct CaptionPresentationSegment: Equatable {
+  let startSeconds: Double
+  let endSeconds: Double
+  let highlightedWordIndex: Int?
+}
+
 /// Builds the CALayer tree that burns captions into the exported MP4 and the
 /// raster images used by the iOS preview, mirroring `TextOverlayLayers`.
 enum CaptionLayers {
@@ -113,8 +124,8 @@ enum CaptionLayers {
 
   /// Rasterizes captions once per committed state so preview can draw the
   /// cached images into the texture pixel buffer without text layout per
-  /// frame. In karaoke mode one raster per word (the full cue text with that
-  /// word highlighted) is produced, each visible during its word window.
+  /// frame. In karaoke mode the cue is split into disjoint presentation
+  /// segments: base text in gaps and one highlighted-word variant at a time.
   static func makeCaptionRasters(
     cues: [CaptionCueDescriptor],
     style: CaptionStyleDescriptor,
@@ -144,40 +155,23 @@ enum CaptionLayers {
     renderSize: CGSize,
     totalSeconds: Double
   ) -> [CaptionRaster] {
-    let startSeconds = max(Double(cue.startMs) / 1_000, 0)
-    let endSeconds = min(Double(cue.endMs) / 1_000, max(totalSeconds, 0))
-    guard endSeconds > startSeconds else {
-      return []
-    }
-
-    if !style.karaoke || cue.words.isEmpty {
-      guard let raster = makeRaster(
-        text: displayText(cue.text, style: style),
-        highlightRange: nil,
-        cue: cue,
-        style: style,
-        renderSize: renderSize,
-        startSeconds: startSeconds,
-        endSeconds: endSeconds
-      ) else {
-        return []
+    let text = displayText(cue.text, style: style)
+    return presentationSegments(
+      for: cue,
+      style: style,
+      totalSeconds: totalSeconds
+    ).compactMap { segment in
+      let range = segment.highlightedWordIndex.map {
+        highlightRange(for: $0, in: cue, style: style)
       }
-      return [raster]
-    }
-
-    return cue.words.enumerated().compactMap { index, word in
-      let wordStart = max(Double(word.startMs) / 1_000, startSeconds)
-      let wordEnd = min(Double(word.endMs) / 1_000, endSeconds)
-      guard wordEnd > wordStart else { return nil }
-      let range = highlightRange(for: index, in: cue, style: style)
       return makeRaster(
-        text: displayText(cue.text, style: style),
+        text: text,
         highlightRange: range,
         cue: cue,
         style: style,
         renderSize: renderSize,
-        startSeconds: wordStart,
-        endSeconds: wordEnd
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds
       )
     }
   }
@@ -250,56 +244,42 @@ enum CaptionLayers {
   // MARK: - Export layers
 
   /// Uses CATextLayer for offline export, mirroring `TextOverlayLayers`.
-  /// One layer per cue with a discrete opacity animation on `[start, end)`;
-  /// in karaoke mode a second highlight layer per word animates on the word
-  /// window over the base cue text.
+  /// One layer per mutually exclusive caption state with a discrete opacity
+  /// animation on `[start, end)`. Karaoke variants replace the base text
+  /// instead of being composited on top of it.
   private static func makeExportCueLayer(
     cue: CaptionCueDescriptor,
     style: CaptionStyleDescriptor,
     renderSize: CGSize,
     totalSeconds: Double
   ) -> CALayer? {
-    let startSeconds = max(Double(cue.startMs) / 1_000, 0)
-    let endSeconds = min(Double(cue.endMs) / 1_000, max(totalSeconds, 0))
-    guard endSeconds > startSeconds else {
-      return nil
-    }
-
     let text = displayText(cue.text, style: style)
     let container = CALayer()
     container.frame = CGRect(origin: .zero, size: renderSize)
 
-    guard let baseLayer = makeExportTextLayer(
-      text: text,
-      highlightRange: nil,
+    let segments = presentationSegments(
+      for: cue,
       style: style,
-      renderSize: renderSize,
-      totalSeconds: totalSeconds,
-      startSeconds: startSeconds,
-      endSeconds: endSeconds
-    ) else {
-      return nil
-    }
-    container.addSublayer(baseLayer)
+      totalSeconds: totalSeconds
+    )
+    guard !segments.isEmpty else { return nil }
 
-    if style.karaoke && !cue.words.isEmpty {
-      for (index, word) in cue.words.enumerated() {
-        let wordStart = max(Double(word.startMs) / 1_000, startSeconds)
-        let wordEnd = min(Double(word.endMs) / 1_000, endSeconds)
-        guard wordEnd > wordStart else { continue }
-        guard let highlightLayer = makeExportTextLayer(
-          text: text,
-          highlightRange: highlightRange(for: index, in: cue, style: style),
-          style: style,
-          renderSize: renderSize,
-          totalSeconds: totalSeconds,
-          startSeconds: wordStart,
-          endSeconds: wordEnd
-        ) else {
-          continue
-        }
-        container.addSublayer(highlightLayer)
+    for segment in segments {
+      let range = segment.highlightedWordIndex.map {
+        highlightRange(for: $0, in: cue, style: style)
       }
+      guard let layer = makeExportTextLayer(
+        text: text,
+        highlightRange: range,
+        style: style,
+        renderSize: renderSize,
+        totalSeconds: totalSeconds,
+        startSeconds: segment.startSeconds,
+        endSeconds: segment.endSeconds
+      ) else {
+        continue
+      }
+      container.addSublayer(layer)
     }
     return container
   }
@@ -404,9 +384,11 @@ enum CaptionLayers {
       .foregroundColor: UIColor(argb: style.color),
     ]
     if style.strokeWidth > 0 {
-      // Negative stroke width = fill + outline, matching the Android renderer.
+      // NSAttributedString expresses stroke width as a percentage of font
+      // size, while the public style expresses it as a fraction of video
+      // height. Convert between the two so Flutter preview and export match.
       attributes[.strokeColor] = UIColor.black
-      attributes[.strokeWidth] = -style.strokeWidth * font.pointSize
+      attributes[.strokeWidth] = strokeWidthPercentage(for: style)
     }
 
     let result = NSMutableAttributedString(string: text, attributes: attributes)
@@ -420,6 +402,76 @@ enum CaptionLayers {
       )
     }
     return result
+  }
+
+  static func presentationSegments(
+    for cue: CaptionCueDescriptor,
+    style: CaptionStyleDescriptor,
+    totalSeconds: Double
+  ) -> [CaptionPresentationSegment] {
+    let cueStart = max(Double(cue.startMs) / 1_000, 0)
+    let cueEnd = min(Double(cue.endMs) / 1_000, max(totalSeconds, 0))
+    guard cueEnd > cueStart else { return [] }
+    guard style.karaoke, !cue.words.isEmpty else {
+      return [
+        CaptionPresentationSegment(
+          startSeconds: cueStart,
+          endSeconds: cueEnd,
+          highlightedWordIndex: nil
+        ),
+      ]
+    }
+
+    let wordWindows = cue.words.enumerated().compactMap { index, word
+      -> (index: Int, start: Double, end: Double)? in
+      let start = max(Double(word.startMs) / 1_000, cueStart)
+      let end = min(Double(word.endMs) / 1_000, cueEnd)
+      guard end > start else { return nil }
+      return (index, start, end)
+    }.sorted {
+      $0.start == $1.start ? $0.index < $1.index : $0.start < $1.start
+    }
+
+    var segments: [CaptionPresentationSegment] = []
+    var cursor = cueStart
+    for window in wordWindows where cursor < cueEnd {
+      let activeStart = max(window.start, cursor)
+      if activeStart > cursor {
+        segments.append(
+          CaptionPresentationSegment(
+            startSeconds: cursor,
+            endSeconds: activeStart,
+            highlightedWordIndex: nil
+          )
+        )
+      }
+      let activeEnd = min(max(window.end, activeStart), cueEnd)
+      if activeEnd > activeStart {
+        segments.append(
+          CaptionPresentationSegment(
+            startSeconds: activeStart,
+            endSeconds: activeEnd,
+            highlightedWordIndex: window.index
+          )
+        )
+        cursor = activeEnd
+      }
+    }
+    if cursor < cueEnd {
+      segments.append(
+        CaptionPresentationSegment(
+          startSeconds: cursor,
+          endSeconds: cueEnd,
+          highlightedWordIndex: nil
+        )
+      )
+    }
+    return segments
+  }
+
+  static func strokeWidthPercentage(for style: CaptionStyleDescriptor) -> CGFloat {
+    guard style.strokeWidth > 0, style.fontSize > 0 else { return 0 }
+    return -(style.strokeWidth / style.fontSize) * 100
   }
 
   /// Locates the character range of the word at `index` inside the cue text
