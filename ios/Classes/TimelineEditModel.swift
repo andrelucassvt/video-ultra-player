@@ -4,6 +4,8 @@ struct TimelineEditSnapshot {
   let clips: [TimelineClipDescriptor]
   let audioTrack: AudioTrackDescriptor?
   let textOverlays: [TextOverlayDescriptor]
+  let captionCues: [CaptionCueDescriptor]
+  let captionStyle: CaptionStyleDescriptor?
 }
 
 final class TimelineEditModel {

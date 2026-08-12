@@ -120,6 +120,62 @@ await player.updateTextOverlay(title.copyWith(rotationDegrees: -5));
 await player.removeTextOverlay(title.id);
 ```
 
+## Captions (auto-legenda)
+
+Captions burn the active subtitle into the preview and the exported MP4 with a
+single composition rebuild, no matter how many cues the timeline has. Pass the
+full cue list plus one style; the native overlay picks the active cue from the
+frame's presentation time.
+
+```dart
+import 'package:video_ultra_player/src/models/timeline_caption.dart';
+
+final cues = [
+  TimelineCaptionCue(
+    text: 'Olá mundo',
+    start: const Duration(seconds: 1),
+    end: const Duration(seconds: 3),
+    words: [
+      TimelineCaptionWord(
+        text: 'Olá',
+        start: const Duration(seconds: 1),
+        end: const Duration(seconds: 1, milliseconds: 900),
+      ),
+      TimelineCaptionWord(
+        text: 'mundo',
+        start: const Duration(seconds: 1, milliseconds: 900),
+        end: const Duration(seconds: 3),
+      ),
+    ],
+  ),
+];
+
+const style = TimelineCaptionStyle(
+  positionY: 0.85,
+  fontSize: 0.055,
+  backgroundOpacity: 0.4,
+  karaoke: true,
+);
+
+await player.setCaptions(cues, style);
+await player.removeCaptions();
+```
+
+`TimelineCaptionStyle` fields: `color`/`highlightColor` (ARGB), `fontSize`
+(fraction of the video height), `positionY` (0–1, center of the caption
+block), `uppercase`, `karaoke` (highlights the active word), `strokeWidth`
+(fraction of the video height, 0 disables), `backgroundOpacity` (0–1, black
+box behind the text). Captions are part of the native undo/redo history.
+
+### Audio extraction
+
+`extractAudio` extracts the audio of the loaded composition (trims, speeds
+and gaps included) as an m4a file — the input for speech recognition.
+
+```dart
+final audioPath = await player.extractAudio(outputPath: '/tmp/speech.m4a');
+```
+
 ## Export
 
 ```dart
@@ -169,6 +225,8 @@ await player.load(clips, config: const TimelineCompositionConfig(
 | `setClipAlignment(int, double, double)` | Pan/crop alignment. |
 | `setAudioTrack(AudioTrack)` / `removeAudioTrack()` | Overlay audio. |
 | `addTextOverlay` / `updateTextOverlay` / `removeTextOverlay` | Timeline text overlays. |
+| `setCaptions(cues, style)` / `removeCaptions()` | Batch caption cues + style (one rebuild). |
+| `extractAudio({outputPath})` | m4a audio of the loaded composition. |
 | `undo()` / `redo()` | Edit history. |
 | `generateThumbnails(path, timestamps, {width})` | JPEG thumbnail list. |
 | `stateStream` | `Stream<TimelinePlayerState>` |

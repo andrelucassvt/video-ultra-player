@@ -293,6 +293,49 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
     );
   }
 
+  // ── Captions ─────────────────────────────────────────────────────────────
+
+  @override
+  Future<void> setCaptions(
+    int textureId,
+    List<Map<String, dynamic>> cues,
+    Map<String, dynamic> style,
+  ) {
+    return methodChannel.invokeMethod<void>('setCaptions', <String, Object?>{
+      'textureId': textureId,
+      'cues': cues,
+      'style': style,
+    });
+  }
+
+  @override
+  Future<void> removeCaptions(int textureId) {
+    return methodChannel.invokeMethod<void>(
+      'removeCaptions',
+      <String, Object?>{'textureId': textureId},
+    );
+  }
+
+  @override
+  Future<String> extractAudio(
+    int textureId, {
+    required String outputPath,
+    int sampleRate = 16000,
+  }) async {
+    final extractedPath = await methodChannel.invokeMethod<String>(
+      'extractAudio',
+      <String, Object?>{
+        'textureId': textureId,
+        'outputPath': outputPath,
+        'sampleRate': sampleRate,
+      },
+    );
+    if (extractedPath == null) {
+      throw StateError('Native audio extraction did not return a path.');
+    }
+    return extractedPath;
+  }
+
   // ── Thumbnail generation ────────────────────────────────────────────────
 
   @override

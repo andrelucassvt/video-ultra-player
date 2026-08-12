@@ -7,6 +7,7 @@ final class TimelineTexture: NSObject, FlutterTexture {
   private weak var textureRegistry: FlutterTextureRegistry?
   private var displayLink: CADisplayLink?
   private let textOverlayRenderer = TimelineTextOverlayRenderer()
+  private let captionRenderer = CaptionRenderer()
   private let frameProcessingQueue = DispatchQueue(
     label: "video_ultra_player.timeline_texture.frames",
     qos: .userInteractive
@@ -59,6 +60,29 @@ final class TimelineTexture: NSObject, FlutterTexture {
   ) {
     textOverlayRenderer.update(
       overlays: overlays,
+      renderSize: renderSize,
+      totalDuration: totalDuration
+    )
+    processingLock.lock()
+    overlayGeneration += 1
+    processingLock.unlock()
+    bufferLock.lock()
+    pixelBufferCache = nil
+    bufferLock.unlock()
+  }
+
+  /// Rebuilds the cached caption rasters after a committed caption mutation.
+  /// Existing composited frames are discarded so a paused player cannot keep
+  /// showing stale captions while the zero-tolerance refresh seek completes.
+  func updateCaptions(
+    _ cues: [CaptionCueDescriptor],
+    style: CaptionStyleDescriptor?,
+    renderSize: CGSize,
+    totalDuration: CMTime
+  ) {
+    captionRenderer.update(
+      cues: cues,
+      style: style,
       renderSize: renderSize,
       totalDuration: totalDuration
     )
@@ -136,6 +160,7 @@ final class TimelineTexture: NSObject, FlutterTexture {
     frameProcessingQueue.async { [weak self] in
       guard let self else { return }
       self.textOverlayRenderer.render(over: pixelBuffer, at: itemTime)
+      self.captionRenderer.render(over: pixelBuffer, at: itemTime)
 
       self.processingLock.lock()
       let shouldPublish = !self.isDisposed && generation == self.overlayGeneration

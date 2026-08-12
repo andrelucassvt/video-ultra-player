@@ -1,4 +1,5 @@
 import 'package:video_ultra_player/src/models/audio_track.dart';
+import 'package:video_ultra_player/src/models/timeline_caption.dart';
 import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
@@ -383,6 +384,49 @@ class NativeTimelinePlayer {
   Future<void> removeTextOverlay(String overlayId) {
     _requireTextureId();
     return _platform.removeTextOverlay(textureId!, overlayId);
+  }
+
+  // ── Captions ─────────────────────────────────────────────────────────────
+
+  /// Replaces the caption cues and style of the loaded timeline.
+  ///
+  /// Unlike per-overlay calls, this sends the full [cues] list plus one
+  /// [style] in a single native call — a single overlay renders the active
+  /// cue at each presentation time, so one composition rebuild covers N cues.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> setCaptions(
+    List<TimelineCaptionCue> cues,
+    TimelineCaptionStyle style,
+  ) {
+    _requireTextureId();
+    return _platform.setCaptions(
+      textureId!,
+      cues.map((cue) => cue.toMap()).toList(growable: false),
+      style.toMap(),
+    );
+  }
+
+  /// Removes the captions previously set via [setCaptions].
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> removeCaptions() {
+    _requireTextureId();
+    return _platform.removeCaptions(textureId!);
+  }
+
+  /// Extracts the audio of the loaded composition to [outputPath] as an m4a
+  /// file (AAC), keeping the composition's trims, speeds and gaps.
+  ///
+  /// The extraction happens on the composed timeline — not on the raw source
+  /// files — so captions will keep working on an edited timeline.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<String> extractAudio({required String outputPath}) {
+    return _platform.extractAudio(
+      _requireTextureId(),
+      outputPath: outputPath,
+    );
   }
 
   // ── Thumbnail generation ────────────────────────────────────────────────

@@ -1,3 +1,15 @@
+## 2.3.0
+
+### Captions
+
+- Added the public `TimelineCaptionCue`, `TimelineCaptionWord`, and `TimelineCaptionStyle` models and the federated `setCaptions`, `removeCaptions`, and `extractAudio` APIs.
+- Captions burn into the preview and the exported MP4 on iOS and Android through a single native overlay that picks the active cue from the frame's presentation time — one composition rebuild covers 20–180 cues.
+- Added the karaoke mode: the active word is highlighted per its own window (`words` on each cue), with per-word `CATextLayer` highlight layers on iOS export and span-based highlighting in the Android bitmap renderer.
+- Style support: ARGB text/highlight colors, font size and stroke as fractions of the video height, normalized vertical position, uppercase, and background box opacity.
+- Caption mutations participate in the native undo/redo history on both platforms.
+- Added `NativeTimelinePlayer.extractAudio({outputPath})`: extracts the audio of the loaded composition (trims, speeds, gaps included) as an m4a file — Android uses a Media3 `Transformer` audio-only composition; iOS exports the composition with `AVAssetExportPresetAppleM4A`.
+- Audio extraction keeps the source sample rate and channel layout (the `sampleRate` contract hint is reserved for future resampling).
+
 ## 2.2.0
 
 ### In-place output config

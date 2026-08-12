@@ -6,6 +6,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
+import 'package:video_ultra_player/src/models/timeline_caption.dart';
 
 class MockVideoUltraPlayerPlatform
     with MockPlatformInterfaceMixin
@@ -33,6 +34,9 @@ class MockVideoUltraPlayerPlatform
   Map<String, dynamic>? lastAudioTrackPayload;
   Map<String, dynamic>? lastTextOverlayPayload;
   String? lastRemovedTextOverlayId;
+  List<Map<String, dynamic>>? lastCaptionsCues;
+  Map<String, dynamic>? lastCaptionsStyle;
+  String? lastExtractAudioOutputPath;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
   final exportProgressController =
       StreamController<TimelineExportProgress>.broadcast();
@@ -289,6 +293,36 @@ class MockVideoUltraPlayerPlatform
     calls.add('removeTextOverlay');
     lastTextureId = textureId;
     lastRemovedTextOverlayId = overlayId;
+  }
+
+  @override
+  Future<void> setCaptions(
+    int textureId,
+    List<Map<String, dynamic>> cues,
+    Map<String, dynamic> style,
+  ) async {
+    calls.add('setCaptions');
+    lastTextureId = textureId;
+    lastCaptionsCues = cues;
+    lastCaptionsStyle = style;
+  }
+
+  @override
+  Future<void> removeCaptions(int textureId) async {
+    calls.add('removeCaptions');
+    lastTextureId = textureId;
+  }
+
+  @override
+  Future<String> extractAudio(
+    int textureId, {
+    required String outputPath,
+    int sampleRate = 16000,
+  }) async {
+    calls.add('extractAudio');
+    lastTextureId = textureId;
+    lastExtractAudioOutputPath = outputPath;
+    return outputPath;
   }
 }
 
@@ -1021,5 +1055,115 @@ void main() {
         expect(fakePlatform.lastRemovedTextOverlayId, 'text-1');
       },
     );
+  });
+
+  // ── Captions ─────────────────────────────────────────────────────────────
+
+  final sampleCue = TimelineCaptionCue(
+    text: 'Olá mundo',
+    start: const Duration(milliseconds: 500),
+    end: const Duration(seconds: 3),
+    words: [
+      TimelineCaptionWord(
+        text: 'Olá',
+        start: const Duration(milliseconds: 500),
+        end: const Duration(milliseconds: 900),
+      ),
+    ],
+  );
+
+  group('setCaptions', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.setCaptions([sampleCue], const TimelineCaptionStyle()),
+        throwsStateError,
+      );
+    });
+
+    test(
+      'calls platform.setCaptions with textureId, serialized cues and style after load',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
+
+        await player.setCaptions(
+          [sampleCue],
+          const TimelineCaptionStyle(
+            positionY: 0.9,
+            karaoke: true,
+            backgroundOpacity: 0.5,
+          ),
+        );
+
+        expect(fakePlatform.calls, contains('setCaptions'));
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastCaptionsCues, [
+          {
+            'text': 'Olá mundo',
+            'startMs': 500,
+            'endMs': 3000,
+            'words': [
+              {'text': 'Olá', 'startMs': 500, 'endMs': 900},
+            ],
+          },
+        ]);
+        expect(fakePlatform.lastCaptionsStyle, {
+          'color': 0xFFFFFFFF,
+          'fontSize': 0.055,
+          'positionY': 0.9,
+          'uppercase': false,
+          'karaoke': true,
+          'strokeWidth': 0.0,
+          'backgroundOpacity': 0.5,
+          'highlightColor': 0xFFFFD700,
+        });
+      },
+    );
+  });
+
+  group('removeCaptions', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.removeCaptions(), throwsStateError);
+    });
+
+    test('calls platform.removeCaptions with textureId after load', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
+
+      await player.removeCaptions();
+
+      expect(fakePlatform.calls, contains('removeCaptions'));
+      expect(fakePlatform.lastTextureId, 42);
+    });
+  });
+
+  group('extractAudio', () {
+    test('throws StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.extractAudio(outputPath: '/tmp/audio.m4a'),
+        throwsStateError,
+      );
+    });
+
+    test('calls platform.extractAudio and returns the output path', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
+
+      final path = await player.extractAudio(outputPath: '/tmp/audio.m4a');
+
+      expect(fakePlatform.calls, contains('extractAudio'));
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastExtractAudioOutputPath, '/tmp/audio.m4a');
+      expect(path, '/tmp/audio.m4a');
+    });
   });
 }

@@ -260,6 +260,37 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       }
       controller.removeTextOverlay(id: overlayId)
       result(nil)
+    case "setCaptions":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any],
+            let rawCues = args["cues"] as? [[String: Any]],
+            let styleDict = args["style"] as? [String: Any],
+            let style = CaptionStyleDescriptor(dictionary: styleDict)
+      else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "setCaptions requires cues ([Map]) and style (Map).",
+          details: nil
+        ))
+        return
+      }
+      let cues = rawCues.compactMap(CaptionCueDescriptor.init(dictionary:))
+      guard cues.count == rawCues.count else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "setCaptions received an invalid cue map.",
+          details: nil
+        ))
+        return
+      }
+      controller.setCaptions(cues, style: style)
+      result(nil)
+    case "removeCaptions":
+      guard let controller = controller(for: call, result: result) else { return }
+      controller.removeCaptions()
+      result(nil)
+    case "extractAudio":
+      extractAudio(call, result: result)
     case "generateThumbnails":
       guard let args = call.arguments as? [String: Any],
             let videoPath = args["videoPath"] as? String,
@@ -364,6 +395,42 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
         )
       }
     }
+  }
+
+  private func extractAudio(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard let controller = controller(for: call, result: result) else { return }
+    let outputPath = (call.arguments as? [String: Any])?["outputPath"] as? String
+    let outputURL = URL(fileURLWithPath: outputPath ?? "")
+    guard !outputURL.path.isEmpty else {
+      result(FlutterError(
+        code: "invalid_arguments",
+        message: "extractAudio requires outputPath (String).",
+        details: nil
+      ))
+      return
+    }
+
+    do {
+      try FileManager.default.createDirectory(
+        at: outputURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      if FileManager.default.fileExists(atPath: outputURL.path) {
+        try FileManager.default.removeItem(at: outputURL)
+      }
+    } catch {
+      result(FlutterError(
+        code: "extract_audio_failed",
+        message: "Unable to prepare audio output directory.",
+        details: "\(error)"
+      ))
+      return
+    }
+
+    controller.extractAudio(to: outputURL, result: result)
   }
 
   private func exportTimeline(
@@ -761,6 +828,12 @@ private final class TimelinePlayerController {
       renderSize: composition.outputRenderSize,
       totalDuration: composition.totalDuration
     )
+    texture.updateCaptions(
+      composition.captionCues,
+      style: composition.captionStyle,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
 
     if player.rate == 0 {
       let time = player.currentTime()
@@ -873,6 +946,71 @@ private final class TimelinePlayerController {
     applyUpdatedTextOverlays()
   }
 
+  // MARK: - Captions
+
+  func setCaptions(_ cues: [CaptionCueDescriptor], style: CaptionStyleDescriptor) {
+    pushEditSnapshot()
+    composition.setCaptions(cues, style: style)
+    applyUpdatedCaptions()
+  }
+
+  func removeCaptions() {
+    guard composition.hasCaptions else {
+      emitState()
+      return
+    }
+    pushEditSnapshot()
+    composition.removeCaptions()
+    applyUpdatedCaptions()
+  }
+
+  func extractAudio(to outputURL: URL, result: @escaping FlutterResult) {
+    do {
+      let exportAsset = try composition.buildCurrentExportAsset(config: currentConfig)
+      guard
+        let exporter = AVAssetExportSession(
+          asset: exportAsset.asset,
+          presetName: AVAssetExportPresetAppleM4A
+        )
+      else {
+        result(FlutterError(
+          code: "extract_audio_failed",
+          message: "Unable to create audio export session.",
+          details: nil
+        ))
+        return
+      }
+      exporter.outputURL = outputURL
+      exporter.outputFileType = .m4a
+      exporter.exportAsynchronously {
+        DispatchQueue.main.async {
+          switch exporter.status {
+          case .completed:
+            result(outputURL.path)
+          case .failed, .cancelled:
+            result(FlutterError(
+              code: "extract_audio_failed",
+              message: "Audio extraction failed or was cancelled.",
+              details: exporter.error?.localizedDescription
+            ))
+          default:
+            result(FlutterError(
+              code: "extract_audio_failed",
+              message: "Audio extraction ended in unexpected state.",
+              details: "\(exporter.status.rawValue)"
+            ))
+          }
+        }
+      }
+    } catch {
+      result(FlutterError(
+        code: "extract_audio_failed",
+        message: "Unable to extract timeline audio.",
+        details: "\(error)"
+      ))
+    }
+  }
+
   func undo() throws {
     let current = composition.makeEditSnapshot()
     guard let snapshot = editHistory.undo(current: current) else {
@@ -963,6 +1101,12 @@ private final class TimelinePlayerController {
       renderSize: composition.outputRenderSize,
       totalDuration: composition.totalDuration
     )
+    texture.updateCaptions(
+      composition.captionCues,
+      style: composition.captionStyle,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
 
     NotificationCenter.default.removeObserver(
       self,
@@ -1004,6 +1148,28 @@ private final class TimelinePlayerController {
   private func applyUpdatedTextOverlays() {
     texture.updateTextOverlays(
       composition.textOverlays,
+      renderSize: composition.outputRenderSize,
+      totalDuration: composition.totalDuration
+    )
+    player.currentItem?.videoComposition = composition.updatedVideoComposition()
+    if player.rate == 0 {
+      let time = player.currentTime()
+      player.seek(
+        to: time,
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+      ) { [weak self] _ in
+        self?.texture.requestFrame()
+      }
+    }
+    emitState()
+  }
+
+  /// Refreshes cached caption rasters, mirroring `applyUpdatedTextOverlays`.
+  private func applyUpdatedCaptions() {
+    texture.updateCaptions(
+      composition.captionCues,
+      style: composition.captionStyle,
       renderSize: composition.outputRenderSize,
       totalDuration: composition.totalDuration
     )

@@ -205,6 +205,43 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('removeTextOverlay() has not been implemented.');
   }
 
+  // ── Captions ─────────────────────────────────────────────────────────────
+
+  /// Replaces the caption cues and style of the loaded timeline.
+  ///
+  /// [cues] is a list of JSON-compatible maps produced by
+  /// [TimelineCaptionCue.toMap] and [style] by [TimelineCaptionStyle.toMap].
+  /// A single native overlay renders the active cue at each presentation
+  /// time, so the composition is rebuilt exactly once regardless of the
+  /// number of cues.
+  Future<void> setCaptions(
+    int textureId,
+    List<Map<String, dynamic>> cues,
+    Map<String, dynamic> style,
+  ) {
+    throw UnimplementedError('setCaptions() has not been implemented.');
+  }
+
+  /// Removes the captions previously set via [setCaptions] from the loaded
+  /// timeline.
+  Future<void> removeCaptions(int textureId) {
+    throw UnimplementedError('removeCaptions() has not been implemented.');
+  }
+
+  /// Extracts the audio of the loaded composition to [outputPath] as an m4a
+  /// file (AAC), keeping the composition's trims, speeds and gaps.
+  ///
+  /// Returns the absolute path of the generated file. [sampleRate] is a
+  /// contract hint for speech recognition; the current native
+  /// implementations preserve the source sample rate.
+  Future<String> extractAudio(
+    int textureId, {
+    required String outputPath,
+    int sampleRate = 16000,
+  }) {
+    throw UnimplementedError('extractAudio() has not been implemented.');
+  }
+
   /// Extracts and caches thumbnail frames from [videoPath] at each timestamp
   /// in [timestampsMs] (milliseconds) and returns a list of absolute
   /// file-system paths to the cached JPEG images.

@@ -281,6 +281,31 @@ class VideoUltraPlayerPlugin :
                 result.success(null)
             }
             "generateThumbnails" -> generateThumbnails(call, result)
+            "setCaptions" -> withController(call, result) { controller ->
+                val args = call.arguments as? Map<*, *>
+                val cues = args?.get("cues") as? List<*>
+                val style = args?.get("style") as? Map<*, *>
+                if (cues == null || style == null) {
+                    result.error("invalid_arguments", "Expected cues and style.", null)
+                    return@withController
+                }
+                try {
+                    controller.setCaptions(cues, style)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    Log.e("VideoUltraPlayer", "setCaptions failed", error)
+                    result.error(
+                        "edit_failed",
+                        "setCaptions failed: ${error.message ?: error.toString()}",
+                        Log.getStackTraceString(error)
+                    )
+                }
+            }
+            "removeCaptions" -> withController(call, result) { controller ->
+                controller.removeCaptions()
+                result.success(null)
+            }
+            "extractAudio" -> extractAudio(call, result)
             "exportCurrentTimeline" -> exportCurrentTimeline(call, result)
             "dispose" -> {
                 val textureId = textureId(call.arguments)
@@ -472,6 +497,54 @@ class VideoUltraPlayerPlugin :
         )
         exporterRef = exporter
         activeExporters.add(exporter)
+    }
+
+    private fun extractAudio(call: MethodCall, result: Result) {
+        val textureId = textureId(call.arguments)
+        if (textureId == null) {
+            result.error("invalid_arguments", "Expected textureId.", null)
+            return
+        }
+        val controller = controllers[textureId]
+        if (controller == null) {
+            result.error(
+                "not_found",
+                "No native timeline player exists for textureId $textureId.",
+                null
+            )
+            return
+        }
+
+        val args = call.arguments as? Map<*, *>
+        val outputPath = args?.get("outputPath") as? String
+        try {
+            controller.extractAudio(
+                outputPath = outputPath,
+                callback = object : TimelineExportCallback {
+                    override fun onProgress(progress: Double, state: String) {
+                        exportProgressHandler.emit(progress, state)
+                    }
+
+                    override fun onCompleted(outputPath: String) {
+                        result.success(outputPath)
+                    }
+
+                    override fun onError(error: Throwable) {
+                        result.error(
+                            "extract_audio_failed",
+                            "Unable to extract timeline audio.",
+                            error.message
+                        )
+                    }
+                }
+            )
+        } catch (error: Throwable) {
+            result.error(
+                "extract_audio_failed",
+                "Unable to extract timeline audio.",
+                error.message
+            )
+        }
     }
 
     private fun generateThumbnails(call: MethodCall, result: Result) {

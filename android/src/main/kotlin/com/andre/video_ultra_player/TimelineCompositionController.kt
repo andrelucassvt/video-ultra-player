@@ -73,6 +73,8 @@ internal class TimelineCompositionController(
     private var totalDurationMs: Long = 0L
     private var audioTrack: AudioTrackDescriptor? = null
     private var textOverlays: List<TextOverlayDescriptor> = emptyList()
+    private var captionCues: List<CaptionCueDescriptor> = emptyList()
+    private var captionStyle: CaptionStyleDescriptor? = null
     private val editHistory = TimelineEditModel()
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
@@ -190,7 +192,14 @@ internal class TimelineCompositionController(
                     }
                 )
                 compositionPlayer.setComposition(
-                    buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)
+                    buildTimelineComposition(
+                        clips,
+                        renderSize,
+                        audioTrack,
+                        textOverlays,
+                        captionCues,
+                        captionStyle
+                    )
                 )
                 compositionPlayer.prepare()
             }
@@ -425,6 +434,45 @@ internal class TimelineCompositionController(
         rebuildCompositionPreservingPlayback()
     }
 
+    /**
+     * Replaces the caption cues and style of the current timeline in a single
+     * rebuild — one native overlay renders the active cue per frame, so the
+     * cost is independent of the number of cues.
+     */
+    fun setCaptions(rawCues: List<*>, rawStyle: Map<*, *>) {
+        pushEditSnapshot()
+        captionCues = rawCues
+            .mapNotNull { it as? Map<*, *> }
+            .map { CaptionCueDescriptor.from(it) }
+        captionStyle = CaptionStyleDescriptor.from(rawStyle)
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Removes the captions previously set via [setCaptions] (no-op when there
+     * are none).
+     */
+    fun removeCaptions() {
+        if (captionCues.isEmpty()) {
+            emitState()
+            return
+        }
+        pushEditSnapshot()
+        captionCues = emptyList()
+        captionStyle = null
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
+     * Extracts the audio of the current composition (trims, speeds and gaps
+     * included) to [outputPath] as an m4a file. Progress is reported through
+     * the same callback contract used by exports.
+     */
+    fun extractAudio(outputPath: String?, callback: TimelineExportCallback) {
+        val currentClips = clips.toList()
+        AudioExtractor(context).extract(currentClips, outputPath, callback)
+    }
+
     fun undo() {
         val snapshot = editHistory.undo(currentEditSnapshot()) ?: run {
             emitState()
@@ -449,12 +497,16 @@ internal class TimelineCompositionController(
         val currentRenderSize = renderSize
         val currentAudioTrack = audioTrack
         val currentTextOverlays = textOverlays
+        val currentCaptionCues = captionCues
+        val currentCaptionStyle = captionStyle
         return TimelineCompositionExporter(context).also { exporter ->
             exporter.exportFromClips(
                 currentClips,
                 currentRenderSize,
                 currentAudioTrack,
                 currentTextOverlays,
+                currentCaptionCues,
+                currentCaptionStyle,
                 outputPath,
                 callback
             )
@@ -489,7 +541,14 @@ internal class TimelineCompositionController(
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
         currentPlayer.setComposition(
-            buildTimelineComposition(clips, renderSize, audioTrack, textOverlays),
+            buildTimelineComposition(
+                clips,
+                renderSize,
+                audioTrack,
+                textOverlays,
+                captionCues,
+                captionStyle
+            ),
             positionMs.coerceIn(0L, totalDurationMs)
         )
         currentPlayer.prepare()
@@ -559,7 +618,9 @@ internal class TimelineCompositionController(
         return TimelineEditSnapshot(
             clips = clips.toList(),
             audioTrack = audioTrack,
-            textOverlays = textOverlays
+            textOverlays = textOverlays,
+            captionCues = captionCues,
+            captionStyle = captionStyle
         )
     }
 
@@ -567,6 +628,8 @@ internal class TimelineCompositionController(
         clips = snapshot.clips.toMutableList()
         audioTrack = snapshot.audioTrack
         textOverlays = snapshot.textOverlays
+        captionCues = snapshot.captionCues
+        captionStyle = snapshot.captionStyle
         rebuildCompositionPreservingPlayback()
     }
 }
@@ -616,6 +679,8 @@ internal class TimelineCompositionExporter(
             outputSize,
             null,
             emptyList(),
+            emptyList(),
+            null,
             outputPath,
             callback
         )
@@ -626,6 +691,8 @@ internal class TimelineCompositionExporter(
         renderSize: TimelineRenderSize,
         audioTrack: AudioTrackDescriptor?,
         textOverlays: List<TextOverlayDescriptor> = emptyList(),
+        captionCues: List<CaptionCueDescriptor> = emptyList(),
+        captionStyle: CaptionStyleDescriptor? = null,
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
@@ -637,7 +704,14 @@ internal class TimelineCompositionExporter(
             outputFile.delete()
         }
 
-        val composition = buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)
+        val composition = buildTimelineComposition(
+            clips,
+            renderSize,
+            audioTrack,
+            textOverlays,
+            captionCues,
+            captionStyle
+        )
         val exportTransformer = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -711,14 +785,19 @@ private fun buildTimelineComposition(
     clips: List<TimelineClip>,
     renderSize: TimelineRenderSize,
     audioTrack: AudioTrackDescriptor? = null,
-    textOverlays: List<TextOverlayDescriptor> = emptyList()
+    textOverlays: List<TextOverlayDescriptor> = emptyList(),
+    captionCues: List<CaptionCueDescriptor> = emptyList(),
+    captionStyle: CaptionStyleDescriptor? = null
 ): Composition {
     var clipStartMs = 0L
     val items = clips.map { clip ->
         val item = editedMediaItemFor(
             clip,
             renderSize,
-            textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs)
+            textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs),
+            clipStartMs,
+            captionCues,
+            captionStyle
         )
         clipStartMs += clip.scaledDurationMs
         item
@@ -734,7 +813,10 @@ private fun buildTimelineComposition(
 private fun editedMediaItemFor(
     clip: TimelineClip,
     renderSize: TimelineRenderSize,
-    clipOverlays: List<TextOverlayDescriptor> = emptyList()
+    clipOverlays: List<TextOverlayDescriptor> = emptyList(),
+    clipStartMs: Long = 0L,
+    captionCues: List<CaptionCueDescriptor> = emptyList(),
+    captionStyle: CaptionStyleDescriptor? = null
 ): EditedMediaItem {
     val mediaItemBuilder = MediaItem.Builder()
         .setUri(Uri.fromFile(File(clip.path)))
@@ -758,7 +840,16 @@ private fun editedMediaItemFor(
     }
     val builder = EditedMediaItem.Builder(mediaItemBuilder.build())
         .setDurationUs(sourceDurationUs)
-        .setEffects(effectsFor(clip, renderSize, clipOverlays))
+        .setEffects(
+            effectsFor(
+                clip,
+                renderSize,
+                clipOverlays,
+                clipStartMs,
+                captionCues,
+                captionStyle
+            )
+        )
 
     if (clip.speed != 1.0f) {
         builder.setSpeed(constantSpeedProvider(clip.speed))
@@ -820,7 +911,10 @@ private fun audioSequenceFor(
 private fun effectsFor(
     clip: TimelineClip,
     renderSize: TimelineRenderSize,
-    clipOverlays: List<TextOverlayDescriptor> = emptyList()
+    clipOverlays: List<TextOverlayDescriptor> = emptyList(),
+    clipStartMs: Long = 0L,
+    captionCues: List<CaptionCueDescriptor> = emptyList(),
+    captionStyle: CaptionStyleDescriptor? = null
 ): Effects {
     val audioEffects = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
     val videoEffects = mutableListOf<Effect>()
@@ -861,10 +955,29 @@ private fun effectsFor(
             OverlayEffect(clipOverlays.map { TimelineTextOverlay(it, renderSize.height) })
         )
     }
+
+    // Captions are a single full-frame overlay rendered on top of everything
+    // else. One reconstruction covers N cues — the overlay picks the active
+    // cue from the presentation time of each frame.
+    if (captionCues.isNotEmpty() && captionStyle != null) {
+        videoEffects.add(
+            OverlayEffect(
+                listOf(
+                    CaptionOverlay(
+                        captionCues,
+                        captionStyle,
+                        renderSize.width,
+                        renderSize.height,
+                        clipStartMs
+                    )
+                )
+            )
+        )
+    }
     return Effects(audioEffects, videoEffects)
 }
 
-private fun constantSpeedProvider(speed: Float): SpeedProvider {
+internal fun constantSpeedProvider(speed: Float): SpeedProvider {
     val safeSpeed = speed.coerceIn(0.5f, 2.0f)
     return object : SpeedProvider {
         override fun getSpeed(timeUs: Long): Float = safeSpeed

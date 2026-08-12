@@ -400,7 +400,7 @@ final class TimelineTextOverlayRenderer {
   }
 }
 
-private extension UIColor {
+extension UIColor {
   /// Creates a UIColor from an ARGB `UInt32` (as used on the method channel).
   convenience init(argb: UInt32) {
     self.init(

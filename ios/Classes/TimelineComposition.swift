@@ -197,6 +197,9 @@ final class TimelineComposition {
   private(set) var currentAudioTrack: AudioTrackDescriptor?
   /// Text overlays burned into the rendered video.
   private(set) var textOverlays: [TextOverlayDescriptor] = []
+  /// Caption cues rendered on top of the video (nil style = no captions).
+  private(set) var captionCues: [CaptionCueDescriptor] = []
+  private(set) var captionStyle: CaptionStyleDescriptor?
 
   private(set) var totalDuration = CMTime.zero
 
@@ -386,7 +389,10 @@ final class TimelineComposition {
     let playerItem = try build(clips: clips, config: config)
     return TimelineExportAsset(
       asset: playerItem.asset,
-      videoComposition: makeVideoComposition(includeTextOverlays: true),
+      videoComposition: makeVideoComposition(
+        includeTextOverlays: true,
+        includeCaptions: true
+      ),
       audioMix: playerItem.audioMix
     )
   }
@@ -429,11 +435,31 @@ final class TimelineComposition {
     textOverlays.removeAll { $0.id == id }
   }
 
+  /// Replaces the caption cues and style. Does NOT trigger a rebuild — the
+  /// caller is responsible for regenerating the video composition.
+  func setCaptions(_ cues: [CaptionCueDescriptor], style: CaptionStyleDescriptor) {
+    captionCues = cues
+    captionStyle = style
+  }
+
+  /// Removes the captions previously set via `setCaptions`. Does NOT trigger
+  /// a rebuild.
+  func removeCaptions() {
+    captionCues = []
+    captionStyle = nil
+  }
+
+  var hasCaptions: Bool {
+    return !captionCues.isEmpty && captionStyle != nil
+  }
+
   func makeEditSnapshot() -> TimelineEditSnapshot {
     return TimelineEditSnapshot(
       clips: clips,
       audioTrack: currentAudioTrack,
-      textOverlays: textOverlays
+      textOverlays: textOverlays,
+      captionCues: captionCues,
+      captionStyle: captionStyle
     )
   }
 
@@ -441,6 +467,8 @@ final class TimelineComposition {
     clips = snapshot.clips
     currentAudioTrack = snapshot.audioTrack
     textOverlays = snapshot.textOverlays
+    captionCues = snapshot.captionCues
+    captionStyle = snapshot.captionStyle
   }
 
   var clipCount: Int {
@@ -590,7 +618,8 @@ final class TimelineComposition {
   // MARK: - Private
 
   private func makeVideoComposition(
-    includeTextOverlays: Bool
+    includeTextOverlays: Bool,
+    includeCaptions: Bool = false
   ) -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
@@ -604,8 +633,9 @@ final class TimelineComposition {
       )
     }
 
-    if includeTextOverlays,
-       !textOverlays.isEmpty,
+    let hasText = includeTextOverlays && !textOverlays.isEmpty
+    let hasCaptions = includeCaptions && hasCaptionsState
+    if (hasText || hasCaptions),
        let composition {
       // The post-processing Core Animation initializer crashes in several
       // iOS Simulator runtimes while bridging its output through IOSurface.
@@ -613,10 +643,9 @@ final class TimelineComposition {
       // instruction references that track before the video track, preserving
       // z-order without invoking the failing post-processing path.
       let overlayTrackID = composition.unusedTrackID()
-      let overlayLayer = TextOverlayLayers.makeTextOverlayParentLayer(
-        overlays: textOverlays,
-        renderSize: renderSize,
-        totalDuration: totalDuration
+      let overlayLayer = makeOverlayParentLayer(
+        includeTextOverlays: hasText,
+        includeCaptions: hasCaptions
       )
       videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
         additionalLayer: overlayLayer,
@@ -631,6 +660,54 @@ final class TimelineComposition {
     }
 
     return videoComposition
+  }
+
+  private var hasCaptionsState: Bool {
+    return !captionCues.isEmpty && captionStyle != nil
+  }
+
+  /// Builds the root Core Animation layer for export: text overlay layers
+  /// first, caption layers on top of them.
+  private func makeOverlayParentLayer(
+    includeTextOverlays: Bool,
+    includeCaptions: Bool
+  ) -> CALayer {
+    if includeTextOverlays && includeCaptions {
+      let root = CALayer()
+      root.frame = CGRect(origin: .zero, size: renderSize)
+      root.isGeometryFlipped = true
+      root.addSublayer(
+        TextOverlayLayers.makeTextOverlayParentLayer(
+          overlays: textOverlays,
+          renderSize: renderSize,
+          totalDuration: totalDuration
+        )
+      )
+      if let captionStyle {
+        root.addSublayer(
+          CaptionLayers.makeCaptionParentLayer(
+            cues: captionCues,
+            style: captionStyle,
+            renderSize: renderSize,
+            totalDuration: totalDuration
+          )
+        )
+      }
+      return root
+    }
+    if includeCaptions, let captionStyle {
+      return CaptionLayers.makeCaptionParentLayer(
+        cues: captionCues,
+        style: captionStyle,
+        renderSize: renderSize,
+        totalDuration: totalDuration
+      )
+    }
+    return TextOverlayLayers.makeTextOverlayParentLayer(
+      overlays: textOverlays,
+      renderSize: renderSize,
+      totalDuration: totalDuration
+    )
   }
 
   private func singleLayerInstruction(
