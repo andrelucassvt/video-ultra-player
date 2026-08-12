@@ -6,7 +6,6 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:video_ultra_player/video_ultra_player.dart';
 import 'package:video_ultra_player/video_ultra_player_method_channel.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
-import 'package:video_ultra_player/src/models/timeline_caption.dart';
 
 class MockVideoUltraPlayerPlatform
     with MockPlatformInterfaceMixin
