@@ -597,8 +597,7 @@ final class TimelineComposition {
   func updateConfig(_ config: TimelineCompositionConfig) -> AVVideoComposition? {
     guard composition != nil else { return nil }
     let nextSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
-    let policyChanged = config.hdrMode != currentConfig.hdrMode ||
-      config.preserveSourceQuality != currentConfig.preserveSourceQuality
+    let policyChanged = config.preserveSourceQuality != currentConfig.preserveSourceQuality
     currentConfig = config
     guard nextSize != renderSize || policyChanged else { return nil }
     renderSize = nextSize
@@ -646,12 +645,6 @@ final class TimelineComposition {
       value: 1,
       timescale: currentConfig.preserveSourceQuality ? sourceFrameRate : 30
     )
-    if currentConfig.hdrMode == .toneMapToSdrUsingMediaCodec {
-      videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-      videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-      videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-    }
-
     let instructions = segments.map { segment in
       singleLayerInstruction(
         for: segment,
