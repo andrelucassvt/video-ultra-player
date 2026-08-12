@@ -375,6 +375,7 @@ void main() {
       'baseWidth': 1080,
       'hdrMode': 'keepHdr',
       'preserveSourceQuality': false,
+      'enablePreview': true,
     });
   });
 
@@ -396,6 +397,7 @@ void main() {
       'baseWidth': 1920,
       'hdrMode': 'toneMapToSdrUsingMediaCodec',
       'preserveSourceQuality': true,
+      'enablePreview': true,
     });
   });
 
@@ -431,6 +433,7 @@ void main() {
         'baseWidth': 1080,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
       });
     },
   );
@@ -451,6 +454,7 @@ void main() {
       'baseWidth': 1200,
       'hdrMode': 'keepHdr',
       'preserveSourceQuality': false,
+      'enablePreview': true,
     });
   });
 
@@ -515,6 +519,7 @@ void main() {
       'baseWidth': 720,
       'hdrMode': 'keepHdr',
       'preserveSourceQuality': false,
+      'enablePreview': true,
     });
     // The texture survives — no dispose/load cycle.
     expect(player.textureId, 42);

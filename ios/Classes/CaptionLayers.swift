@@ -187,14 +187,14 @@ enum CaptionLayers {
   ) -> CaptionRaster? {
     let fontSize = style.fontSize * renderSize.height
     let font = UIFont.systemFont(ofSize: max(fontSize, 1), weight: .bold)
-    let attributed = attributedText(
+    let fillAttributed = fillAttributedText(
       text: text,
       font: font,
       style: style,
       highlightRange: highlightRange
     )
 
-    let boundingRect = attributed.boundingRect(
+    let boundingRect = fillAttributed.boundingRect(
       with: CGSize(width: renderSize.width * 0.92, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
       context: nil
@@ -219,13 +219,24 @@ enum CaptionLayers {
         UIColor.black.withAlphaComponent(style.backgroundOpacity).setFill()
         context.cgContext.fill(CGRect(origin: .zero, size: boxSize))
       }
-      attributed.draw(
-        with: CGRect(
-          x: padding - boundingRect.minX,
-          y: padding - boundingRect.minY,
-          width: max(boundingRect.width, fontSize),
-          height: max(boundingRect.height, fontSize)
-        ),
+      let drawRect = CGRect(
+        x: padding - boundingRect.minX,
+        y: padding - boundingRect.minY,
+        width: max(boundingRect.width, fontSize),
+        height: max(boundingRect.height, fontSize)
+      )
+      // Two passes like the Android renderer and the Flutter preview: the
+      // outline (positive stroke, outline only) first, the fill on top so the
+      // inner half of the centered stroke stays covered.
+      if style.strokeWidth > 0 {
+        outlineAttributedText(text: text, font: font, style: style).draw(
+          with: drawRect,
+          options: [.usesLineFragmentOrigin, .usesFontLeading],
+          context: nil
+        )
+      }
+      fillAttributed.draw(
+        with: drawRect,
         options: [.usesLineFragmentOrigin, .usesFontLeading],
         context: nil
       )
@@ -292,17 +303,17 @@ enum CaptionLayers {
     totalSeconds: Double,
     startSeconds: Double,
     endSeconds: Double
-  ) -> CATextLayer? {
+  ) -> CALayer? {
     let fontSize = style.fontSize * renderSize.height
     let font = UIFont.systemFont(ofSize: max(fontSize, 1), weight: .bold)
-    let attributed = attributedText(
+    let fillAttributed = fillAttributedText(
       text: text,
       font: font,
       style: style,
       highlightRange: highlightRange
     )
 
-    let boundingRect = attributed.boundingRect(
+    let boundingRect = fillAttributed.boundingRect(
       with: CGSize(width: renderSize.width * 0.92, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
       context: nil
@@ -316,81 +327,165 @@ enum CaptionLayers {
       x: renderSize.width / 2,
       y: style.positionY * renderSize.height
     )
-
-    let layer = CATextLayer()
-    layer.string = attributed
-    layer.isWrapped = true
-    layer.alignmentMode = .center
-    layer.contentsScale = UIScreen.main.scale
-    layer.allowsEdgeAntialiasing = true
-    layer.frame = CGRect(
+    let frame = CGRect(
       x: center.x - boxSize.width / 2,
       y: center.y - boxSize.height / 2,
       width: boxSize.width,
       height: boxSize.height
     )
-    layer.opacity = 0
 
-    if style.backgroundOpacity > 0 {
-      layer.backgroundColor = UIColor.black
-        .withAlphaComponent(style.backgroundOpacity)
-        .cgColor
+    let background = style.backgroundOpacity > 0
+      ? UIColor.black.withAlphaComponent(style.backgroundOpacity).cgColor
+      : nil
+    let container = CALayer()
+    container.frame = frame
+    // The background lives on the container (applied once, behind both
+    // passes) instead of on each text layer, where stacking would double
+    // the semi-transparent box.
+    container.backgroundColor = background
+    // The container is already positioned at the caption center; the text
+    // layers must use a container-local frame (origin .zero), otherwise the
+    // absolute center offset is applied twice and the text is drawn off-canvas.
+    let textFrame = CGRect(origin: .zero, size: boxSize)
+    // Two passes per segment, mirroring the Android renderer: the outline
+    // (positive stroke, outline only) behind the fill so the inner half of
+    // the centered stroke stays covered and the highlight stays visible.
+    if style.strokeWidth > 0 {
+      container.addSublayer(
+        makeCaptionTextLayer(
+          string: outlineAttributedText(text: text, font: font, style: style),
+          frame: textFrame,
+          background: nil
+        )
+      )
     }
+    container.addSublayer(
+      makeCaptionTextLayer(
+        string: fillAttributed,
+        frame: textFrame,
+        background: nil
+      )
+    )
 
     // CoreAnimationTool is an offline renderer. A discrete opacity animation
     // is reliable at both edges of [start, end), unlike CALayer timing fields
     // whose fill behavior can leak the model-layer opacity outside the window.
-    let startFraction = startSeconds / totalSeconds
-    let endFraction = endSeconds / totalSeconds
-    let visibility = CAKeyframeAnimation(keyPath: "opacity")
-    if startFraction <= 0 {
-      visibility.values = [1, 0]
-      visibility.keyTimes = [0, NSNumber(value: endFraction)]
-    } else {
-      visibility.values = [0, 1, 0]
-      visibility.keyTimes = [
-        0,
-        NSNumber(value: startFraction),
-        NSNumber(value: endFraction),
-      ]
+    let visibility = makeVisibilityAnimation(
+      startSeconds: startSeconds,
+      endSeconds: endSeconds,
+      totalSeconds: totalSeconds
+    )
+    container.sublayers?.forEach { sublayer in
+      sublayer.add(visibility, forKey: "captionVisibility")
     }
+
+    return container
+  }
+
+  private static func makeCaptionTextLayer(
+    string: NSAttributedString,
+    frame: CGRect,
+    background: CGColor?
+  ) -> CATextLayer {
+    let layer = CATextLayer()
+    layer.string = string
+    layer.isWrapped = true
+    layer.alignmentMode = .center
+    layer.contentsScale = UIScreen.main.scale
+    layer.allowsEdgeAntialiasing = true
+    layer.frame = frame
+    layer.opacity = 0
+    if let background {
+      layer.backgroundColor = background
+    }
+    return layer
+  }
+
+  /// Discrete opacity keyframes over the full video duration keeping the
+  /// layer visible only during the half-open window `[start, end)`.
+  private static func makeVisibilityAnimation(
+    startSeconds: Double,
+    endSeconds: Double,
+    totalSeconds: Double
+  ) -> CAKeyframeAnimation {
+    let keyframes = visibilityKeyframes(
+      startFraction: startSeconds / totalSeconds,
+      endFraction: endSeconds / totalSeconds
+    )
+    let visibility = CAKeyframeAnimation(keyPath: "opacity")
+    visibility.values = keyframes.values
+    visibility.keyTimes = keyframes.keyTimes
     visibility.calculationMode = .discrete
     visibility.beginTime = AVCoreAnimationBeginTimeAtZero
     visibility.duration = totalSeconds
     visibility.fillMode = .both
     visibility.isRemovedOnCompletion = false
-    layer.add(visibility, forKey: "captionVisibility")
-
-    return layer
+    return visibility
   }
 
   // MARK: - Shared helpers
+
+  /// Builds a valid discrete keyframe sequence that keeps the layer visible
+  /// only during the half-open window `[startFraction, endFraction)` of the
+  /// full video duration.
+  ///
+  /// Core Animation requires `keyTimes.count == values.count + 1`, with the
+  /// first keyTime at `0` and the last at `1`; an invalid sequence degrades
+  /// to linear interpolation, which fades every cue in from the video start.
+  /// When the window touches an edge the redundant segment is dropped so no
+  /// keyTime is duplicated.
+  static func visibilityKeyframes(
+    startFraction: Double,
+    endFraction: Double
+  ) -> (values: [NSNumber], keyTimes: [NSNumber]) {
+    let start = min(max(startFraction, 0), 1)
+    let end = min(max(endFraction, 0), 1)
+    if start <= 0 {
+      if end >= 1 {
+        return (values: [1], keyTimes: [0, 1])
+      }
+      return (values: [1, 0], keyTimes: [0, NSNumber(value: end), 1])
+    }
+    if end >= 1 {
+      return (values: [0, 1], keyTimes: [0, NSNumber(value: start), 1])
+    }
+    return (
+      values: [0, 1, 0],
+      keyTimes: [0, NSNumber(value: start), NSNumber(value: end), 1]
+    )
+  }
 
   private static func displayText(_ text: String, style: CaptionStyleDescriptor) -> String {
     return style.uppercase ? text.uppercased() : text
   }
 
-  private static func attributedText(
+  /// The outline pass: a positive stroke width renders only the stroke, in
+  /// black and centered on the glyph edge. The fill pass covers the inner
+  /// half, so the stroke width is doubled (see [strokeWidthPercentage]) to
+  /// keep the visible outline matching the Flutter preview's shadow.
+  private static func outlineAttributedText(
+    text: String,
+    font: UIFont,
+    style: CaptionStyleDescriptor
+  ) -> NSAttributedString {
+    var attributes = baseAttributes(font: font, style: style)
+    if style.strokeWidth > 0 {
+      attributes[.strokeColor] = UIColor.black
+      attributes[.strokeWidth] = strokeWidthPercentage(for: style)
+    }
+    return NSAttributedString(string: text, attributes: attributes)
+  }
+
+  /// The fill pass: no stroke, the caption color with the karaoke highlight
+  /// word overlaid.
+  private static func fillAttributedText(
     text: String,
     font: UIFont,
     style: CaptionStyleDescriptor,
     highlightRange: NSRange?
   ) -> NSAttributedString {
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.alignment = .center
-    var attributes: [NSAttributedString.Key: Any] = [
-      .font: font,
-      .paragraphStyle: paragraph,
-      .foregroundColor: UIColor(argb: style.color),
-    ]
-    if style.strokeWidth > 0 {
-      // NSAttributedString expresses stroke width as a percentage of font
-      // size, while the public style expresses it as a fraction of video
-      // height. Convert between the two so Flutter preview and export match.
-      attributes[.strokeColor] = UIColor.black
-      attributes[.strokeWidth] = strokeWidthPercentage(for: style)
-    }
-
+    var attributes = baseAttributes(font: font, style: style)
+    attributes[.foregroundColor] = UIColor(argb: style.color)
     let result = NSMutableAttributedString(string: text, attributes: attributes)
     if let range = highlightRange,
        range.location != NSNotFound,
@@ -402,6 +497,19 @@ enum CaptionLayers {
       )
     }
     return result
+  }
+
+  /// Attributes shared by both passes so the two layers lay out identically.
+  private static func baseAttributes(
+    font: UIFont,
+    style: CaptionStyleDescriptor
+  ) -> [NSAttributedString.Key: Any] {
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .center
+    return [
+      .font: font,
+      .paragraphStyle: paragraph,
+    ]
   }
 
   static func presentationSegments(
@@ -471,7 +579,12 @@ enum CaptionLayers {
 
   static func strokeWidthPercentage(for style: CaptionStyleDescriptor) -> CGFloat {
     guard style.strokeWidth > 0, style.fontSize > 0 else { return 0 }
-    return -(style.strokeWidth / style.fontSize) * 100
+    // NSAttributedString expresses stroke width as a percentage of font size
+    // (positive renders the outline only), while the public style expresses
+    // it as a fraction of video height. The stroke is centered on the glyph
+    // edge and the fill pass covers the inner half, so the value is doubled
+    // to keep the visible outline matching the Flutter preview's shadow.
+    return (style.strokeWidth / style.fontSize) * 100 * 2
   }
 
   /// Locates the character range of the word at `index` inside the cue text

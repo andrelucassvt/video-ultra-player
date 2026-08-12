@@ -47,6 +47,7 @@ void main() {
         'baseWidth': 1080,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
       },
     });
   });
@@ -61,7 +62,6 @@ void main() {
         baseWidth: 1080,
       ).toJson(),
     );
-
     expect(textureId, 77);
     expect(calls.single.arguments, {
       'clips': [
@@ -72,6 +72,30 @@ void main() {
         'baseWidth': 1080,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
+      },
+    });
+  });
+
+  test('load serializes enablePreview false for headless sessions', () async {
+    final textureId = await platform.load(
+      [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      config: TimelineCompositionConfig(enablePreview: false).toJson(),
+    );
+
+    expect(textureId, 77);
+    expect(calls.single.arguments, {
+      'clips': [
+        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+      ],
+      'config': {
+        'aspectRatio': 'original',
+        'baseWidth': 1080,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+        'enablePreview': false,
       },
     });
   });
@@ -95,6 +119,7 @@ void main() {
           'baseWidth': 1080,
           'hdrMode': 'keepHdr',
           'preserveSourceQuality': false,
+          'enablePreview': true,
         },
       });
     },
@@ -123,6 +148,7 @@ void main() {
         'baseWidth': 1200,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
       },
     });
   });
@@ -160,6 +186,7 @@ void main() {
         'baseWidth': 720,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
       },
     });
     expect(calls[2].arguments, {'textureId': 77, 'positionMs': 300});

@@ -7,6 +7,7 @@ status: current
 related_plans:
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/text-overlays/00-indice.md
+  - docs/plan/auto-caption-export-fixes.md
 ---
 
 # Flow: Exportação MP4 com Progresso
@@ -15,13 +16,15 @@ related_plans:
 
 ## Visão Geral
 
-Há duas portas de export, com contratos diferentes. `exportTimeline(clips)` é independente do player: não exige `load`, monta uma composição nova só para exportar e serve para exportar uma lista de clipes qualquer. `exportCurrentTimeline()` exige `load` e exporta o estado nativo corrente — mesma lista de clipes já editada, mesmo `renderSize`, mesma trilha de áudio externa, text overlays e captions. No iOS, `CaptionLayers` gera variantes temporais exclusivas para o karaokê; no Android, os overlays entram por clipe no `OverlayEffect`. É essa segunda porta que garante a regra "o MP4 é exatamente o que o preview mostra".
+Há duas portas de export, com contratos diferentes. `exportTimeline(clips)` é independente do player: não exige `load`, monta uma composição nova só para exportar e serve para exportar uma lista de clipes qualquer. `exportCurrentTimeline()` exige `load` e exporta o estado nativo corrente — mesma lista de clipes já editada, mesmo `renderSize`, mesma trilha de áudio externa, text overlays e captions. No iOS, `CaptionLayers` gera variantes temporais exclusivas para o karaokê com keyframes discretos válidos (`keyTimes.count == values.count + 1` cobrindo `0…1`) e desenha o contorno em passada separada atrás do preenchimento; no Android, os overlays entram por clipe no `OverlayEffect` e o contorno também é uma segunda passada. É essa segunda porta que garante a regra "o MP4 é exatamente o que o preview mostra".
+
+`load` aceita `TimelineCompositionConfig.enablePreview` (default `true`). Com `false` — uso headless do auto-caption, que só exporta ou extrai áudio — o Android não cria textura/surface/`CompositionPlayer` e devolve um id sintético negativo; o estado de clips/config/segmentos continua igual e `exportCurrentTimeline`/`extractAudio` funcionam normalmente. O iOS aceita a flag e a ignora nesta versão.
 
 Em Dart, `NativeTimelinePlayer` protege as duas com um mutex simples: o campo `_exporting` faz uma segunda chamada concorrente lançar `StateError`, e é liberado num `finally`. O getter `exportProgress` só pode ser acessado enquanto `_exporting` é `true` — fora disso lança `StateError`. O stream vem do `EventChannel` `video_ultra_player/timeline_player/export`, que é **global** (não recebe `textureId`) e emite `{progress, state}` decodificado por `TimelineExportProgress.fromMap` com `progress` clampado em `[0, 1]` e `state` resolvido no enum `TimelineExportState` (fallback `idle`).
 
 No iOS, o plugin resolve o path de saída (o informado ou um arquivo em `temporaryDirectory` com UUID), cria o diretório pai e apaga um arquivo pré-existente, monta o `TimelineExportAsset` (asset + `videoComposition` + `audioMix`) e entrega para `runExportSession`. Lá um `AVAssetExportSession` com preset `HighestQuality` grava `.mp4` com `shouldOptimizeForNetworkUse`, enquanto um `Timer` de 0,1 s publica `exporter.progress`. Com `preserveSourceQuality`, a `videoComposition` usa o frame rate nominal do primeiro vídeo, limitado a 1–240 fps; a opção MediaCodec é específica do Android e o iOS mantém seu pipeline nativo de cor. Ao final, o handler volta para a main queue, invalida o timer, chama o `onDispose` (que limpa a composição temporária no caso de `exportTimeline`) e responde com o path ou com `export_failed`.
 
-No Android o caminho é `TimelineCompositionExporter`. Ele prepara o arquivo de saída (`cacheDir` com UUID quando não informado), monta a `Composition` com os mesmos builders do preview e aplica o `hdrMode` recebido. Com `preserveSourceQuality`, lê o bitrate de cada fonte e configura um `DefaultEncoderFactory` com o maior valor encontrado e fallback habilitado. Depois cria um `Transformer` com listener de `onCompleted`/`onError` e chama `start(composition, path)`. Um `Runnable` de 100 ms consulta `getProgress(ProgressHolder)` e publica progresso normalizado (0–100 → 0.0–1.0). O plugin guarda o exporter em `activeExporters` para poder cancelá-lo em `onDetachedFromEngine`; `complete {}` garante que sucesso e erro sejam entregues uma única vez.
+No Android o caminho é `TimelineCompositionExporter`. Ele prepara o arquivo de saída (`cacheDir` com UUID quando não informado), monta a `Composition` com os mesmos builders do preview e aplica o `hdrMode` recebido. Com `preserveSourceQuality`, lê o bitrate de cada fonte e configura um `DefaultEncoderFactory` com o maior valor encontrado e fallback habilitado. Depois cria um `Transformer` com listener de `onCompleted`/`onError` e chama `start(composition, path)`. Um `Runnable` de 100 ms consulta `getProgress(ProgressHolder)` e publica progresso normalizado (0–100 → 0.0–1.0). O plugin guarda o exporter em `activeExporters` para poder cancelá-lo em `onDetachedFromEngine`; `complete {}` garante que sucesso e erro sejam entregues uma única vez. Em caso de falha, o `onError` registra `Log.e` com `exportErrorDetails` e o canal recebe `errorCodeName` (quando `ExportException`) + mensagem + cadeia de causas (até 5 níveis) no `message`, com o stack no `details` — em vez da mensagem genérica antiga.
 
 O plugin devolve apenas um path local. Levar o arquivo para a galeria é responsabilidade do app: no exemplo, `EditorController.export` chama `Gal.putVideo` e depois apaga o temporário.
 
@@ -40,7 +43,7 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 6. **iOS — resolução do destino** — `ios/Classes/VideoUltraPlayerPlugin.swift` → `exportOutputURL` + `prepareOutputDirectory`
    Cria diretórios intermediários e remove arquivo existente.
 7. **iOS — montagem do asset** — `controller.buildCurrentExportAsset()` → `TimelineComposition.buildCurrentExportAsset(config:)` → `buildExportAsset`
-    Reconstrói a composição a partir da lista corrente e devolve `TimelineExportAsset(asset, videoComposition, audioMix)`; `makeVideoComposition()` embute text overlays e captions no `animationTool`. Cada segmento de karaokê mostra uma única variante do texto completo, impedindo sobreposição de glifos e mistura das cores base/destaque.
+    Reconstrói a composição a partir da lista corrente e devolve `TimelineExportAsset(asset, videoComposition, audioMix)`; `makeVideoComposition()` embute text overlays e captions no `animationTool`. Cada segmento de karaokê mostra uma única variante do texto completo (janelas disjuntas), impedindo sobreposição de glifos e mistura das cores base/destaque; a visibilidade de cada variante usa keyframes discretos válidos (`[0, start, end, 1]` → opacidade `[0, 1, 0]`) e o contorno é um `CATextLayer` com stroke positivo atrás do layer de preenchimento, ambos com a mesma animação e o mesmo frame.
 8. **iOS — sessão de export** — `runExportSession`
    `AVAssetExportSession(preset: HighestQuality)`, `outputFileType = .mp4`; a `videoComposition` mantém o frame rate nominal quando `preserveSourceQuality == true` e não aplica a política MediaCodec exclusiva do Android. Um `Timer` de 0,1 s emite `state: "exporting"`, e o resultado é tratado na main queue.
 9. **Android — resolução do destino** — `.../TimelineCompositionController.kt` → `TimelineCompositionExporter.exportOutputFile`
@@ -65,7 +68,7 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 - **`textureId` inexistente (Android):** `not_found` antes de criar o exporter.
 - **Falha ao criar a sessão (iOS):** `export_failed` + `state: "failed"`; o `onDispose` roda para limpar a composição temporária.
 - **Export falho ou cancelado (iOS):** `status == .failed/.cancelled` → `export_failed` com `exporter.error?.localizedDescription`; qualquer outro status inesperado também vira `export_failed`.
-- **Falha no Transformer (Android):** `onError` apaga o arquivo de saída, emite `state: "failed"` e devolve `export_failed`.
+- **Falha no Transformer (Android):** `onError` apaga o arquivo de saída, emite `state: "failed"` e devolve `export_failed` com `exportErrorDetails` (inclui `errorCodeName` quando `ExportException`) no `message` e o stack no `details`; o mesmo detalhe é registrado via `Log.e`.
 - **Engine desanexada durante o export (Android):** `onDetachedFromEngine` chama `cancel()` em todos os `activeExporters`; um exporter cancelado não reporta mais nada.
 - **Permissão de galeria negada (app):** `_saveToGallery` lança `Exception('Permissão da galeria negada')`, capturado por `export` e exibido na status bar.
 
@@ -76,20 +79,21 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 | API pública | `lib/src/native_timeline_player.dart` | Mutex `_exporting`, cache do stream, validações |
 | Contrato | `lib/video_ultra_player_platform_interface.dart` | `exportTimeline`, `exportCurrentTimeline`, `exportProgress` |
 | Serialização | `lib/video_ultra_player_method_channel.dart` | Payloads e `exportEventChannel` |
-| Configuração | `lib/src/models/timeline_composition_config.dart` | Proporção, resolução, política HDR e preservação de qualidade |
+| Configuração | `lib/src/models/timeline_composition_config.dart` | Proporção, resolução, política HDR, preservação de qualidade e `enablePreview` (headless) |
 | Modelo | `lib/src/models/timeline_export_progress.dart` | `TimelineExportState` e clamp do progresso |
 | Nativo iOS | `ios/Classes/VideoUltraPlayerPlugin.swift` | `exportTimeline`, `exportCurrentTimeline`, `runExportSession`, `TimelineExportProgressStreamHandler` |
 | Nativo iOS | `ios/Classes/TimelineComposition.swift` | `buildExportAsset`, `buildCurrentExportAsset` |
-| Captions iOS | `ios/Classes/CaptionLayers.swift` | Segmentos exclusivos, cores ARGB, contorno e camadas temporizadas do burn-in |
-| Nativo Android | `.../VideoUltraPlayerPlugin.kt` | `exportTimeline`, `exportCurrentTimeline`, `activeExporters`, `ExportProgressStreamHandler` |
-| Nativo Android | `.../TimelineCompositionController.kt` | `TimelineCompositionExporter`, `startExportCurrentTimeline` |
+| Captions iOS | `ios/Classes/CaptionLayers.swift` | Segmentos exclusivos, keyframes discretos válidos, contorno em duas passadas e camadas temporizadas do burn-in |
+| Nativo Android | `.../VideoUltraPlayerPlugin.kt` | `exportTimeline`, `exportCurrentTimeline`, `activeExporters`, `ExportProgressStreamHandler`, erro detalhado no canal |
+| Nativo Android | `.../TimelineCompositionController.kt` | `TimelineCompositionExporter`, `startExportCurrentTimeline`, `exportErrorDetails`, modo headless no `load` |
 | Consumidor | `example/lib/editor/editor_controller.dart` | Destino do arquivo, salvamento na galeria, estado de `exporting` |
 | Consumidor | `example/lib/editor/widgets/editor_top_bar.dart` | Botão com percentual e spinner |
-| Testes | `test/native_timeline_player_test.dart` | Concorrência, `StateError` de progresso, delegação |
-| Testes | `test/video_ultra_player_method_channel_test.dart` | Payload de export e decodificação dos eventos |
+| Testes | `test/native_timeline_player_test.dart` | Concorrência, `StateError` de progresso, delegação, payload com `enablePreview` |
+| Testes | `test/video_ultra_player_method_channel_test.dart` | Payload de export e decodificação dos eventos, serialização do `enablePreview` no `load` |
 | Testes | `test/timeline_export_progress_test.dart` | `fromMap`, clamp e fallback de estado |
 | Testes Android | `android/src/test/.../TimelineExportQualityTest.kt` | Parsing HDR e seleção do bitrate da fonte |
-| Testes iOS | `example/ios/RunnerTests/RunnerTests.swift` | Segmentação temporal do karaokê, cores e escala do contorno |
+| Testes Android | `android/src/test/.../TimelineExportErrorDetailsTest.kt` | Formatador de erro de export (`errorCodeName` + cadeia de causas) |
+| Testes iOS | `example/ios/RunnerTests/RunnerTests.swift` | Keyframes de visibilidade, segmentação temporal do karaokê, cores, camadas de contorno/preenchimento e escala do contorno |
 
 ## Regras de Negócio Relevantes
 
@@ -98,6 +102,10 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 - **`exportTimeline` não precisa de `load`** — trabalha só com a lista recebida; no iOS cria uma `TimelineComposition` própria que é descartada no `onDispose`.
 - **`exportCurrentTimeline` reflete a edição** — reconstrói a partir da lista corrente, inclui a trilha de áudio externa ativa e queima text overlays e captions do estado atual.
 - **Karaokê iOS não sobrepõe variantes** — `CaptionLayers.presentationSegments` divide o cue em janelas disjuntas; lacunas usam a cor base e cada janela de palavra usa somente uma cópia com seu trecho em `highlightColor`.
+- **Visibilidade iOS com keyframes válidos** — `CaptionLayers.visibilityKeyframes` emite `keyTimes.count == values.count + 1` com extremos `0` e `1` (janelas `[start, end)` → `[0, 1, 0]`, tocando as bordas os segmentos redundantes são descartados sem duplicar keyTime); keyTimes inválidos degradariam para interpolação linear e empilhariam as legendas.
+- **Contorno iOS em duas passadas** — cada variante empilha um `CATextLayer` de contorno (stroke positivo, só o contorno, preto) atrás do de preenchimento; `strokeWidthPercentage` dobra o valor do estilo para compensar o traçado centrado, mantendo o contorno visível igual à sombra da prévia Flutter.
+- **`load` headless** — `enablePreview: false` (Android) pula textura/surface/player e devolve id sintético negativo; `exportCurrentTimeline`/`extractAudio` seguem consumindo clips/config/segmentos. iOS aceita e ignora a flag nesta versão.
+- **Erro de export Android com causa real** — `exportErrorDetails` formata `errorCodeName` (quando `ExportException`) + mensagem + até 5 níveis de causa, entregue no `message` do canal, no stack do `details` e no logcat via `Log.e`.
 - **`exportTimeline` ignora trilha externa, textos e captions** — no Android, `TimelineCompositionExporter.export` passa estados vazios; no iOS a composição nova nasce sem esses estados. Paridade com a trilha de áudio.
 - **Canal de progresso é global** — sem `textureId`; com dois players exportando ao mesmo tempo os eventos se misturariam.
 - **Progresso sempre clampado** — nos dois nativos na emissão e novamente em `TimelineExportProgress.fromMap`.

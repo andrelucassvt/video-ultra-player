@@ -56,6 +56,10 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            // Media3's ExportException reads android.os.SystemClock in its
+            // constructor; returning default values lets unit tests build it
+            // without Robolectric.
+            isReturnDefaultValues = true
             all {
                 it.useJUnitPlatform()
 

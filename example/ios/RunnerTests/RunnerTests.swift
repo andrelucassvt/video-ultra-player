@@ -113,14 +113,41 @@ class RunnerTests: XCTestCase {
     let cueContainer = try XCTUnwrap(parent.sublayers?.first)
     XCTAssertEqual(cueContainer.sublayers?.count, 2)
 
-    let firstVariant = try XCTUnwrap(cueContainer.sublayers?.first as? CATextLayer)
-    let attributed = try XCTUnwrap(firstVariant.string as? NSAttributedString)
+    // Each segment stacks the outline pass (behind) and the fill pass (front).
+    let firstVariant = try XCTUnwrap(cueContainer.sublayers?.first)
+    XCTAssertEqual(firstVariant.sublayers?.count, 2)
+
+    // The container is already positioned at the caption center; both text
+    // layers must use a container-local frame, or the absolute offset is
+    // applied twice and the text is drawn off-canvas.
+    let textLayers = try XCTUnwrap(firstVariant.sublayers)
+    for textLayer in textLayers {
+      XCTAssertEqual(textLayer.frame.origin, .zero)
+      XCTAssertEqual(textLayer.frame.size, firstVariant.frame.size)
+      XCTAssertNotNil(textLayer.animation(forKey: "captionVisibility"))
+    }
+
+    let outlineLayer = try XCTUnwrap(firstVariant.sublayers?.first as? CATextLayer)
+    let outlineAttributed = try XCTUnwrap(outlineLayer.string as? NSAttributedString)
     XCTAssertEqual(
-      attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor,
+      outlineAttributed.attribute(.strokeColor, at: 0, effectiveRange: nil) as? UIColor,
+      UIColor.black
+    )
+    XCTAssertGreaterThan(
+      (outlineAttributed.attribute(.strokeWidth, at: 0, effectiveRange: nil) as? NSNumber)?
+        .doubleValue ?? 0,
+      0
+    )
+
+    let fillLayer = try XCTUnwrap(firstVariant.sublayers?[1] as? CATextLayer)
+    let fillAttributed = try XCTUnwrap(fillLayer.string as? NSAttributedString)
+    XCTAssertNil(fillAttributed.attribute(.strokeWidth, at: 0, effectiveRange: nil))
+    XCTAssertEqual(
+      fillAttributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor,
       UIColor(argb: 0xFFFFD700)
     )
     XCTAssertEqual(
-      attributed.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? UIColor,
+      fillAttributed.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? UIColor,
       UIColor(argb: 0xFFFFFFFF)
     )
   }
@@ -162,10 +189,71 @@ class RunnerTests: XCTestCase {
       ])
     )
 
+    // Doubled to compensate the centered stroke: the fill pass covers the
+    // inner half, leaving the visible outline at the preview's width.
     XCTAssertEqual(
       CaptionLayers.strokeWidthPercentage(for: style),
-      -5,
+      10,
       accuracy: 0.000_001
     )
+  }
+
+  func testCaptionVisibilityKeyframesHaveOneMoreKeyTimeThanValues() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0.25,
+      endFraction: 0.75
+    )
+
+    XCTAssertEqual(keyframes.keyTimes.count, keyframes.values.count + 1)
+  }
+
+  func testCaptionVisibilityKeyframesSpanTheFullRange() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0.25,
+      endFraction: 0.75
+    )
+
+    XCTAssertEqual(keyframes.keyTimes.first?.doubleValue, 0)
+    XCTAssertEqual(keyframes.keyTimes.last?.doubleValue, 1)
+  }
+
+  func testCaptionVisibilityKeyframesFadeInAndOutAroundTheWindow() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0.25,
+      endFraction: 0.75
+    )
+
+    XCTAssertEqual(keyframes.values.map(\.doubleValue), [0, 1, 0])
+    XCTAssertEqual(keyframes.keyTimes.map(\.doubleValue), [0, 0.25, 0.75, 1])
+  }
+
+  func testCaptionVisibilityKeyframesVisibleFromTheStart() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0,
+      endFraction: 0.75
+    )
+
+    XCTAssertEqual(keyframes.values.map(\.doubleValue), [1, 0])
+    XCTAssertEqual(keyframes.keyTimes.map(\.doubleValue), [0, 0.75, 1])
+  }
+
+  func testCaptionVisibilityKeyframesEndingAtVideoEndDoNotDuplicateKeyTime() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0.25,
+      endFraction: 1
+    )
+
+    XCTAssertEqual(keyframes.values.map(\.doubleValue), [0, 1])
+    XCTAssertEqual(keyframes.keyTimes.map(\.doubleValue), [0, 0.25, 1])
+  }
+
+  func testCaptionVisibilityKeyframesCoveringTheWholeVideo() {
+    let keyframes = CaptionLayers.visibilityKeyframes(
+      startFraction: 0,
+      endFraction: 1
+    )
+
+    XCTAssertEqual(keyframes.values.map(\.doubleValue), [1])
+    XCTAssertEqual(keyframes.keyTimes.map(\.doubleValue), [0, 1])
   }
 }

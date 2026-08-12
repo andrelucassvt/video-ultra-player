@@ -42,6 +42,7 @@ class TimelineCompositionConfig {
     int baseWidth = 1080,
     TimelineHdrMode hdrMode = TimelineHdrMode.keepHdr,
     bool preserveSourceQuality = false,
+    bool enablePreview = true,
   }) {
     if (baseWidth <= 0) {
       throw ArgumentError.value(baseWidth, 'baseWidth', 'Must be positive.');
@@ -51,6 +52,7 @@ class TimelineCompositionConfig {
       baseWidth: baseWidth,
       hdrMode: hdrMode,
       preserveSourceQuality: preserveSourceQuality,
+      enablePreview: enablePreview,
     );
   }
 
@@ -59,6 +61,7 @@ class TimelineCompositionConfig {
     required this.baseWidth,
     required this.hdrMode,
     required this.preserveSourceQuality,
+    required this.enablePreview,
   });
 
   /// The output aspect ratio used by the native compositor.
@@ -77,12 +80,22 @@ class TimelineCompositionConfig {
   /// policy rather than a promise of byte-identical output.
   final bool preserveSourceQuality;
 
+  /// Whether `load` should create a preview surface/texture and start a
+  /// player.
+  ///
+  /// Headless sessions (`false`) skip texture, surface and player creation on
+  /// Android — used when only export or audio extraction of the current
+  /// timeline is needed — and `load` returns a synthetic negative id. iOS
+  /// accepts the flag but ignores it in this version.
+  final bool enablePreview;
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'aspectRatio': aspectRatio.name,
       'baseWidth': baseWidth,
       'hdrMode': hdrMode.name,
       'preserveSourceQuality': preserveSourceQuality,
+      'enablePreview': enablePreview,
     };
   }
 
@@ -91,6 +104,7 @@ class TimelineCompositionConfig {
     int? baseWidth,
     TimelineHdrMode? hdrMode,
     bool? preserveSourceQuality,
+    bool? enablePreview,
   }) {
     return TimelineCompositionConfig(
       aspectRatio: aspectRatio ?? this.aspectRatio,
@@ -98,6 +112,7 @@ class TimelineCompositionConfig {
       hdrMode: hdrMode ?? this.hdrMode,
       preserveSourceQuality:
           preserveSourceQuality ?? this.preserveSourceQuality,
+      enablePreview: enablePreview ?? this.enablePreview,
     );
   }
 
@@ -107,10 +122,11 @@ class TimelineCompositionConfig {
         other.aspectRatio == aspectRatio &&
         other.baseWidth == baseWidth &&
         other.hdrMode == hdrMode &&
-        other.preserveSourceQuality == preserveSourceQuality;
+        other.preserveSourceQuality == preserveSourceQuality &&
+        other.enablePreview == enablePreview;
   }
 
   @override
-  int get hashCode =>
-      Object.hash(aspectRatio, baseWidth, hdrMode, preserveSourceQuality);
+  int get hashCode => Object.hash(
+      aspectRatio, baseWidth, hdrMode, preserveSourceQuality, enablePreview);
 }

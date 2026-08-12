@@ -6,6 +6,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Surface
 import androidx.media3.common.C
 import androidx.media3.common.Effect
@@ -86,6 +87,14 @@ internal class TimelineCompositionController(
     private var disposed = false
     private var lastEmittedState: EmittedState? = null
 
+    /** Next synthetic session id for headless loads (always negative). */
+    private var syntheticIdCounter = 0L
+
+    private fun nextSyntheticId(): Long {
+        syntheticIdCounter--
+        return syntheticIdCounter
+    }
+
     /** Everything reported on the state channel, compared to suppress duplicates. */
     private data class EmittedState(
         val globalPosition: Long,
@@ -159,6 +168,13 @@ internal class TimelineCompositionController(
         clips = resolvedClips.toMutableList()
         renderSize = outputSizeFor(compositionConfig, clips.first())
         rebuildSegments()
+
+        // Headless sessions (export/audio extraction only) skip the texture,
+        // surface and player entirely — the clip/config/segment state above is
+        // what exportCurrentTimeline and extractAudio consume.
+        if (!config.enablePreview) {
+            return nextSyntheticId()
+        }
 
         val entry = textureRegistry.createSurfaceTexture()
         entry.surfaceTexture().setDefaultBufferSize(renderSize.width, renderSize.height)
@@ -645,6 +661,31 @@ internal interface TimelineExportCallback {
     fun onError(error: Throwable)
 }
 
+/**
+ * Formats an export failure for the channel payload and logcat: the
+ * [ExportException] error code name (when available), the message and up to
+ * five levels of the cause chain, mirroring the playback listener.
+ */
+internal fun exportErrorDetails(error: Throwable): String {
+    return buildString {
+        if (error is ExportException) {
+            append("errorCodeName=")
+            append(error.errorCodeName)
+            append(" | ")
+        }
+        append(error.message ?: error.javaClass.simpleName)
+        var cause: Throwable? = error.cause
+        var depth = 0
+        while (cause != null && depth < 5) {
+            append(" | ")
+            append(cause.javaClass.simpleName)
+            cause.message?.let { append(": $it") }
+            cause = cause.cause
+            depth++
+        }
+    }
+}
+
 internal class TimelineCompositionExporter(
     private val context: Context
 ) {
@@ -738,6 +779,11 @@ internal class TimelineCompositionExporter(
                         exportResult: ExportResult,
                         exportException: ExportException
                     ) {
+                        Log.e(
+                            "VideoUltraPlayer",
+                            "Timeline export failed: ${exportErrorDetails(exportException)}",
+                            exportException
+                        )
                         outputFile.delete()
                         complete {
                             callback.onProgress(
@@ -1209,7 +1255,8 @@ internal data class TimelineCompositionConfig(
     val aspectRatio: OutputAspectRatio = OutputAspectRatio.ORIGINAL,
     val baseWidth: Int = 1080,
     val hdrMode: TimelineHdrMode = TimelineHdrMode.KEEP_HDR,
-    val preserveSourceQuality: Boolean = false
+    val preserveSourceQuality: Boolean = false,
+    val enablePreview: Boolean = true
 ) {
     val media3HdrMode: Int
         get() = when (hdrMode) {
@@ -1236,7 +1283,8 @@ internal data class TimelineCompositionConfig(
                     else -> TimelineHdrMode.KEEP_HDR
                 },
                 preserveSourceQuality =
-                    map?.get("preserveSourceQuality") as? Boolean ?: false
+                    map?.get("preserveSourceQuality") as? Boolean ?: false,
+                enablePreview = map?.get("enablePreview") as? Boolean ?: true
             )
         }
     }

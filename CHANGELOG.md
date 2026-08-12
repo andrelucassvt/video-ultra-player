@@ -1,3 +1,13 @@
+## 2.4.1
+
+### Caption export fixes
+
+- iOS caption cues now use valid discrete visibility keyframes (`keyTimes.count == values.count + 1`, spanning `0` to `1`), so each cue is fully invisible outside its `[start, end)` window — fixing stacked/overlapped captions and the washed-out white from partial opacity in exported videos.
+- Caption outlines are drawn in a separate pass behind the fill on both platforms (positive stroke on iOS `CATextLayer` stacks and raster previews, existing two-pass renderer on Android), matching the Flutter preview: the outline no longer eats into the glyph fill, and its width is doubled to compensate the centered stroke.
+- Android karaoke highlight now locates the active word with the same casing rule as the displayed text instead of forcing `.uppercase()`, fixing styles without capitalization (e.g. the TikTok preset).
+- Android export failures now report the `ExportException.errorCodeName` plus the cause chain to the channel payload and logcat, instead of a generic "Unable to export current timeline." message.
+- Added `TimelineCompositionConfig.enablePreview` (default `true`): headless loads (`false`) skip texture/surface/player creation on Android and return a synthetic negative session id — used when only export or audio extraction is needed. iOS accepts the flag but ignores it in this version.
+
 ## 2.4.0
 
 ### Export quality and HDR

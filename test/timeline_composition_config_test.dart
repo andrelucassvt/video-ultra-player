@@ -11,6 +11,7 @@ void main() {
         'baseWidth': 1080,
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
+        'enablePreview': true,
       });
     });
 
@@ -20,6 +21,7 @@ void main() {
         baseWidth: 1440,
         hdrMode: TimelineHdrMode.toneMapToSdrUsingMediaCodec,
         preserveSourceQuality: true,
+        enablePreview: false,
       );
 
       expect(config.toJson(), {
@@ -27,7 +29,14 @@ void main() {
         'baseWidth': 1440,
         'hdrMode': 'toneMapToSdrUsingMediaCodec',
         'preserveSourceQuality': true,
+        'enablePreview': false,
       });
+    });
+
+    test('enablePreview defaults to true', () {
+      final config = TimelineCompositionConfig();
+
+      expect(config.enablePreview, isTrue);
     });
 
     test('throws ArgumentError for non-positive baseWidth', () {

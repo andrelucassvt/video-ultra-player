@@ -491,7 +491,11 @@ class VideoUltraPlayerPlugin :
 
                 override fun onError(error: Throwable) {
                     exporterRef?.let { activeExporters.remove(it) }
-                    result.error("export_failed", "Unable to export current timeline.", error.message)
+                    result.error(
+                        "export_failed",
+                        exportErrorDetails(error),
+                        Log.getStackTraceString(error)
+                    )
                 }
             }
         )

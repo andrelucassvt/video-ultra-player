@@ -192,10 +192,13 @@ internal class CaptionOverlay(
             canvas.drawRoundRect(rect, padding * 0.5f, padding * 0.5f, background)
         }
 
-        val strokePx = (captionStyle.strokeWidth * renderHeight).toFloat()
+        val strokePx = (captionStyle.strokeWidth * renderHeight).toFloat() * 2f
         if (strokePx > 0f) {
             // Stroke pass without the karaoke highlight span so the outline
             // stays uniformly black; the fill pass below draws the highlight.
+            // The stroke is centered on the glyph edge and the fill pass
+            // covers the inner half, so the width is doubled to keep the
+            // visible outline matching the Flutter preview's shadow.
             val strokeLayout = StaticLayout.Builder
                 .obtain(SpannableString(text), 0, text.length, paint, maxWidthPx)
                 .setAlignment(Layout.Alignment.ALIGN_CENTER)
@@ -260,20 +263,36 @@ internal class CaptionOverlay(
         cue: CaptionCueDescriptor,
         wordIndex: Int
     ): Pair<Int, Int> {
-        var offset = 0
-        for (i in 0 until wordIndex) {
-            val word = cue.words[i].text.uppercase()
-            if (word.isEmpty()) continue
-            val found = text.indexOf(word, offset)
-            if (found == -1) return Pair(0, 0)
-            offset = found + word.length
-            if (offset < text.length && text[offset] == ' ') {
-                offset++
-            }
-        }
-        val activeWord = cue.words[wordIndex].text.uppercase()
-        val found = text.indexOf(activeWord, offset)
-        if (found == -1) return Pair(0, 0)
-        return Pair(found, found + activeWord.length)
+        return captionWordRange(text, cue, wordIndex, captionStyle.uppercase)
     }
+}
+
+/**
+ * Pure word-locator shared with tests. Transforms each word with the same
+ * rule as the displayed text ([uppercase]) instead of forcing `.uppercase()`,
+ * so karaoke styles without capitalization can still highlight the active
+ * word inside the lowercase text.
+ */
+internal fun captionWordRange(
+    text: String,
+    cue: CaptionCueDescriptor,
+    wordIndex: Int,
+    uppercase: Boolean
+): Pair<Int, Int> {
+    fun transform(word: String): String = if (uppercase) word.uppercase() else word
+    var offset = 0
+    for (i in 0 until wordIndex) {
+        val word = transform(cue.words[i].text)
+        if (word.isEmpty()) continue
+        val found = text.indexOf(word, offset)
+        if (found == -1) return Pair(0, 0)
+        offset = found + word.length
+        if (offset < text.length && text[offset] == ' ') {
+            offset++
+        }
+    }
+    val activeWord = transform(cue.words[wordIndex].text)
+    val found = text.indexOf(activeWord, offset)
+    if (found == -1) return Pair(0, 0)
+    return Pair(found, found + activeWord.length)
 }
