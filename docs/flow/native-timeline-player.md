@@ -96,8 +96,9 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 - **Clipes de imagem ignoram trim** — usam `duration` (fallback 2000 ms) e viram vídeo: MP4 via `AVAssetWriter` no iOS (encodado uma vez por processo pelo `ImageClipVideoCache`, a 6 fps e com o lado maior limitado a 1920 px), `setImageDurationMs` + `setFrameRate(30)` no Android.
 - **`clipDurations` reflete a duração exibida** — já com speed aplicado (`scaledVideoDuration` no iOS, `scaledDurationMs` no Android).
 - **Fim da timeline não faz loop** — `didPlayToEnd` pausa no iOS; para tocar de novo o app precisa dar seek para zero (é o que `EditorController.playOrPause` faz ao detectar posição no fim).
-- **`renderSize` vem do `config`** — `original` usa o tamanho do primeiro clipe; as outras proporções derivam de `baseWidth`, sempre arredondado para dimensão par.
+- **`renderSize` vem do `config`** — `original` usa o tamanho normalizado do primeiro clipe, considerando rotação; as outras proporções derivam de `baseWidth`, sempre arredondado para dimensão par. Overlays e legendas usam esse mesmo canvas.
 - **Config de saída é trocada no lugar, não recarregada** — `setCompositionConfig` preserva `textureId` e todo o estado editado; `load` continua sendo só para trocar a timeline de fato. A config aplicada fica em `NativeTimelinePlayer.compositionConfig` e alimenta o `exportCurrentTimeline`, então "export = preview" continua valendo depois da troca.
+- **Config também define HDR e fidelidade** — `TimelineHdrMode` escolhe manter HDR ou fazer tone mapping para SDR; `preserveSourceQuality` solicita bitrate/frame rate da origem durante o re-encode, com fallback do encoder quando necessário.
 - **Config de saída não entra no histórico** — nenhuma plataforma empurra snapshot em `setCompositionConfig`; undo não deve reverter proporção.
 - **Estado trafega em milissegundos** — o nativo emite números e `TimelinePlayerState.fromMap` converte para `Duration`.
 

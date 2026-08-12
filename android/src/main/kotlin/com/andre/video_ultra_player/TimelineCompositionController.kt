@@ -20,6 +20,7 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.CompositionPlayer
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
@@ -27,6 +28,7 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import io.flutter.plugin.common.EventChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
@@ -198,7 +200,8 @@ internal class TimelineCompositionController(
                         audioTrack,
                         textOverlays,
                         captionCues,
-                        captionStyle
+                        captionStyle,
+                        compositionConfig
                     )
                 )
                 compositionPlayer.prepare()
@@ -507,6 +510,7 @@ internal class TimelineCompositionController(
                 currentTextOverlays,
                 currentCaptionCues,
                 currentCaptionStyle,
+                compositionConfig,
                 outputPath,
                 callback
             )
@@ -547,7 +551,8 @@ internal class TimelineCompositionController(
                 audioTrack,
                 textOverlays,
                 captionCues,
-                captionStyle
+                captionStyle,
+                compositionConfig
             ),
             positionMs.coerceIn(0L, totalDurationMs)
         )
@@ -681,6 +686,7 @@ internal class TimelineCompositionExporter(
             emptyList(),
             emptyList(),
             null,
+            config,
             outputPath,
             callback
         )
@@ -693,6 +699,7 @@ internal class TimelineCompositionExporter(
         textOverlays: List<TextOverlayDescriptor> = emptyList(),
         captionCues: List<CaptionCueDescriptor> = emptyList(),
         captionStyle: CaptionStyleDescriptor? = null,
+        config: TimelineCompositionConfig = TimelineCompositionConfig(),
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
@@ -710,9 +717,10 @@ internal class TimelineCompositionExporter(
             audioTrack,
             textOverlays,
             captionCues,
-            captionStyle
+            captionStyle,
+            config
         )
-        val exportTransformer = Transformer.Builder(context)
+        val transformerBuilder = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
                     override fun onCompleted(
@@ -741,7 +749,18 @@ internal class TimelineCompositionExporter(
                     }
                 }
             )
-            .build()
+        preferredVideoBitrate(config, clips)?.let { bitrate ->
+            val encoderFactory = DefaultEncoderFactory.Builder(context)
+                .setRequestedVideoEncoderSettings(
+                    VideoEncoderSettings.Builder()
+                        .setBitrate(bitrate)
+                        .build()
+                )
+                .setEnableFallback(true)
+                .build()
+            transformerBuilder.setEncoderFactory(encoderFactory)
+        }
+        val exportTransformer = transformerBuilder.build()
 
         transformer = exportTransformer
         exportTransformer.start(composition, outputFile.absolutePath)
@@ -787,7 +806,8 @@ private fun buildTimelineComposition(
     audioTrack: AudioTrackDescriptor? = null,
     textOverlays: List<TextOverlayDescriptor> = emptyList(),
     captionCues: List<CaptionCueDescriptor> = emptyList(),
-    captionStyle: CaptionStyleDescriptor? = null
+    captionStyle: CaptionStyleDescriptor? = null,
+    config: TimelineCompositionConfig = TimelineCompositionConfig()
 ): Composition {
     var clipStartMs = 0L
     val items = clips.map { clip ->
@@ -807,7 +827,17 @@ private fun buildTimelineComposition(
     if (audioTrack != null && audioTrack.offsetMs < timelineDurationMs) {
         sequences.add(audioSequenceFor(audioTrack, timelineDurationMs))
     }
-    return Composition.Builder(sequences).build()
+    return Composition.Builder(sequences)
+        .setHdrMode(config.media3HdrMode)
+        .build()
+}
+
+internal fun preferredVideoBitrate(
+    config: TimelineCompositionConfig,
+    clips: List<TimelineClip>
+): Int? {
+    if (!config.preserveSourceQuality) return null
+    return clips.maxOfOrNull { it.sourceBitrate }?.takeIf { it > 0 }
 }
 
 private fun editedMediaItemFor(
@@ -1014,7 +1044,8 @@ private fun resolveClip(context: Context, clip: TimelineClip): TimelineClip {
     return clip.copy(
         sourceDurationMs = if (clip.type == TimelineMediaType.VIDEO) metadata.durationMs else 0L,
         sourceWidth = metadata.width,
-        sourceHeight = metadata.height
+        sourceHeight = metadata.height,
+        sourceBitrate = metadata.bitrate
     )
 }
 
@@ -1030,7 +1061,8 @@ private fun resolveAudioTrack(
 internal data class SourceMediaMetadata(
     val durationMs: Long,
     val width: Int,
-    val height: Int
+    val height: Int,
+    val bitrate: Int
 )
 
 /**
@@ -1088,7 +1120,8 @@ internal object SourceMetadataCache {
             return SourceMediaMetadata(
                 durationMs = 0L,
                 width = evenDimension(options.outWidth.takeIf { it > 0 } ?: DEFAULT_WIDTH),
-                height = evenDimension(options.outHeight.takeIf { it > 0 } ?: DEFAULT_HEIGHT)
+                height = evenDimension(options.outHeight.takeIf { it > 0 } ?: DEFAULT_HEIGHT),
+                bitrate = 0
             )
         }
 
@@ -1114,10 +1147,25 @@ internal object SourceMetadataCache {
                 .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
                 ?.toIntOrNull()
                 ?: 0
+            val bitrate = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
+                ?.toIntOrNull()
+                ?.coerceAtLeast(0)
+                ?: 0
             if (rotation == 90 || rotation == 270) {
-                SourceMediaMetadata(durationMs, evenDimension(height), evenDimension(width))
+                SourceMediaMetadata(
+                    durationMs,
+                    evenDimension(height),
+                    evenDimension(width),
+                    bitrate
+                )
             } else {
-                SourceMediaMetadata(durationMs, evenDimension(width), evenDimension(height))
+                SourceMediaMetadata(
+                    durationMs,
+                    evenDimension(width),
+                    evenDimension(height),
+                    bitrate
+                )
             }
         } finally {
             retriever.release()
@@ -1157,10 +1205,19 @@ private data class TimelineSegment(
     val durationMs: Long
 )
 
-private data class TimelineCompositionConfig(
+internal data class TimelineCompositionConfig(
     val aspectRatio: OutputAspectRatio = OutputAspectRatio.ORIGINAL,
-    val baseWidth: Int = 1080
+    val baseWidth: Int = 1080,
+    val hdrMode: TimelineHdrMode = TimelineHdrMode.KEEP_HDR,
+    val preserveSourceQuality: Boolean = false
 ) {
+    val media3HdrMode: Int
+        get() = when (hdrMode) {
+            TimelineHdrMode.KEEP_HDR -> Composition.HDR_MODE_KEEP_HDR
+            TimelineHdrMode.TONE_MAP_TO_SDR_USING_MEDIACODEC ->
+                Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_MEDIACODEC
+        }
+
     companion object {
         fun from(map: Map<*, *>?): TimelineCompositionConfig {
             val aspectRatio = when (map?.get("aspectRatio") as? String) {
@@ -1172,7 +1229,14 @@ private data class TimelineCompositionConfig(
             return TimelineCompositionConfig(
                 aspectRatio = aspectRatio,
                 baseWidth = ((map?.get("baseWidth") as? Number)?.toInt() ?: 1080)
-                    .coerceAtLeast(1)
+                    .coerceAtLeast(1),
+                hdrMode = when (map?.get("hdrMode") as? String) {
+                    "toneMapToSdrUsingMediaCodec" ->
+                        TimelineHdrMode.TONE_MAP_TO_SDR_USING_MEDIACODEC
+                    else -> TimelineHdrMode.KEEP_HDR
+                },
+                preserveSourceQuality =
+                    map?.get("preserveSourceQuality") as? Boolean ?: false
             )
         }
     }
@@ -1182,6 +1246,11 @@ internal data class TimelineRenderSize(
     val width: Int,
     val height: Int
 )
+
+internal enum class TimelineHdrMode {
+    KEEP_HDR,
+    TONE_MAP_TO_SDR_USING_MEDIACODEC
+}
 
 internal data class TimelineClip(
     val path: String,
@@ -1196,7 +1265,8 @@ internal data class TimelineClip(
     val transitionToNextMs: Long? = null,
     val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = DEFAULT_WIDTH,
-    val sourceHeight: Int = DEFAULT_HEIGHT
+    val sourceHeight: Int = DEFAULT_HEIGHT,
+    val sourceBitrate: Int = 0
 ) {
     /** Duration of the source media after trim (before speed is applied), in ms. */
     val resolvedDurationMs: Long
@@ -1339,7 +1409,7 @@ internal enum class TimelineMediaType {
     IMAGE
 }
 
-private enum class OutputAspectRatio {
+internal enum class OutputAspectRatio {
     RATIO_16X9,
     RATIO_9X16,
     RATIO_1X1,

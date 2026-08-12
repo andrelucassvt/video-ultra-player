@@ -373,6 +373,8 @@ void main() {
     expect(fakePlatform.lastConfig, {
       'aspectRatio': 'original',
       'baseWidth': 1080,
+      'hdrMode': 'keepHdr',
+      'preserveSourceQuality': false,
     });
   });
 
@@ -384,12 +386,16 @@ void main() {
       config: TimelineCompositionConfig(
         aspectRatio: OutputAspectRatio.ratio16x9,
         baseWidth: 1920,
+        hdrMode: TimelineHdrMode.toneMapToSdrUsingMediaCodec,
+        preserveSourceQuality: true,
       ),
     );
 
     expect(fakePlatform.lastConfig, {
       'aspectRatio': 'ratio16x9',
       'baseWidth': 1920,
+      'hdrMode': 'toneMapToSdrUsingMediaCodec',
+      'preserveSourceQuality': true,
     });
   });
 
@@ -423,6 +429,8 @@ void main() {
       expect(fakePlatform.lastConfig, {
         'aspectRatio': 'original',
         'baseWidth': 1080,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
       });
     },
   );
@@ -441,6 +449,8 @@ void main() {
     expect(fakePlatform.lastConfig, {
       'aspectRatio': 'ratio1x1',
       'baseWidth': 1200,
+      'hdrMode': 'keepHdr',
+      'preserveSourceQuality': false,
     });
   });
 
@@ -503,6 +513,8 @@ void main() {
     expect(fakePlatform.lastConfig, {
       'aspectRatio': 'ratio1x1',
       'baseWidth': 720,
+      'hdrMode': 'keepHdr',
+      'preserveSourceQuality': false,
     });
     // The texture survives — no dispose/load cycle.
     expect(player.textureId, 42);

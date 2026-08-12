@@ -2,7 +2,7 @@
 generated_at: 2026-07-31
 source_commit: 21182b1
 source_state: clean
-verified_at: 2026-08-02
+verified_at: 2026-08-12
 status: current
 related_plans:
   - docs/plan/onda-1-quick-wins.md
@@ -19,9 +19,9 @@ Há duas portas de export, com contratos diferentes. `exportTimeline(clips)` é 
 
 Em Dart, `NativeTimelinePlayer` protege as duas com um mutex simples: o campo `_exporting` faz uma segunda chamada concorrente lançar `StateError`, e é liberado num `finally`. O getter `exportProgress` só pode ser acessado enquanto `_exporting` é `true` — fora disso lança `StateError`. O stream vem do `EventChannel` `video_ultra_player/timeline_player/export`, que é **global** (não recebe `textureId`) e emite `{progress, state}` decodificado por `TimelineExportProgress.fromMap` com `progress` clampado em `[0, 1]` e `state` resolvido no enum `TimelineExportState` (fallback `idle`).
 
-No iOS, o plugin resolve o path de saída (o informado ou um arquivo em `temporaryDirectory` com UUID), cria o diretório pai e apaga um arquivo pré-existente, monta o `TimelineExportAsset` (asset + `videoComposition` + `audioMix`) e entrega para `runExportSession`. Lá um `AVAssetExportSession` com preset `HighestQuality` grava `.mp4` com `shouldOptimizeForNetworkUse`, enquanto um `Timer` de 0,1 s publica `exporter.progress`. Ao final, o handler volta para a main queue, invalida o timer, chama o `onDispose` (que limpa a composição temporária no caso de `exportTimeline`) e responde com o path ou com `export_failed`.
+No iOS, o plugin resolve o path de saída (o informado ou um arquivo em `temporaryDirectory` com UUID), cria o diretório pai e apaga um arquivo pré-existente, monta o `TimelineExportAsset` (asset + `videoComposition` + `audioMix`) e entrega para `runExportSession`. Lá um `AVAssetExportSession` com preset `HighestQuality` grava `.mp4` com `shouldOptimizeForNetworkUse`, enquanto um `Timer` de 0,1 s publica `exporter.progress`. Com `preserveSourceQuality`, a `videoComposition` usa o frame rate nominal do primeiro vídeo, limitado a 1–240 fps; com tone mapping solicitado, declara saída Rec.709. Ao final, o handler volta para a main queue, invalida o timer, chama o `onDispose` (que limpa a composição temporária no caso de `exportTimeline`) e responde com o path ou com `export_failed`.
 
-No Android o caminho é `TimelineCompositionExporter`. Ele prepara o arquivo de saída (`cacheDir` com UUID quando não informado), monta a `Composition` com os mesmos builders do preview, cria um `Transformer` com listener de `onCompleted`/`onError` e chama `start(composition, path)`. Um `Runnable` de 100 ms consulta `getProgress(ProgressHolder)` e publica progresso normalizado (0–100 → 0.0–1.0). O plugin guarda o exporter em `activeExporters` para poder cancelá-lo em `onDetachedFromEngine`; `complete {}` garante que sucesso e erro sejam entregues uma única vez.
+No Android o caminho é `TimelineCompositionExporter`. Ele prepara o arquivo de saída (`cacheDir` com UUID quando não informado), monta a `Composition` com os mesmos builders do preview e aplica o `hdrMode` recebido. Com `preserveSourceQuality`, lê o bitrate de cada fonte e configura um `DefaultEncoderFactory` com o maior valor encontrado e fallback habilitado. Depois cria um `Transformer` com listener de `onCompleted`/`onError` e chama `start(composition, path)`. Um `Runnable` de 100 ms consulta `getProgress(ProgressHolder)` e publica progresso normalizado (0–100 → 0.0–1.0). O plugin guarda o exporter em `activeExporters` para poder cancelá-lo em `onDetachedFromEngine`; `complete {}` garante que sucesso e erro sejam entregues uma única vez.
 
 O plugin devolve apenas um path local. Levar o arquivo para a galeria é responsabilidade do app: no exemplo, `EditorController.export` chama `Gal.putVideo` e depois apaga o temporário.
 
@@ -42,13 +42,13 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 7. **iOS — montagem do asset** — `controller.buildCurrentExportAsset()` → `TimelineComposition.buildCurrentExportAsset(config:)` → `buildExportAsset`
     Reconstrói a composição a partir da lista corrente e devolve `TimelineExportAsset(asset, videoComposition, audioMix)`; `makeVideoComposition()` embute o `animationTool` dos textos na videoComposition exportada.
 8. **iOS — sessão de export** — `runExportSession`
-   `AVAssetExportSession(preset: HighestQuality)`, `outputFileType = .mp4`, `Timer` de 0,1 s emitindo `state: "exporting"`, resultado tratado na main queue.
+   `AVAssetExportSession(preset: HighestQuality)`, `outputFileType = .mp4`; a `videoComposition` mantém o frame rate nominal quando `preserveSourceQuality == true` e declara Rec.709 no modo SDR. Um `Timer` de 0,1 s emite `state: "exporting"`, e o resultado é tratado na main queue.
 9. **Android — resolução do destino** — `.../TimelineCompositionController.kt` → `TimelineCompositionExporter.exportOutputFile`
    `File(outputPath)` ou `cacheDir/video_ultra_player_export_<uuid>.mp4`; cria diretório pai e apaga arquivo existente.
-10. **Android — montagem da composição** — `startExportCurrentTimeline` → `exportFromClips` → `buildTimelineComposition(clips, renderSize, audioTrack, textOverlays)`
-     Os mesmos builders usados no preview, incluindo a lista corrente de overlays (re-ancorada por clipe via `textOverlaysForClip`).
+10. **Android — montagem da composição** — `startExportCurrentTimeline` → `exportFromClips` → `buildTimelineComposition(clips, renderSize, audioTrack, textOverlays, config)`
+     Os mesmos builders usados no preview, incluindo a lista corrente de overlays (re-ancorada por clipe via `textOverlaysForClip`) e o modo HDR da `Composition`.
 11. **Android — Transformer** — `Transformer.Builder(context).addListener{...}.build()` → `start(composition, path)`
-    `progressRunnable` de 100 ms com `ProgressHolder`; `complete {}` entrega o resultado uma vez só.
+    Quando a qualidade da fonte deve ser preservada, o builder recebe um `DefaultEncoderFactory` com o maior bitrate detectado e fallback habilitado. `progressRunnable` de 100 ms com `ProgressHolder`; `complete {}` entrega o resultado uma vez só.
 12. **Publicação do progresso** — `TimelineExportProgressStreamHandler.emit` (iOS) / `ExportProgressStreamHandler.emit` (Android)
     Ambos clampam o progresso e emitem `{progress, state}`; `onListen` já emite `{0.0, "idle"}`.
 13. **Retorno ao Dart** — `result(outputURL.path)` / `callback.onCompleted(outputFile.absolutePath)`
@@ -76,6 +76,7 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 | API pública | `lib/src/native_timeline_player.dart` | Mutex `_exporting`, cache do stream, validações |
 | Contrato | `lib/video_ultra_player_platform_interface.dart` | `exportTimeline`, `exportCurrentTimeline`, `exportProgress` |
 | Serialização | `lib/video_ultra_player_method_channel.dart` | Payloads e `exportEventChannel` |
+| Configuração | `lib/src/models/timeline_composition_config.dart` | Proporção, resolução, política HDR e preservação de qualidade |
 | Modelo | `lib/src/models/timeline_export_progress.dart` | `TimelineExportState` e clamp do progresso |
 | Nativo iOS | `ios/Classes/VideoUltraPlayerPlugin.swift` | `exportTimeline`, `exportCurrentTimeline`, `runExportSession`, `TimelineExportProgressStreamHandler` |
 | Nativo iOS | `ios/Classes/TimelineComposition.swift` | `buildExportAsset`, `buildCurrentExportAsset` |
@@ -86,6 +87,7 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 | Testes | `test/native_timeline_player_test.dart` | Concorrência, `StateError` de progresso, delegação |
 | Testes | `test/video_ultra_player_method_channel_test.dart` | Payload de export e decodificação dos eventos |
 | Testes | `test/timeline_export_progress_test.dart` | `fromMap`, clamp e fallback de estado |
+| Testes Android | `android/src/test/.../TimelineExportQualityTest.kt` | Parsing HDR e seleção do bitrate da fonte |
 
 ## Regras de Negócio Relevantes
 
@@ -99,11 +101,14 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 - **Estado inicial é `idle`** — `onListen` emite `{progress: 0.0, state: "idle"}` imediatamente nas duas plataformas.
 - **Arquivo existente é sobrescrito** — iOS remove o arquivo antes de exportar; Android chama `delete()` antes do `start`.
 - **Destino default é temporário** — `temporaryDirectory` (iOS) / `cacheDir` (Android), com UUID no nome; o app é responsável por persistir.
+- **`original` preserva o canvas da origem** — a dimensão normalizada do primeiro vídeo, já considerando rotação, define o `renderSize`; a legenda é calculada como fração da altura desse canvas.
+- **Qualidade da fonte é uma política de melhor fidelidade** — overlays exigem re-encode. `preserveSourceQuality` pede o bitrate máximo da origem no Android e seu frame rate nominal no iOS, mas o encoder pode aplicar fallback conforme a capacidade do dispositivo.
+- **Tone mapping via MediaCodec evita o caminho OpenGL** — `toneMapToSdrUsingMediaCodec` é aplicado à `Composition` Android para não depender de `GL_EXT_YUV_target`; fontes SDR não precisam de conversão HDR.
 
 ## Dependências Externas
 
 - **iOS:** `AVAssetExportSession` (preset `AVAssetExportPresetHighestQuality`), `FileManager`, `Timer`.
-- **Android:** `androidx.media3.transformer.Transformer` + `ProgressHolder`, `Handler`/`Looper`, `java.io.File`.
+- **Android:** `androidx.media3.transformer.Transformer`, `DefaultEncoderFactory`, `VideoEncoderSettings`, `ProgressHolder`, `Handler`/`Looper`, `MediaMetadataRetriever`, `java.io.File`.
 - **App de exemplo:** `gal ^2.3.1` (`Gal.requestAccess`, `Gal.putVideo`).
 
 ## Observações

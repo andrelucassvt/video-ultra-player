@@ -42,7 +42,12 @@ void main() {
       'clips': [
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
-      'config': {'aspectRatio': 'original', 'baseWidth': 1080},
+      'config': {
+        'aspectRatio': 'original',
+        'baseWidth': 1080,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+      },
     });
   });
 
@@ -62,7 +67,12 @@ void main() {
       'clips': [
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
-      'config': {'aspectRatio': 'ratio9x16', 'baseWidth': 1080},
+      'config': {
+        'aspectRatio': 'ratio9x16',
+        'baseWidth': 1080,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+      },
     });
   });
 
@@ -80,7 +90,12 @@ void main() {
           <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
         ],
         'outputPath': '/tmp/final.mp4',
-        'config': {'aspectRatio': 'original', 'baseWidth': 1080},
+        'config': {
+          'aspectRatio': 'original',
+          'baseWidth': 1080,
+          'hdrMode': 'keepHdr',
+          'preserveSourceQuality': false,
+        },
       });
     },
   );
@@ -103,7 +118,12 @@ void main() {
         <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
       ],
       'outputPath': '/tmp/final.mp4',
-      'config': {'aspectRatio': 'ratio1x1', 'baseWidth': 1200},
+      'config': {
+        'aspectRatio': 'ratio1x1',
+        'baseWidth': 1200,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+      },
     });
   });
 
@@ -135,7 +155,12 @@ void main() {
     ]);
     expect(calls[6].arguments, {
       'textureId': 77,
-      'config': {'aspectRatio': 'ratio9x16', 'baseWidth': 720},
+      'config': {
+        'aspectRatio': 'ratio9x16',
+        'baseWidth': 720,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+      },
     });
     expect(calls[2].arguments, {'textureId': 77, 'positionMs': 300});
     expect(calls[3].arguments, {'textureId': 77, 'clipIndex': 1});

@@ -69,15 +69,25 @@ struct TimelineCompositionConfig {
     case original
   }
 
+  enum HdrMode: String {
+    case keepHdr
+    case toneMapToSdrUsingMediaCodec
+  }
+
   let aspectRatio: OutputAspectRatio
   let baseWidth: Int
+  let hdrMode: HdrMode
+  let preserveSourceQuality: Bool
 
   init(dictionary: [String: Any]? = nil) {
     let aspectRatioValue = dictionary?["aspectRatio"] as? String
     let baseWidth = dictionary?["baseWidth"] as? NSNumber
+    let hdrModeValue = dictionary?["hdrMode"] as? String
 
     self.aspectRatio = OutputAspectRatio(rawValue: aspectRatioValue ?? "") ?? .original
     self.baseWidth = max(baseWidth?.intValue ?? 1080, 1)
+    self.hdrMode = HdrMode(rawValue: hdrModeValue ?? "") ?? .keepHdr
+    self.preserveSourceQuality = dictionary?["preserveSourceQuality"] as? Bool ?? false
   }
 }
 
@@ -189,6 +199,8 @@ final class TimelineComposition {
   private var segments: [TimelineSegment] = []
   private var composition: AVMutableComposition?
   private var renderSize = CGSize(width: 1280, height: 720)
+  private var currentConfig = TimelineCompositionConfig()
+  private var sourceFrameRate: Int32 = 30
   /// Renderable size of the first clip, kept so `.original` can be resolved on
   /// a config change without re-reading the source tracks.
   private var firstRenderableSize = CGSize(width: 1280, height: 720)
@@ -219,6 +231,7 @@ final class TimelineComposition {
     }
 
     self.clips = clips
+    currentConfig = config
     if let audioTrack { self.currentAudioTrack = audioTrack }
     segments = []
     totalDuration = .zero
@@ -244,6 +257,9 @@ final class TimelineComposition {
         preferredTransform: sourceVideoTrack.preferredTransform
       )
     }
+    sourceFrameRate = normalizedFrameRate(
+      preparedClips.first?.videoTrack.nominalFrameRate ?? 30
+    )
 
     let mutableComposition = AVMutableComposition()
     guard
@@ -581,7 +597,10 @@ final class TimelineComposition {
   func updateConfig(_ config: TimelineCompositionConfig) -> AVVideoComposition? {
     guard composition != nil else { return nil }
     let nextSize = renderSize(for: config, firstRenderableSize: firstRenderableSize)
-    guard nextSize != renderSize else { return nil }
+    let policyChanged = config.hdrMode != currentConfig.hdrMode ||
+      config.preserveSourceQuality != currentConfig.preserveSourceQuality
+    currentConfig = config
+    guard nextSize != renderSize || policyChanged else { return nil }
     renderSize = nextSize
     return makeVideoComposition(includeTextOverlays: false)
   }
@@ -623,7 +642,15 @@ final class TimelineComposition {
   ) -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
-    videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+    videoComposition.frameDuration = CMTime(
+      value: 1,
+      timescale: currentConfig.preserveSourceQuality ? sourceFrameRate : 30
+    )
+    if currentConfig.hdrMode == .toneMapToSdrUsingMediaCodec {
+      videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+      videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+      videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+    }
 
     let instructions = segments.map { segment in
       singleLayerInstruction(
@@ -924,6 +951,11 @@ final class TimelineComposition {
   ) -> CGSize {
     let rect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
     return CGSize(width: abs(rect.width), height: abs(rect.height))
+  }
+
+  private func normalizedFrameRate(_ frameRate: Float) -> Int32 {
+    let rounded = Int32(frameRate.rounded())
+    return min(max(rounded, 1), 240)
   }
 
   private func evenSize(_ size: CGSize) -> CGSize {

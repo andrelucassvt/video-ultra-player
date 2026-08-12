@@ -1,3 +1,11 @@
+## 2.4.0
+
+### Export quality and HDR
+
+- Added `TimelineHdrMode` to choose between keeping HDR and MediaCodec-backed HDR-to-SDR tone mapping during export.
+- Added `preserveSourceQuality` to request the highest source bitrate on Android and preserve the source frame rate on iOS.
+- Original-aspect exports continue to use the normalized source dimensions and orientation.
+
 ## 2.3.0
 
 ### Captions
