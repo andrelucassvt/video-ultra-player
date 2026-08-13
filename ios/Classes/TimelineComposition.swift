@@ -673,6 +673,15 @@ final class TimelineComposition {
       )
 
       TextOverlayLayers.prependOverlayTrack(overlayTrackID, to: instructions)
+
+      // CoreAnimationTool rasterizes CALayers in SDR (sRGB); blending that
+      // into an HDR working space is undefined per AVFoundation and washes
+      // the overlay colors out (white text exports as gray on HLG sources).
+      // Pin the working space to BT.709 so the source is tone-mapped to SDR
+      // and burned-in captions/text keep the exact preview colors.
+      videoComposition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+      videoComposition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+      videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
     }
 
     videoComposition.instructions = instructions.sorted {
