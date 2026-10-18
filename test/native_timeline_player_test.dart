@@ -36,6 +36,8 @@ class MockVideoUltraPlayerPlatform
   List<Map<String, dynamic>>? lastCaptionsCues;
   Map<String, dynamic>? lastCaptionsStyle;
   String? lastExtractAudioOutputPath;
+  Map<String, dynamic>? lastGridPayload;
+  String? lastGridOutputPath;
   final stateController = StreamController<TimelinePlayerState>.broadcast();
   final exportProgressController =
       StreamController<TimelineExportProgress>.broadcast();
@@ -65,6 +67,20 @@ class MockVideoUltraPlayerPlatform
       return exportCompleter!.future;
     }
     return outputPath ?? '/tmp/exported.mp4';
+  }
+
+  @override
+  Future<String> renderGrid(
+    Map<String, dynamic> grid, {
+    required String outputPath,
+  }) async {
+    calls.add('renderGrid');
+    lastGridPayload = grid;
+    lastGridOutputPath = outputPath;
+    if (exportCompleter != null) {
+      return exportCompleter!.future;
+    }
+    return outputPath;
   }
 
   @override
@@ -530,10 +546,9 @@ void main() {
       aspectRatio: OutputAspectRatio.ratio16x9,
     );
     final player = NativeTimelinePlayer();
-    await player.load(
-      const [TimelineClip(path: '/tmp/a.mp4', type: MediaType.video)],
-      config: config,
-    );
+    await player.load(const [
+      TimelineClip(path: '/tmp/a.mp4', type: MediaType.video),
+    ], config: config);
 
     await player.setCompositionConfig(config);
     await player.setCompositionConfig(
@@ -893,6 +908,62 @@ void main() {
 
     test('setClipSpeed rejects speed above 2.0', () {
       expect(() => player.setClipSpeed(0, 2.5), throwsRangeError);
+    });
+  });
+
+  group('renderGrid', () {
+    TimelineGridComposition grid() => TimelineGridComposition(
+      width: 1080,
+      height: 1920,
+      videoCells: const [
+        TimelineGridCell(path: '/a.mp4', rect: Rect.fromLTWH(0, 0, 1, 0.5)),
+        TimelineGridCell(path: '/b.mp4', rect: Rect.fromLTWH(0, 0.5, 1, 0.5)),
+      ],
+      overlayImagePath: '/overlay.png',
+      audioCellIndex: 1,
+      maxDuration: const Duration(seconds: 30),
+    );
+
+    test('works without load and forwards the serialized grid', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+
+      final path = await player.renderGrid(grid(), outputPath: '/tmp/g.mp4');
+
+      expect(path, '/tmp/g.mp4');
+      expect(fakePlatform.lastGridOutputPath, '/tmp/g.mp4');
+      expect(fakePlatform.lastGridPayload, {
+        'width': 1080,
+        'height': 1920,
+        'cells': [
+          {'path': '/a.mp4', 'x': 0.0, 'y': 0.0, 'width': 1.0, 'height': 0.5},
+          {'path': '/b.mp4', 'x': 0.0, 'y': 0.5, 'width': 1.0, 'height': 0.5},
+        ],
+        'overlayImagePath': '/overlay.png',
+        'audioCellIndex': 1,
+        'maxDurationMs': 30000,
+      });
+    });
+
+    test('shares the single export slot', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      fakePlatform.exportCompleter = Completer<String>();
+
+      final first = player.renderGrid(grid(), outputPath: '/tmp/g.mp4');
+      expect(
+        () => player.renderGrid(grid(), outputPath: '/tmp/h.mp4'),
+        throwsStateError,
+      );
+      fakePlatform.exportCompleter!.complete('/tmp/g.mp4');
+      await first;
+      fakePlatform.exportCompleter = null;
+    });
+
+    test('rejects an empty output path', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(
+        () => player.renderGrid(grid(), outputPath: ''),
+        throwsArgumentError,
+      );
     });
   });
 

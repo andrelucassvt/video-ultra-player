@@ -56,6 +56,7 @@ class VideoUltraPlayerPlugin :
         when (call.method) {
             "load" -> load(call, result)
             "exportTimeline" -> exportTimeline(call, result)
+            "renderGrid" -> renderGrid(call, result)
             "play" -> withController(call, result) { controller ->
                 controller.play()
                 result.success(null)
@@ -456,6 +457,87 @@ class VideoUltraPlayerPlugin :
                 "Unable to export native timeline composition.",
                 error.message
             )
+        }
+    }
+
+    private fun renderGrid(
+        call: MethodCall,
+        result: Result
+    ) {
+        val context = applicationContext
+        if (context == null) {
+            result.error(
+                "not_attached",
+                "VideoUltraPlayerPlugin is not attached to the Flutter engine.",
+                null
+            )
+            return
+        }
+
+        val args = call.arguments as? Map<*, *>
+        val grid = GridCompositionDescriptor.from(args?.get("grid") as? Map<*, *>)
+        val outputPath = (args?.get("outputPath") as? String)?.takeIf { it.isNotBlank() }
+        if (grid == null || outputPath == null) {
+            result.error(
+                "invalid_arguments",
+                "renderGrid requires a valid grid and outputPath.",
+                null
+            )
+            return
+        }
+
+        val fail: (Throwable) -> Unit = { error ->
+            Log.e("VideoUltraPlayer", "Grid render failed: ${exportErrorDetails(error)}", error)
+            exportProgressHandler.emit(0.0, "failed")
+            result.error(
+                "export_failed",
+                "Unable to render grid composition.",
+                exportErrorDetails(error)
+            )
+        }
+
+        // Metadata reads block; the Transformer itself starts back on main.
+        mediaMetadataExecutor.execute {
+            val sources = try {
+                GridRenderer.resolveSources(context, grid)
+            } catch (error: Throwable) {
+                mainHandler.post { fail(error) }
+                return@execute
+            }
+            mainHandler.post {
+                val exporter = TimelineCompositionExporter(context)
+                activeExporters.add(exporter)
+                try {
+                    exporter.exportComposition(
+                        composition = GridRenderer.buildComposition(grid, sources),
+                        outputPath = outputPath,
+                        videoBitrate = null,
+                        callback = object : TimelineExportCallback {
+                            override fun onProgress(progress: Double, state: String) {
+                                exportProgressHandler.emit(progress, state)
+                            }
+
+                            override fun onCompleted(outputPath: String) {
+                                activeExporters.remove(exporter)
+                                result.success(outputPath)
+                            }
+
+                            override fun onError(error: Throwable) {
+                                activeExporters.remove(exporter)
+                                result.error(
+                                    "export_failed",
+                                    "Unable to render grid composition.",
+                                    exportErrorDetails(error)
+                                )
+                            }
+                        }
+                    )
+                } catch (error: Throwable) {
+                    activeExporters.remove(exporter)
+                    exporter.cancel()
+                    fail(error)
+                }
+            }
         }
     }
 

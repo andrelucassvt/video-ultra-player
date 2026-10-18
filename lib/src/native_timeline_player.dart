@@ -3,6 +3,7 @@ import 'package:video_ultra_player/src/models/timeline_caption.dart';
 import 'package:video_ultra_player/src/models/timeline_clip.dart';
 import 'package:video_ultra_player/src/models/timeline_composition_config.dart';
 import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
+import 'package:video_ultra_player/src/models/timeline_grid_composition.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/src/models/timeline_text_overlay.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
@@ -182,6 +183,34 @@ class NativeTimelinePlayer {
         _requireTextureId(),
         outputPath: outputPath,
       );
+    } finally {
+      _exporting = false;
+    }
+  }
+
+  /// Renders a split-screen [grid] to an MP4 at [outputPath] and returns the
+  /// written path.
+  ///
+  /// This is a **standalone** operation — it does not require [load] — so the
+  /// result can be inserted into any timeline as a regular video clip.
+  /// Progress is reported through [exportProgress] while the future is
+  /// pending. Shares the single-export slot with [exportTimeline] and
+  /// [exportCurrentTimeline]; a concurrent call throws [StateError].
+  Future<String> renderGrid(
+    TimelineGridComposition grid, {
+    required String outputPath,
+  }) async {
+    if (outputPath.isEmpty) {
+      throw ArgumentError.value(outputPath, 'outputPath', 'Must not be empty.');
+    }
+    if (_exporting) {
+      throw StateError('Only one timeline export can run at a time.');
+    }
+
+    _exporting = true;
+    _exportProgressStream = null;
+    try {
+      return await _platform.renderGrid(grid.toJson(), outputPath: outputPath);
     } finally {
       _exporting = false;
     }

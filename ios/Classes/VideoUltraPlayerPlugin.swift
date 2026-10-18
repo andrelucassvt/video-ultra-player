@@ -48,6 +48,8 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       exportTimeline(call, result: result)
     case "exportCurrentTimeline":
       exportCurrentTimeline(call, result: result)
+    case "renderGrid":
+      renderGrid(call, result: result)
     case "play":
       guard let controller = controller(for: call, result: result) else { return }
       controller.play()
@@ -488,6 +490,46 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
           details: "\(error)"
         )
       )
+    }
+  }
+
+  private func renderGrid(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    let args = call.arguments as? [String: Any]
+    guard
+      let rawGrid = args?["grid"] as? [String: Any],
+      let grid = GridCompositionDescriptor(dictionary: rawGrid),
+      let outputPath = args?["outputPath"] as? String,
+      !outputPath.isEmpty
+    else {
+      result(FlutterError(
+        code: "invalid_arguments",
+        message: "renderGrid requires a valid grid and outputPath (String).",
+        details: nil
+      ))
+      return
+    }
+    let outputURL = URL(fileURLWithPath: outputPath)
+
+    GridRenderer.buildQueue.async {
+      do {
+        try self.prepareOutputDirectory(at: outputURL)
+        let exportAsset = try GridRenderer.buildExportAsset(grid: grid)
+        DispatchQueue.main.async {
+          self.runExportSession(asset: exportAsset, outputURL: outputURL, onDispose: nil, result: result)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          self.exportProgressHandler.emit(progress: 0, state: "failed")
+          result(FlutterError(
+            code: "export_failed",
+            message: "Unable to render grid composition.",
+            details: "\(error)"
+          ))
+        }
+      }
     }
   }
 

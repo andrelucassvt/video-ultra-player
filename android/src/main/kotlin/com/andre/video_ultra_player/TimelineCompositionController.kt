@@ -59,7 +59,7 @@ private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
  * Shared pool for blocking source-metadata reads. Bounded so a long timeline
  * cannot spawn one thread per clip.
  */
-private val mediaMetadataExecutor: ExecutorService = Executors.newFixedThreadPool(
+internal val mediaMetadataExecutor: ExecutorService = Executors.newFixedThreadPool(
     max(2, min(4, Runtime.getRuntime().availableProcessors()))
 ) { runnable ->
     Thread(runnable, "video-ultra-player-metadata").apply { isDaemon = true }
@@ -744,14 +744,6 @@ internal class TimelineCompositionExporter(
         outputPath: String?,
         callback: TimelineExportCallback
     ) {
-        progressCallback = callback
-        callback.onProgress(0.0, "exporting")
-        val outputFile = exportOutputFile(outputPath)
-        outputFile.parentFile?.mkdirs()
-        if (outputFile.exists()) {
-            outputFile.delete()
-        }
-
         val composition = buildTimelineComposition(
             clips,
             renderSize,
@@ -761,6 +753,33 @@ internal class TimelineCompositionExporter(
             captionStyle,
             config
         )
+        exportComposition(
+            composition,
+            outputPath,
+            preferredVideoBitrate(config, clips),
+            callback
+        )
+    }
+
+    /**
+     * Runs [Transformer] over an already built [composition]. Shared by the
+     * timeline export and the standalone grid render, so both report progress
+     * and failures the same way.
+     */
+    fun exportComposition(
+        composition: Composition,
+        outputPath: String?,
+        videoBitrate: Int?,
+        callback: TimelineExportCallback
+    ) {
+        progressCallback = callback
+        callback.onProgress(0.0, "exporting")
+        val outputFile = exportOutputFile(outputPath)
+        outputFile.parentFile?.mkdirs()
+        if (outputFile.exists()) {
+            outputFile.delete()
+        }
+
         val transformerBuilder = Transformer.Builder(context)
             .addListener(
                 object : Transformer.Listener {
@@ -795,7 +814,7 @@ internal class TimelineCompositionExporter(
                     }
                 }
             )
-        preferredVideoBitrate(config, clips)?.let { bitrate ->
+        videoBitrate?.let { bitrate ->
             val encoderFactory = DefaultEncoderFactory.Builder(context)
                 .setRequestedVideoEncoderSettings(
                     VideoEncoderSettings.Builder()

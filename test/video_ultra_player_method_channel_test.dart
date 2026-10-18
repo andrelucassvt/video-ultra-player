@@ -22,6 +22,9 @@ void main() {
           if (methodCall.method == 'exportTimeline') {
             return '/tmp/final.mp4';
           }
+          if (methodCall.method == 'renderGrid') {
+            return '/tmp/grid.mp4';
+          }
           return null;
         });
   });
@@ -29,6 +32,19 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  test('renderGrid invokes native renderGrid with grid and path', () async {
+    final path = await platform.renderGrid(<String, dynamic>{
+      'width': 2,
+    }, outputPath: '/tmp/grid.mp4');
+
+    expect(path, '/tmp/grid.mp4');
+    expect(calls.single.method, 'renderGrid');
+    expect(calls.single.arguments, {
+      'grid': {'width': 2},
+      'outputPath': '/tmp/grid.mp4',
+    });
   });
 
   test('load invokes native load and returns texture id', () async {
@@ -78,12 +94,9 @@ void main() {
   });
 
   test('load serializes enablePreview false for headless sessions', () async {
-    final textureId = await platform.load(
-      [
-        <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
-      ],
-      config: TimelineCompositionConfig(enablePreview: false).toJson(),
-    );
+    final textureId = await platform.load([
+      <String, dynamic>{'path': '/tmp/a.mp4', 'type': 'video'},
+    ], config: TimelineCompositionConfig(enablePreview: false).toJson());
 
     expect(textureId, 77);
     expect(calls.single.arguments, {

@@ -77,6 +77,21 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<String> renderGrid(
+    Map<String, dynamic> grid, {
+    required String outputPath,
+  }) async {
+    final renderedPath = await methodChannel.invokeMethod<String>(
+      'renderGrid',
+      <String, Object?>{'grid': grid, 'outputPath': outputPath},
+    );
+    if (renderedPath == null) {
+      throw StateError('Native renderGrid did not return an output path.');
+    }
+    return renderedPath;
+  }
+
+  @override
   Future<void> play(int textureId) {
     return methodChannel.invokeMethod<void>('play', _textureArgs(textureId));
   }

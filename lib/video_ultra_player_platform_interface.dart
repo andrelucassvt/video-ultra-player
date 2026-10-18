@@ -44,6 +44,16 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     );
   }
 
+  /// Renders a split-screen grid (see `TimelineGridComposition.toJson`) to
+  /// [outputPath] and returns the written path. Independent of any loaded
+  /// timeline; progress goes through [exportProgress].
+  Future<String> renderGrid(
+    Map<String, dynamic> grid, {
+    required String outputPath,
+  }) {
+    throw UnimplementedError('renderGrid() has not been implemented.');
+  }
+
   Future<void> play(int textureId) {
     throw UnimplementedError('play() has not been implemented.');
   }

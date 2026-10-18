@@ -135,8 +135,11 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 |---|---|---|---|---|
 | `exportTimeline` | `Future<String> exportTimeline(List<TimelineClip>, {String? outputPath, TimelineCompositionConfig? config})` | `exportTimeline` | `clips`, `outputPath`, `config` | caminho do MP4 |
 | `exportCurrentTimeline` | `Future<String> exportCurrentTimeline({String? outputPath})` | `exportCurrentTimeline` | `textureId`, `outputPath` | caminho do MP4 |
+| `renderGrid` | `Future<String> renderGrid(TimelineGridComposition, {required String outputPath})` | `renderGrid` | `grid`, `outputPath` | caminho do MP4 |
 
 `exportCurrentTimeline` é o que garante a regra "export = preview": reconstrói a partir do estado nativo já editado, sem receber lista de clipes.
+
+`renderGrid` é independente de `load` (como `generateThumbnails`): compõe vídeos simultâneos, um por célula (cover + crop central no retângulo normalizado da célula), por baixo de um PNG opcional do tamanho exato da saída. Pixels transparentes do PNG revelam os vídeos — formas, fundo e fotos são definidos por quem chama. A saída dura o vídeo mais longo (limitado por `maxDuration`) e os mais curtos ficam em loop; só `audioCellIndex` mantém áudio. iOS: `GridRenderer.swift` (uma trilha por célula + layer instructions + PNG via `AVVideoCompositionCoreAnimationTool` em trilha sintética). Android: `GridRenderer.kt` (sequência 0 = PNG não-loop que define a duração e fica por cima; uma sequência em loop por célula com `Presentation` no tamanho da célula, posicionada por `VideoCompositorSettings`; sem PNG, gera um PNG transparente para manter o compositor multi-entrada ativo). O resultado é um MP4 comum, pronto para entrar numa timeline como `TimelineClip`.
 
 ---
 
@@ -213,6 +216,10 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 
 `progress` (`double`, clampado em `[0.0, 1.0]` no `fromMap`) e `state` (`TimelineExportState`). Tem `.idle()` e `copyWith`.
 
+### `TimelineGridComposition` / `TimelineGridCell` (`.../timeline_grid_composition.dart`)
+
+`width`/`height` positivos e pares, `videoCells` não vazio (cada `rect` normalizado dentro de `[0, 1]`), `overlayImagePath` opcional, `audioCellIndex` dentro de `videoCells` e `maxDuration` positivo — validados na factory (`ArgumentError`/`RangeError`). Serializa células como `{path, x, y, width, height}`.
+
 ### `ClipTransition` (`.../clip_transition.dart`)
 
 `type` (`TransitionType`) e `duration` (`Duration`), com `toJson` (`type`, `durationMs`).
@@ -248,6 +255,8 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 | Modelos | `lib/src/models/*.dart` | 8 modelos/enums serializáveis (tudo em milissegundos). |
 | Nativo iOS | `ios/Classes/VideoUltraPlayerPlugin.swift` | `handle(_:result:)` com os 25 `case`; controllers em `TimelinePlayerController`. |
 | Nativo Android | `android/src/main/kotlin/com/andre/video_ultra_player/VideoUltraPlayerPlugin.kt` | `onMethodCall` com os mesmos 25 métodos; `withController` resolve o `textureId`. |
+| Nativo iOS | `ios/Classes/GridRenderer.swift` | Composição do grid (trilhas simultâneas, loop, crop/transform por célula, PNG por cima). |
+| Nativo Android | `android/src/main/kotlin/com/andre/video_ultra_player/GridRenderer.kt` | `Composition` multi-sequência do grid + `GridCompositorSettings`; export via `TimelineCompositionExporter.exportComposition`. |
 | Testes | `test/native_timeline_player_test.dart` | Validações da API pública com platform fake. |
 | Testes | `test/video_ultra_player_method_channel_test.dart` | Nome do método e payload exato de cada comando. |
 | Testes | `test/{timeline_clip,audio_track,timeline_text_overlay,timeline_player_state,timeline_export_progress,timeline_composition_config,clip_thumbnail,edit_history_state}_test.dart` | Serialização/desserialização dos modelos. |
@@ -263,7 +272,7 @@ Validações que rodam **no Dart**, antes de qualquer `invokeMethod` — todas e
 - **Índices não negativos** — `trimClip`, `splitClip`, `insertClip`, `removeClip`, `moveClip`, `replaceClip` e `setClipSpeed` lançam `ArgumentError` para índice `< 0`.
 - **Split estritamente positivo** — `splitClip` exige `atLocalPosition > Duration.zero`.
 - **`moveClip` idempotente** — índices iguais retornam sem tocar o canal.
-- **Um export por vez** — flag `_exporting` compartilhado por `exportTimeline` e `exportCurrentTimeline`; liberado em `finally`.
+- **Um export por vez** — flag `_exporting` compartilhado por `exportTimeline`, `exportCurrentTimeline` e `renderGrid`; liberado em `finally`.
 - **`scale > 0`** — `assert` no construtor de `TimelineClip`.
 - **`volume` de áudio em `[0.0, 1.0]`** — `assert` no construtor de `AudioTrack`.
 - **`baseWidth` positivo** — `TimelineCompositionConfig` lança `ArgumentError` na factory.
