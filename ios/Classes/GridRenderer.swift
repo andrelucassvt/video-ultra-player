@@ -159,7 +159,7 @@ enum GridRenderer {
     videoComposition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
 
     if let overlayImagePath = grid.overlayImagePath, !overlayImagePath.isEmpty {
-      guard let image = UIImage(contentsOfFile: overlayImagePath)?.cgImage else {
+      guard let image = decodedOverlayImage(path: overlayImagePath, renderSize: renderSize) else {
         throw GridRendererError.cannotLoadOverlay(overlayImagePath)
       }
       // Same synthetic-track approach as text overlays: the post-processing
@@ -176,7 +176,44 @@ enum GridRenderer {
     return TimelineExportAsset(asset: composition, videoComposition: videoComposition, audioMix: nil)
   }
 
+  /// Redraws the overlay PNG into an 8-bit premultiplied sRGB bitmap at the
+  /// render size. The file comes straight from Flutter and may be lazily
+  /// decoded or use a wide-gamut/16-bit layout; on device Core Animation's
+  /// offline renderer can rasterize such an image as an opaque black frame,
+  /// which hides every cell below the overlay track.
+  private static func decodedOverlayImage(path: String, renderSize: CGSize) -> CGImage? {
+    guard let source = UIImage(contentsOfFile: path)?.cgImage else { return nil }
+    let width = Int(renderSize.width)
+    let height = Int(renderSize.height)
+    guard
+      let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+      let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+      )
+    else {
+      return nil
+    }
+    let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+    context.clear(bounds)
+    context.interpolationQuality = .high
+    context.draw(source, in: bounds)
+    return context.makeImage()
+  }
+
+  /// Built off the main thread, so the layer tree lives in an explicit
+  /// transaction: an implicit one is only committed by a run loop, which the
+  /// build queue does not have.
   private static func overlayLayer(image: CGImage, renderSize: CGSize) -> CALayer {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+
     let parentLayer = CALayer()
     parentLayer.frame = CGRect(origin: .zero, size: renderSize)
     parentLayer.isGeometryFlipped = true
