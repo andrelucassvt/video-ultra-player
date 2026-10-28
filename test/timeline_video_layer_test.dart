@@ -85,4 +85,24 @@ void main() {
     expect(stretched.toJson()['heightFraction'], 0.3);
     expect(TimelineVideoLayer.fromJson(stretched.toJson()), stretched);
   });
+
+  test('volume is serialized only when not the default', () {
+    expect(layer.volume, 1.0);
+    expect(layer.toJson().containsKey('volume'), isFalse);
+    expect(layer.copyWith(volume: 0).toJson()['volume'], 0.0);
+    expect(
+      TimelineVideoLayer.fromJson(layer.copyWith(volume: 0.3).toJson()),
+      layer.copyWith(volume: 0.3),
+    );
+  });
+
+  test('sourceHasAudio is read from native and never sent back', () {
+    final resolved = TimelineVideoLayer.fromJson(<String, dynamic>{
+      ...layer.toJson(),
+      'sourceHasAudio': false,
+    });
+
+    expect(resolved.sourceHasAudio, isFalse);
+    expect(resolved.toJson().containsKey('sourceHasAudio'), isFalse);
+  });
 }

@@ -46,7 +46,9 @@ class TimelineClip {
     this.trimStart,
     this.trimEnd,
     this.transitionToNext,
+    this.volume = 1.0,
   }) : assert(scale > 0, 'scale must be greater than zero'),
+       assert(volume >= 0.0 && volume <= 1.0, 'volume must be in [0.0, 1.0]'),
        assert(
          speed >= 0.5 && speed <= 2.0,
          'speed must be in the range [0.5, 2.0]',
@@ -96,6 +98,10 @@ class TimelineClip {
   /// `null` means a hard cut (no transition).
   final ClipTransition? transitionToNext;
 
+  /// Volume of the clip's own audio in `[0.0, 1.0]`; `0` removes it from the
+  /// mix. Default `1.0`.
+  final double volume;
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'path': path,
@@ -108,6 +114,7 @@ class TimelineClip {
       if (trimEnd != null) 'trimEndMs': trimEnd!.inMilliseconds,
       if (transitionToNext != null)
         'transitionToNext': transitionToNext!.toJson(),
+      if (volume != 1.0) 'volume': volume,
     };
   }
 
@@ -121,6 +128,7 @@ class TimelineClip {
     Duration? trimStart,
     Duration? trimEnd,
     ClipTransition? transitionToNext,
+    double? volume,
   }) {
     return TimelineClip(
       path: path ?? this.path,
@@ -132,6 +140,7 @@ class TimelineClip {
       trimStart: trimStart ?? this.trimStart,
       trimEnd: trimEnd ?? this.trimEnd,
       transitionToNext: transitionToNext ?? this.transitionToNext,
+      volume: volume ?? this.volume,
     );
   }
 
@@ -146,7 +155,8 @@ class TimelineClip {
         other.speed == speed &&
         other.trimStart == trimStart &&
         other.trimEnd == trimEnd &&
-        other.transitionToNext == transitionToNext;
+        other.transitionToNext == transitionToNext &&
+        other.volume == volume;
   }
 
   @override
@@ -161,6 +171,7 @@ class TimelineClip {
       trimStart,
       trimEnd,
       transitionToNext,
+      volume,
     );
   }
 }

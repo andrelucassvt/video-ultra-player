@@ -27,6 +27,9 @@ struct VideoLayerDescriptor: Equatable {
   var sourceDurationMs: Int64 = 0
   var sourceWidth: Int = 0
   var sourceHeight: Int = 0
+  /// Gain of the layer's audio in [0, 1]; 0 keeps the layer silent.
+  var volume: Double = 1
+  var sourceHasAudio = false
 
   init?(dictionary: [String: Any]) {
     guard let id = dictionary["id"] as? String,
@@ -48,6 +51,7 @@ struct VideoLayerDescriptor: Equatable {
       CGFloat(min(max($0.doubleValue, 0.05), 1))
     }
     self.opacity = Float(min(max((dictionary["opacity"] as? NSNumber)?.doubleValue ?? 1, 0), 1))
+    self.volume = min(max((dictionary["volume"] as? NSNumber)?.doubleValue ?? 1, 0), 1)
   }
 
   /// Channel map in the Dart contract format plus the displayed source size,
@@ -64,7 +68,9 @@ struct VideoLayerDescriptor: Equatable {
       "opacity": Double(opacity),
       "sourceWidth": sourceWidth,
       "sourceHeight": sourceHeight,
+      "sourceHasAudio": sourceHasAudio,
     ]
+    if volume != 1 { map["volume"] = volume }
     if let trimEndMs { map["trimEndMs"] = trimEndMs }
     if let heightFraction { map["heightFraction"] = Double(heightFraction) }
     return map
@@ -73,7 +79,10 @@ struct VideoLayerDescriptor: Equatable {
   /// True when only the placement (position, size, opacity) differs from
   /// `other` — those edits only need a new video composition, not a rebuild.
   func differsOnlyInPlacement(from other: VideoLayerDescriptor) -> Bool {
+    // Volume lives in the audio mix, which the surgical video-composition
+    // update does not rebuild: a volume change needs the full rebuild.
     return id == other.id && path == other.path && startMs == other.startMs &&
+      volume == other.volume &&
       trimStartMs == other.trimStartMs &&
       (trimEndMs ?? sourceDurationMs) == (other.trimEndMs ?? other.sourceDurationMs)
   }

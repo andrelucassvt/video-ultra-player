@@ -16,7 +16,7 @@ import 'package:flutter/foundation.dart';
 /// `null` the height follows the source aspect ratio, otherwise width and
 /// height are independent and the video is stretched to fill the box.
 ///
-/// Layers are video-only: their audio is never mixed. The order of the
+/// The layer's audio is mixed with the main timeline at [volume]. The order of the
 /// layers is their z-order — later layers are drawn on top of earlier ones,
 /// all of them above the main video and below text overlays and captions.
 @immutable
@@ -37,6 +37,8 @@ class TimelineVideoLayer {
     this.widthFraction = 0.5,
     this.heightFraction,
     this.opacity = 1.0,
+    this.volume = 1.0,
+    this.sourceHasAudio,
     this.sourceWidth,
     this.sourceHeight,
   }) : assert(x >= 0.0 && x <= 1.0),
@@ -46,7 +48,8 @@ class TimelineVideoLayer {
          heightFraction == null ||
              (heightFraction >= 0.05 && heightFraction <= 1.0),
        ),
-       assert(opacity >= 0.0 && opacity <= 1.0);
+       assert(opacity >= 0.0 && opacity <= 1.0),
+       assert(volume >= 0.0 && volume <= 1.0);
 
   /// Creates a [TimelineVideoLayer] from a channel map (durations in ms).
   factory TimelineVideoLayer.fromJson(Map<dynamic, dynamic> json) {
@@ -66,6 +69,8 @@ class TimelineVideoLayer {
       widthFraction: (json['widthFraction'] as num? ?? 0.5).toDouble(),
       heightFraction: (json['heightFraction'] as num?)?.toDouble(),
       opacity: (json['opacity'] as num? ?? 1.0).toDouble(),
+      volume: (json['volume'] as num? ?? 1.0).toDouble(),
+      sourceHasAudio: json['sourceHasAudio'] as bool?,
       sourceWidth: (json['sourceWidth'] as num?)?.toInt(),
       sourceHeight: (json['sourceHeight'] as num?)?.toInt(),
     );
@@ -103,6 +108,15 @@ class TimelineVideoLayer {
   /// Opacity of the layer in `[0.0, 1.0]`.
   final double opacity;
 
+  /// Volume of the layer's audio in `[0.0, 1.0]`, mixed with the main
+  /// timeline; `0` mutes the layer. Default `1.0`.
+  final double volume;
+
+  /// Whether the source has an audio track. Read-only: filled by the native
+  /// side in the [NativeTimelinePlayer.addVideoLayer] response and never sent
+  /// back; `null` while unknown.
+  final bool? sourceHasAudio;
+
   /// Displayed width of the source in pixels (after rotation). Read-only:
   /// filled by the native side in the [NativeTimelinePlayer.addVideoLayer]
   /// response and never sent back.
@@ -133,6 +147,7 @@ class TimelineVideoLayer {
     'widthFraction': widthFraction,
     if (heightFraction != null) 'heightFraction': heightFraction,
     'opacity': opacity,
+    if (volume != 1.0) 'volume': volume,
   };
 
   /// Returns a copy with the given fields replaced.
@@ -147,6 +162,8 @@ class TimelineVideoLayer {
     double? widthFraction,
     double? heightFraction,
     double? opacity,
+    double? volume,
+    bool? sourceHasAudio,
     int? sourceWidth,
     int? sourceHeight,
   }) => TimelineVideoLayer(
@@ -160,6 +177,8 @@ class TimelineVideoLayer {
     widthFraction: widthFraction ?? this.widthFraction,
     heightFraction: heightFraction ?? this.heightFraction,
     opacity: opacity ?? this.opacity,
+    volume: volume ?? this.volume,
+    sourceHasAudio: sourceHasAudio ?? this.sourceHasAudio,
     sourceWidth: sourceWidth ?? this.sourceWidth,
     sourceHeight: sourceHeight ?? this.sourceHeight,
   );
@@ -178,6 +197,8 @@ class TimelineVideoLayer {
           widthFraction == other.widthFraction &&
           heightFraction == other.heightFraction &&
           opacity == other.opacity &&
+          volume == other.volume &&
+          sourceHasAudio == other.sourceHasAudio &&
           sourceWidth == other.sourceWidth &&
           sourceHeight == other.sourceHeight;
 
@@ -193,6 +214,8 @@ class TimelineVideoLayer {
     widthFraction,
     heightFraction,
     opacity,
+    volume,
+    sourceHasAudio,
     sourceWidth,
     sourceHeight,
   );

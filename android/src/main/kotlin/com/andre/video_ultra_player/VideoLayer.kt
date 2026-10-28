@@ -5,6 +5,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.OverlaySettings
 import androidx.media3.common.VideoCompositorSettings
+import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.util.Size
 import androidx.media3.effect.AlphaScale
 import androidx.media3.effect.Presentation
@@ -45,6 +46,10 @@ internal data class VideoLayerDescriptor(
     val opacity: Double,
     /** Fraction of the frame height; null keeps the source aspect ratio. */
     val heightFraction: Double? = null,
+    /** Gain of the layer's audio in the mix; 0 keeps the layer silent. */
+    val volume: Double = 1.0,
+    /** Whether the source has an audio track (resolved natively). */
+    val sourceHasAudio: Boolean = false,
     val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = 0,
     val sourceHeight: Int = 0
@@ -61,11 +66,16 @@ internal data class VideoLayerDescriptor(
         put("widthFraction", widthFraction)
         heightFraction?.let { put("heightFraction", it) }
         put("opacity", opacity)
+        if (volume != 1.0) put("volume", volume)
     }
 
     /** [toMap] plus the displayed source dimensions, answered to `addVideoLayer`. */
     fun toResponseMap(): Map<String, Any?> =
-        toMap() + mapOf("sourceWidth" to sourceWidth, "sourceHeight" to sourceHeight)
+        toMap() + mapOf(
+            "sourceWidth" to sourceWidth,
+            "sourceHeight" to sourceHeight,
+            "sourceHasAudio" to sourceHasAudio
+        )
 
     companion object {
         fun from(map: Map<*, *>): VideoLayerDescriptor {
@@ -83,7 +93,8 @@ internal data class VideoLayerDescriptor(
                 widthFraction = ((map["widthFraction"] as? Number)?.toDouble() ?: 0.5)
                     .coerceIn(0.1, 1.0),
                 opacity = ((map["opacity"] as? Number)?.toDouble() ?: 1.0).coerceIn(0.0, 1.0),
-                heightFraction = (map["heightFraction"] as? Number)?.toDouble()?.coerceIn(0.05, 1.0)
+                heightFraction = (map["heightFraction"] as? Number)?.toDouble()?.coerceIn(0.05, 1.0),
+                volume = ((map["volume"] as? Number)?.toDouble() ?: 1.0).coerceIn(0.0, 1.0)
             )
         }
     }
@@ -259,15 +270,36 @@ internal fun videoLayerSequence(
         pixelSize.height,
         Presentation.LAYOUT_STRETCH_TO_FIT
     )
+    // With audio the sequence also mixes the layer's sound; the invisible
+    // fillers stay without audio and are padded with silence.
+    // Muted (or a silent source), it stays the video-only sequence validated
+    // on device.
+    val audible = layer.volume > 0.0 && layer.sourceHasAudio
+    val layerAudioEffects = if (audible && layer.volume < 1.0) {
+        listOf(
+            GainProcessor(
+                AudioTrackGainProvider(layer.volume.toFloat(), 0L, 0L, visibleMs * 1_000L)
+            )
+        )
+    } else {
+        emptyList()
+    }
     val item = layerClip(
         layer.path,
         startMs = layer.trimStartMs,
         endMs = layer.trimStartMs + visibleMs,
         sourceDurationMs = sourceDurationMs,
-        effects = Effects(emptyList(), listOf(scaleToLayer))
+        effects = Effects(layerAudioEffects, listOf(scaleToLayer)),
+        keepAudio = audible
     )
 
-    val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+    val builder = if (audible) {
+        // Declaring the audio track type makes media3 pad the fillers (no
+        // audio) with silence; experimentalSetForceAudioTrack conflicts with it.
+        EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO))
+    } else {
+        EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+    }
     val hidden = Effects(emptyList(), listOf(scaleToLayer, AlphaScale(0f)))
     builder.addInvisibleFiller(layer.path, placed.windowMs.first, sourceDurationMs, hidden)
     builder.addItem(item)
@@ -311,7 +343,8 @@ private fun layerClip(
     endMs: Long,
     sourceDurationMs: Long,
     effects: Effects,
-    mediaId: String? = null
+    mediaId: String? = null,
+    keepAudio: Boolean = false
 ): EditedMediaItem {
     val mediaItem = MediaItem.Builder()
         .setUri(Uri.fromFile(File(path)))
@@ -325,7 +358,7 @@ private fun layerClip(
     return EditedMediaItem.Builder(mediaItem.build())
         // Media3 validates the clipping end against the full source duration.
         .setDurationUs(sourceDurationMs * 1_000L)
-        .setRemoveAudio(true)
+        .setRemoveAudio(!keepAudio)
         .setEffects(effects)
         .build()
 }

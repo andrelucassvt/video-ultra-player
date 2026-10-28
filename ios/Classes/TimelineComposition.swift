@@ -31,6 +31,8 @@ struct TimelineClipDescriptor {
   var trimEndMs: Int64?
   /// Duration of the transition to the next clip (nil = hard cut).
   var transitionToNextMs: Int64?
+  /// Gain of the clip's own audio in [0, 1]; 0 removes it from the mix.
+  var volume: Double = 1
 
   init?(dictionary: [String: Any]) {
     guard
@@ -58,6 +60,7 @@ struct TimelineClipDescriptor {
     if let transition = dictionary["transitionToNext"] as? [String: Any] {
       self.transitionToNextMs = (transition["durationMs"] as? NSNumber)?.int64Value
     }
+    self.volume = min(max((dictionary["volume"] as? NSNumber)?.doubleValue ?? 1, 0), 1)
   }
 }
 
@@ -222,6 +225,8 @@ final class TimelineComposition {
     let range: CMTimeRange
     let naturalSize: CGSize
     let preferredTransform: CGAffineTransform
+    /// The layer's own audio, mixed at its volume (nil when muted or silent).
+    let audioTrack: AVCompositionTrack?
   }
   private var placedLayers: [PlacedLayer] = []
   /// Live placement shown during a gesture (`previewVideoLayer`); never part
@@ -545,6 +550,7 @@ final class TimelineComposition {
     next.sourceDurationMs = previous.sourceDurationMs
     next.sourceWidth = previous.sourceWidth
     next.sourceHeight = previous.sourceHeight
+    next.sourceHasAudio = previous.sourceHasAudio
     videoLayers[index] = next
     return previous
   }
@@ -575,6 +581,7 @@ final class TimelineComposition {
     resolved.sourceDurationMs = durationMs
     resolved.sourceWidth = Int(abs(oriented.width).rounded())
     resolved.sourceHeight = Int(abs(oriented.height).rounded())
+    resolved.sourceHasAudio = !asset.tracks(withMediaType: .audio).isEmpty
     resolved.trimEndMs = min(descriptor.trimEndMs ?? durationMs, durationMs)
     return resolved
   }
@@ -608,13 +615,29 @@ final class TimelineComposition {
         of: sourceTrack,
         at: start
       )
+      // Audio only when audible, so a muted layer builds exactly as before.
+      var layerAudioTrack: AVCompositionTrack?
+      if layer.volume > 0,
+         let sourceAudio = asset.tracks(withMediaType: .audio).first,
+         let audioTrack = composition.addMutableTrack(
+           withMediaType: .audio,
+           preferredTrackID: kCMPersistentTrackID_Invalid
+         ) {
+        try audioTrack.insertTimeRange(
+          CMTimeRange(start: trimStart, duration: length),
+          of: sourceAudio,
+          at: start
+        )
+        layerAudioTrack = audioTrack
+      }
       placed.append(
         PlacedLayer(
           layerIndex: layerIndex,
           track: track,
           range: CMTimeRange(start: start, duration: length),
           naturalSize: sourceTrack.naturalSize,
-          preferredTransform: sourceTrack.preferredTransform
+          preferredTransform: sourceTrack.preferredTransform,
+          audioTrack: layerAudioTrack
         )
       )
     }
@@ -955,8 +978,16 @@ final class TimelineComposition {
 
       let parameters = parametersByTrackId[audioTrack.trackID] ??
         AVMutableAudioMixInputParameters(track: audioTrack)
-      parameters.setVolume(1, at: segment.startTime)
+      parameters.setVolume(Float(clips[segment.clipIndex].volume), at: segment.startTime)
       parametersByTrackId[audioTrack.trackID] = parameters
+    }
+
+    // Layer audio tracks — one constant volume per layer.
+    for placed in placedLayers {
+      guard let layerAudio = placed.audioTrack else { continue }
+      let parameters = AVMutableAudioMixInputParameters(track: layerAudio)
+      parameters.setVolume(Float(videoLayers[placed.layerIndex].volume), at: .zero)
+      parametersByTrackId[layerAudio.trackID] = parameters
     }
 
     // External audio track — apply volume, fade-in, and fade-out ramps.

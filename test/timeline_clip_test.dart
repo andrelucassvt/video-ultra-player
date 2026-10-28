@@ -328,4 +328,28 @@ void main() {
       expect(a, isNot(b));
     });
   });
+
+  group('TimelineClip volume', () {
+    test('toJson carries volume only when it is not the default', () {
+      const muted = TimelineClip(
+        path: '/a.mp4',
+        type: MediaType.video,
+        volume: 0.4,
+      );
+      const full = TimelineClip(path: '/a.mp4', type: MediaType.video);
+
+      expect(muted.toJson()['volume'], 0.4);
+      // Default volume keeps the payload of older clips unchanged.
+      expect(full.volume, 1.0);
+      expect(full.toJson().containsKey('volume'), isFalse);
+    });
+
+    test('copyWith and == take volume into account', () {
+      const clip = TimelineClip(path: '/a.mp4', type: MediaType.video);
+
+      expect(clip.copyWith(volume: 0).volume, 0);
+      expect(clip.copyWith(volume: 0) == clip, isFalse);
+      expect(clip.copyWith(volume: 1.0) == clip, isTrue);
+    });
+  });
 }

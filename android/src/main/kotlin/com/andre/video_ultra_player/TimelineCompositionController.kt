@@ -687,7 +687,8 @@ internal class TimelineCompositionController(
             trimEndMs = update.trimEndMs ?: current.trimEndMs,
             sourceDurationMs = current.sourceDurationMs,
             sourceWidth = current.sourceWidth,
-            sourceHeight = current.sourceHeight
+            sourceHeight = current.sourceHeight,
+            sourceHasAudio = current.sourceHasAudio
         )
         // An unchanged layer must not push an empty undo entry.
         if (merged == current) {
@@ -1313,8 +1314,22 @@ internal fun resolveVideoLayer(
         trimEndMs = trimEndMs,
         sourceDurationMs = metadata.durationMs,
         sourceWidth = metadata.width,
-        sourceHeight = metadata.height
+        sourceHeight = metadata.height,
+        sourceHasAudio = sourceHasAudioTrack(context, layer.path)
     )
+}
+
+/** One retriever pass for METADATA_KEY_HAS_AUDIO. Blocking: off the main thread. */
+private fun sourceHasAudioTrack(context: Context, path: String): Boolean {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        retriever.setDataSource(context, Uri.fromFile(File(path)))
+        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes"
+    } catch (error: Throwable) {
+        false
+    } finally {
+        retriever.release()
+    }
 }
 
 internal fun preferredVideoBitrate(
@@ -1486,6 +1501,14 @@ private fun effectsFor(
                         clipStartMs
                     )
                 )
+            )
+        )
+    }
+    // Clip volume: only below full volume, so the default chain is unchanged.
+    if (clip.volume < 1.0f) {
+        audioEffects.add(
+            GainProcessor(
+                AudioTrackGainProvider(clip.volume, 0L, 0L, clip.resolvedDurationMs * 1_000L)
             )
         )
     }
@@ -1753,7 +1776,9 @@ internal data class TimelineClip(
     val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = DEFAULT_WIDTH,
     val sourceHeight: Int = DEFAULT_HEIGHT,
-    val sourceBitrate: Int = 0
+    val sourceBitrate: Int = 0,
+    /** Gain of the clip's own audio; 0 removes it from the mix. */
+    val volume: Float = 1.0f
 ) {
     /** Duration of the source media after trim (before speed is applied), in ms. */
     val resolvedDurationMs: Long
@@ -1802,7 +1827,8 @@ internal data class TimelineClip(
                 speed = speed.coerceIn(0.5f, 2.0f),
                 trimStartMs = trimStartMs,
                 trimEndMs = trimEndMs,
-                transitionToNextMs = transitionToNextMs
+                transitionToNextMs = transitionToNextMs,
+                volume = ((map["volume"] as? Number)?.toFloat() ?: 1.0f).coerceIn(0f, 1f)
             )
         }
     }
@@ -1856,7 +1882,7 @@ internal data class AudioTrackDescriptor(
     }
 }
 
-private class AudioTrackGainProvider(
+internal class AudioTrackGainProvider(
     private val volume: Float,
     private val fadeInUs: Long,
     private val fadeOutUs: Long,

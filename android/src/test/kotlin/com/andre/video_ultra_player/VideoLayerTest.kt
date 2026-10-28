@@ -1,5 +1,6 @@
 package com.andre.video_ultra_player
 
+import androidx.media3.common.C
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -257,5 +258,51 @@ internal class VideoLayerTest {
 
         assertEquals(1f, settings.placementFor(0)?.scaleX)
         assertEquals(0.5f, settings.placementFor(0)?.scaleY)
+    }
+
+    @Test
+    fun from_readsVolumeAndOnlyMapsItWhenNotDefault() {
+        assertEquals(0.5, VideoLayerDescriptor.from(fullMap() + ("volume" to 0.5)).volume)
+        assertEquals(1.0, VideoLayerDescriptor.from(fullMap()).volume)
+        assertEquals(false, VideoLayerDescriptor.from(fullMap()).toMap().containsKey("volume"))
+        assertEquals(0.5, VideoLayerDescriptor.from(fullMap() + ("volume" to 0.5)).toMap()["volume"])
+    }
+
+    private fun audibleSequence(volume: Double, hasAudio: Boolean) = videoLayerSequence(
+        PlacedVideoLayer(
+            layer().copy(sourceDurationMs = 6_000L, volume = volume, sourceHasAudio = hasAudio),
+            1_500L..5_500L
+        ),
+        TimelineRenderSize(1080, 1920),
+        10_000L
+    )
+
+    @Test
+    fun layerSequence_withVolumeAndSourceAudio_carriesTheLayerAudio() {
+        val sequence = audibleSequence(volume = 0.8, hasAudio = true)
+        val items = sequence.editedMediaItems
+
+        assertEquals(setOf(C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO), sequence.trackTypes)
+        // Only the layer clip keeps its audio; the invisible fillers stay silent.
+        assertEquals(listOf(true, false, true), items.map { it.removeAudio })
+    }
+
+    @Test
+    fun layerSequence_mutedOrSilentSource_staysVideoOnly() {
+        assertEquals(setOf(C.TRACK_TYPE_VIDEO), audibleSequence(volume = 0.0, hasAudio = true).trackTypes)
+        assertEquals(setOf(C.TRACK_TYPE_VIDEO), audibleSequence(volume = 1.0, hasAudio = false).trackTypes)
+        assertEquals(
+            listOf(true, true, true),
+            audibleSequence(volume = 0.0, hasAudio = true).editedMediaItems.map { it.removeAudio }
+        )
+    }
+
+    @Test
+    fun timelineClip_readsVolumeWithFullVolumeDefault() {
+        assertEquals(
+            0.3f,
+            TimelineClip.from(mapOf("path" to "/a.mp4", "type" to "video", "volume" to 0.3)).volume
+        )
+        assertEquals(1.0f, TimelineClip.from(mapOf("path" to "/a.mp4", "type" to "video")).volume)
     }
 }
