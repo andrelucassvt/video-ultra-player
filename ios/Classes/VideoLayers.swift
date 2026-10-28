@@ -12,7 +12,7 @@ enum VideoLayerError: Error {
 ///
 /// `trimEndMs` is an absolute point in the source (nil = source end). The
 /// `source*` fields are resolved natively and never come from Dart.
-struct VideoLayerDescriptor {
+struct VideoLayerDescriptor: Equatable {
   let id: String
   let path: String
   var startMs: Int64

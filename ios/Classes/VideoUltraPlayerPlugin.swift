@@ -1105,6 +1105,17 @@ private final class TimelinePlayerController {
       emitState()
       return
     }
+    // Same merge as `TimelineComposition.updateVideoLayer`: an unchanged layer
+    // must not push an empty undo entry.
+    var merged = descriptor
+    merged.trimEndMs = descriptor.trimEndMs ?? current.trimEndMs
+    merged.sourceDurationMs = current.sourceDurationMs
+    merged.sourceWidth = current.sourceWidth
+    merged.sourceHeight = current.sourceHeight
+    guard merged != current else {
+      emitState()
+      return
+    }
     let positionMs = player.currentTime().timelineMilliseconds
     pushEditSnapshot()
     composition.updateVideoLayer(descriptor)

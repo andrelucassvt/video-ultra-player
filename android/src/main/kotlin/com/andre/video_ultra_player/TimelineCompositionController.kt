@@ -568,15 +568,19 @@ internal class TimelineCompositionController(
             return
         }
         val current = videoLayers[index]
-        pushEditSnapshot()
-        videoLayers = videoLayers.toMutableList().also {
-            it[index] = update.copy(
-                trimEndMs = update.trimEndMs ?: current.trimEndMs,
-                sourceDurationMs = current.sourceDurationMs,
-                sourceWidth = current.sourceWidth,
-                sourceHeight = current.sourceHeight
-            )
+        val merged = update.copy(
+            trimEndMs = update.trimEndMs ?: current.trimEndMs,
+            sourceDurationMs = current.sourceDurationMs,
+            sourceWidth = current.sourceWidth,
+            sourceHeight = current.sourceHeight
+        )
+        // An unchanged layer must not push an empty undo entry.
+        if (merged == current) {
+            emitState()
+            return
         }
+        pushEditSnapshot()
+        videoLayers = videoLayers.toMutableList().also { it[index] = merged }
         rebuildCompositionPreservingPlayback()
     }
 
