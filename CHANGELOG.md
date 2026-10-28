@@ -1,3 +1,12 @@
+## 2.5.0
+
+### Picture-in-picture video layers
+
+- Added `TimelineVideoLayer` and `NativeTimelinePlayer.addVideoLayer` / `updateVideoLayer` / `removeVideoLayer`: up to `maxVideoLayers` (3) video layers composited over the main timeline, identical in the preview and the exported MP4. Each layer has a timeline start, a source trim, a normalized center, a width fraction of the frame (height follows the source aspect) and opacity. Layers are video-only, stack in list order above the main video and below text overlays and captions, and are part of the native undo/redo history.
+- `addVideoLayer` returns the layer with `trimEnd` resolved and the displayed `sourceWidth`/`sourceHeight`; a fourth layer fails with `PlatformException(code: 'video_layer_limit')`.
+- Android: layers are extra video sequences composited by `MultipleInputVideoGraph`/`DefaultVideoCompositor`; with layers, text and captions are applied after compositing and HDR is tone-mapped to SDR.
+- iOS: layers are extra composition tracks; video composition instructions are split at every layer edge.
+
 ## 2.4.1
 
 ### Caption export fixes
