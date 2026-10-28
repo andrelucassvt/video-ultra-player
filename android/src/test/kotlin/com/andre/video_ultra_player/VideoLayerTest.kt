@@ -125,4 +125,47 @@ internal class VideoLayerTest {
         assertEquals(1f, settings.getOverlaySettings(1, 2_000_000L).alphaScale)
         assertEquals(1080, settings.getOutputSize(emptyList()).width)
     }
+
+    @Test
+    fun layerSequence_fillsAroundTheLayerWithStillImagesInsteadOfGaps() {
+        val placed = PlacedVideoLayer(
+            layer().copy(
+                sourceDurationMs = 6_000L,
+                sourceWidth = 1080,
+                sourceHeight = 1920,
+                fillerImagePath = "/cache/transparent.png"
+            ),
+            1_500L..5_500L
+        )
+
+        val sequence = videoLayerSequence(placed, TimelineRenderSize(1080, 1920), 10_000L)
+        val items = sequence.editedMediaItems
+
+        // Gaps in the primary multi-input sequence stall the main sequence
+        // after a seek (StuckPlayerException) — the fillers must be real items.
+        assertEquals(3, items.size)
+        assertEquals(
+            listOf(LAYER_FILLER_MEDIA_ID, "", LAYER_FILLER_MEDIA_ID),
+            items.map { if (it.mediaItem.mediaId == LAYER_FILLER_MEDIA_ID) it.mediaItem.mediaId else "" }
+        )
+        assertEquals(false, items.any { it.mediaItem.mediaId == "androidx-media3-GapMediaItem" })
+        assertEquals(1_500_000L, items[0].durationUs)
+        assertEquals(4_500_000L, items[2].durationUs)
+    }
+
+    @Test
+    fun layerSequence_startingAtZeroAndRunningToTheEnd_hasNoFiller() {
+        val placed = PlacedVideoLayer(
+            layer(startMs = 0L, trimStartMs = 0L, trimEndMs = 10_000L).copy(
+                sourceDurationMs = 10_000L,
+                fillerImagePath = "/cache/transparent.png"
+            ),
+            0L..10_000L
+        )
+
+        val items = videoLayerSequence(placed, TimelineRenderSize(1080, 1920), 10_000L)
+            .editedMediaItems
+
+        assertEquals(1, items.size)
+    }
 }

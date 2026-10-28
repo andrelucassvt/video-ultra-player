@@ -1,5 +1,7 @@
 package com.andre.video_ultra_player
 
+import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -12,12 +14,18 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Hardware decoders are limited: every layer decodes alongside the main video. */
 internal const val MAX_VIDEO_LAYERS = 3
+
+/** Media id of the transparent stills that pad a layer sequence. */
+internal const val LAYER_FILLER_MEDIA_ID = "video_ultra_player_layer_filler"
+
+private const val LAYER_FILLER_FRAME_RATE = 30
 
 /**
  * Picture-in-picture video layer, mirroring the Dart `TimelineVideoLayer`.
@@ -37,7 +45,9 @@ internal data class VideoLayerDescriptor(
     val opacity: Double,
     val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = 0,
-    val sourceHeight: Int = 0
+    val sourceHeight: Int = 0,
+    /** Transparent still that pads the sequence before/after the layer. */
+    val fillerImagePath: String = ""
 ) {
     /** Channel map in the Dart contract format (ms, no native-only fields). */
     fun toMap(): Map<String, Any?> = buildMap {
@@ -157,10 +167,15 @@ internal class VideoLayerCompositorSettings(
 }
 
 /**
- * Video-only sequence spanning the whole timeline: a gap until the layer
- * starts, the trimmed source pre-scaled to its on-screen size, and a gap until
- * the end. Every sequence then has the full duration, so whichever one the
- * player or compositor picks as primary covers the timeline.
+ * Video-only sequence spanning the whole timeline: a transparent still until
+ * the layer starts, the trimmed source pre-scaled to its on-screen size, and a
+ * transparent still until the end. Every sequence then has the full duration,
+ * so whichever one the player or compositor picks as primary covers the
+ * timeline.
+ *
+ * The padding must be real items, not `addGap`: with a gap in the primary
+ * multi-input sequence, a seek into it leaves the main sequence stuck in
+ * BUFFERING until `StuckPlayerException` (media3 1.10.1, CompositionPlayer).
  */
 internal fun videoLayerSequence(
     placed: PlacedVideoLayer,
@@ -179,6 +194,16 @@ internal fun videoLayerSequence(
         layer.sourceHeight,
         renderSize
     )
+    val scaleToLayer = Effects(
+        emptyList(),
+        listOf(
+            Presentation.createForWidthAndHeight(
+                pixelSize.width,
+                pixelSize.height,
+                Presentation.LAYOUT_SCALE_TO_FIT
+            )
+        )
+    )
     val item = EditedMediaItem.Builder(
         MediaItem.Builder()
             .setUri(Uri.fromFile(File(layer.path)))
@@ -188,24 +213,62 @@ internal fun videoLayerSequence(
         // Media3 validates the clipping end against the full source duration.
         .setDurationUs(max(layer.sourceDurationMs, layer.trimStartMs + visibleMs) * 1_000L)
         .setRemoveAudio(true)
-        .setEffects(
-            Effects(
-                emptyList(),
-                listOf(
-                    Presentation.createForWidthAndHeight(
-                        pixelSize.width,
-                        pixelSize.height,
-                        Presentation.LAYOUT_SCALE_TO_FIT
-                    )
-                )
-            )
-        )
+        .setEffects(scaleToLayer)
         .build()
 
     val builder = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
-    if (placed.windowMs.first > 0L) builder.addGap(placed.windowMs.first * 1_000L)
+    val leadingMs = placed.windowMs.first
+    if (leadingMs > 0L) builder.addFiller(layer.fillerImagePath, leadingMs, scaleToLayer)
     builder.addItem(item)
     val trailingMs = timelineDurationMs - placed.windowMs.last
-    if (trailingMs > 0L) builder.addGap(trailingMs * 1_000L)
+    if (trailingMs > 0L) builder.addFiller(layer.fillerImagePath, trailingMs, scaleToLayer)
     return builder.build()
+}
+
+private fun EditedMediaItemSequence.Builder.addFiller(
+    fillerImagePath: String,
+    durationMs: Long,
+    effects: Effects
+) {
+    // Without a filler (should not happen: it is created on resolve) fall
+    // back to a gap rather than failing the composition.
+    if (fillerImagePath.isEmpty()) {
+        addGap(durationMs * 1_000L)
+        return
+    }
+    addItem(
+        EditedMediaItem.Builder(
+            MediaItem.Builder()
+                .setMediaId(LAYER_FILLER_MEDIA_ID)
+                .setUri(Uri.fromFile(File(fillerImagePath)))
+                .setImageDurationMs(durationMs)
+                .build()
+        )
+            .setDurationUs(durationMs * 1_000L)
+            .setFrameRate(LAYER_FILLER_FRAME_RATE)
+            .setEffects(effects)
+            .build()
+    )
+}
+
+/**
+ * Transparent 2×2 PNG in the cache dir, shared by every layer. Blocking file
+ * I/O on first use — call it off the main thread.
+ */
+internal object LayerFillerImage {
+    @Volatile
+    private var cachedPath: String? = null
+
+    fun path(context: Context): String {
+        cachedPath?.let { if (File(it).exists()) return it }
+        synchronized(this) {
+            val file = File(context.cacheDir, "video_ultra_player_layer_filler.png")
+            if (!file.exists()) {
+                val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+                FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            return file.absolutePath.also { cachedPath = it }
+        }
+    }
 }
