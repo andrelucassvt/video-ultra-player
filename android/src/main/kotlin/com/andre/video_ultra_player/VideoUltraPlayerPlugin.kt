@@ -253,6 +253,19 @@ class VideoUltraPlayerPlugin :
                     result.videoLayerError("updateVideoLayer", error)
                 }
             }
+            "previewVideoLayer" -> withController(call, result) { controller ->
+                val layer = (call.arguments as? Map<*, *>)?.get("layer") as? Map<*, *>
+                if (layer == null) {
+                    result.error("invalid_arguments", "Expected layer.", null)
+                    return@withController
+                }
+                try {
+                    controller.previewVideoLayer(layer)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    result.videoLayerError("previewVideoLayer", error)
+                }
+            }
             "removeVideoLayer" -> withController(call, result) { controller ->
                 val layerId = (call.arguments as? Map<*, *>)?.get("layerId") as? String
                 if (layerId == null) {

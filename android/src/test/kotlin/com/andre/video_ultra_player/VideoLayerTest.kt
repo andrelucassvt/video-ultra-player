@@ -182,4 +182,34 @@ internal class VideoLayerTest {
 
         assertEquals(1, items.size)
     }
+
+    @Test
+    fun compositorSettings_liveUpdateMovesAndScalesWithoutRebuild() {
+        val baked = layer()
+        val settings = VideoLayerCompositorSettings(
+            renderSize = TimelineRenderSize(1080, 1920),
+            layersBySequence = mapOf(0 to PlacedVideoLayer(baked, 1_500L..5_500L))
+        )
+
+        settings.updatePlacement(baked.copy(x = 0.25, y = 0.25, widthFraction = 0.75, opacity = 0.5))
+
+        // Same anchor math as layerAnchorNdc; size relative to the baked 0.5.
+        assertEquals(
+            LayerOverlayPlacement(anchorX = -0.5f, anchorY = 0.5f, scale = 1.5f, alpha = 0.5f),
+            settings.placementFor(0)
+        )
+        assertEquals(null, settings.placementFor(1))
+    }
+
+    @Test
+    fun compositorSettings_liveUpdateForAnotherLayer_isIgnored() {
+        val settings = VideoLayerCompositorSettings(
+            renderSize = TimelineRenderSize(1080, 1920),
+            layersBySequence = mapOf(0 to PlacedVideoLayer(layer(), 1_500L..5_500L))
+        )
+
+        settings.updatePlacement(layer().copy(id = "other", x = 0.1))
+
+        assertEquals(0f, settings.placementFor(0)?.anchorX)
+    }
 }

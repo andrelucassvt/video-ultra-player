@@ -316,6 +316,18 @@ class MockVideoUltraPlayerPlatform
     lastVideoLayerPayload = layer;
   }
 
+  Map<String, dynamic>? lastPreviewedLayerPayload;
+
+  @override
+  Future<void> previewVideoLayer(
+    int textureId,
+    Map<String, dynamic> layer,
+  ) async {
+    calls.add('previewVideoLayer');
+    lastTextureId = textureId;
+    lastPreviewedLayerPayload = layer;
+  }
+
   @override
   Future<void> removeVideoLayer(int textureId, String layerId) async {
     calls.add('removeVideoLayer');
@@ -1223,6 +1235,20 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('previewVideoLayer throws before load and delegates after', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.previewVideoLayer(sampleLayer), throwsStateError);
+
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
+      await player.previewVideoLayer(sampleLayer.copyWith(x: 0.3));
+
+      expect(fakePlatform.lastTextureId, 42);
+      expect(fakePlatform.lastPreviewedLayerPayload?['x'], 0.3);
+      expect(fakePlatform.calls, isNot(contains('updateVideoLayer')));
     });
 
     test('update and remove delegate with the texture id', () async {

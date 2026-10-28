@@ -13,6 +13,7 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -145,18 +146,56 @@ internal class VideoLayerCompositorSettings(
     private val renderSize: TimelineRenderSize,
     private val layersBySequence: Map<Int, PlacedVideoLayer>
 ) : VideoCompositorSettings {
+    // Live placement per layer id, written on the main thread by gestures and
+    // read per frame on the GL thread. The composition itself stays as built:
+    // only anchor, scale (relative to the baked size) and alpha change.
+    private val livePlacements = ConcurrentHashMap<String, VideoLayerDescriptor>()
+
+    fun hasLayer(layerId: String): Boolean =
+        layersBySequence.values.any { it.descriptor.id == layerId }
+
+    fun updatePlacement(layer: VideoLayerDescriptor) {
+        if (hasLayer(layer.id)) livePlacements[layer.id] = layer
+    }
+
     override fun getOutputSize(inputSizes: List<Size>): Size =
         Size(renderSize.width, renderSize.height)
 
+    /** Placement of the sequence [inputId], or null for the main sequence. */
+    fun placementFor(inputId: Int): LayerOverlayPlacement? {
+        val baked = layersBySequence[inputId]?.descriptor ?: return null
+        val current = livePlacements[baked.id] ?: baked
+        val (anchorX, anchorY) = layerAnchorNdc(current.x, current.y)
+        return LayerOverlayPlacement(
+            anchorX = anchorX,
+            anchorY = anchorY,
+            // The source was pre-scaled by Presentation to the baked width.
+            scale = (current.widthFraction / baked.widthFraction).toFloat(),
+            alpha = current.opacity.toFloat()
+        )
+    }
+
     override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
-        val placed = layersBySequence[inputId] ?: return StaticOverlaySettings.Builder().build()
-        val (anchorX, anchorY) = layerAnchorNdc(placed.descriptor.x, placed.descriptor.y)
+        val placement = placementFor(inputId) ?: return StaticOverlaySettings.Builder().build()
         return StaticOverlaySettings.Builder()
-            .setBackgroundFrameAnchor(anchorX, anchorY)
-            .setAlphaScale(placed.descriptor.opacity.toFloat())
+            .setBackgroundFrameAnchor(placement.anchorX, placement.anchorY)
+            .setScale(placement.scale, placement.scale)
+            .setAlphaScale(placement.alpha)
             .build()
     }
 }
+
+internal data class LayerOverlayPlacement(
+    val anchorX: Float,
+    val anchorY: Float,
+    val scale: Float,
+    val alpha: Float
+)
+
+/** True when [other] differs from this layer only in x, y, size or opacity. */
+internal fun VideoLayerDescriptor.differsOnlyInPlacement(other: VideoLayerDescriptor): Boolean =
+    copy(x = other.x, y = other.y, widthFraction = other.widthFraction, opacity = other.opacity) ==
+        other
 
 /**
  * Video-only sequence spanning the whole timeline: invisible clips of the same

@@ -128,6 +128,7 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 |---|---|---|---|
 | `addVideoLayer` | `Future<TimelineVideoLayer> addVideoLayer(TimelineVideoLayer layer)` | `addVideoLayer` | `textureId`, `layer` → responde o mapa da camada com `trimEndMs` resolvido + `sourceWidth`/`sourceHeight` |
 | `updateVideoLayer` | `Future<void> updateVideoLayer(TimelineVideoLayer layer)` | `updateVideoLayer` | `textureId`, `layer` |
+| `previewVideoLayer` | `Future<void> previewVideoLayer(TimelineVideoLayer layer)` | `previewVideoLayer` | `textureId`, `layer` — só posicionamento (x, y, largura, opacidade) na prévia, sem histórico nem export; para feedback durante gestos |
 | `removeVideoLayer` | `Future<void> removeVideoLayer(String layerId)` | `removeVideoLayer` | `textureId`, `layerId` |
 
 `NativeTimelinePlayer.maxVideoLayers = 3`. O limite é aplicado pelo nativo: a 4ª camada responde `PlatformException(code: 'video_layer_limit')`. `updateVideoLayer` casa por `id` (no-op quando o id não existe). As camadas entram no histórico nativo de undo/redo e sobrevivem a `setCompositionConfig`, mas **não** a `load`/`dispose`: o app as reaplica. Os três métodos exigem `load` completo.

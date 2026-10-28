@@ -542,6 +542,15 @@ void main() {
       expect(calls.single.arguments, {'textureId': 77, 'layer': layerPayload});
     });
 
+    test('previewVideoLayer sends textureId and layer', () async {
+      await platform.previewVideoLayer(77, layerPayload);
+      expect(calls.single.method, 'previewVideoLayer');
+      expect(calls.single.arguments, {
+        'textureId': 77,
+        'layer': layerPayload,
+      });
+    });
+
     test('removeVideoLayer sends textureId and layerId', () async {
       await platform.removeVideoLayer(77, 'layer-1');
       expect(calls.single.method, 'removeVideoLayer');

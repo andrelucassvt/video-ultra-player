@@ -450,6 +450,19 @@ class NativeTimelinePlayer {
     return _platform.updateVideoLayer(textureId!, layer.toJson());
   }
 
+  /// Live feedback while a gesture moves, resizes or fades a layer: only the
+  /// placement of [layer] (`x`, `y`, `widthFraction`, `opacity`) is shown on
+  /// the preview, with no rebuild, no undo entry and no effect on export.
+  /// Commit the final value with [updateVideoLayer]; to cancel, preview the
+  /// committed layer again. Cheap enough to call on every gesture frame
+  /// (throttle to the display rate).
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> previewVideoLayer(TimelineVideoLayer layer) {
+    _requireTextureId();
+    return _platform.previewVideoLayer(textureId!, layer.toJson());
+  }
+
   /// Removes the layer identified by [layerId].
   ///
   /// Requires [load] to have completed. Throws [StateError] otherwise.

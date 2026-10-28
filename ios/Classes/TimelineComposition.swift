@@ -224,6 +224,9 @@ final class TimelineComposition {
     let preferredTransform: CGAffineTransform
   }
   private var placedLayers: [PlacedLayer] = []
+  /// Live placement shown during a gesture (`previewVideoLayer`); never part
+  /// of the history or the export. Cleared by any committed layer edit.
+  private var previewPlacements: [String: VideoLayerDescriptor] = [:]
 
   private(set) var totalDuration = CMTime.zero
 
@@ -501,13 +504,29 @@ final class TimelineComposition {
     captionCues = snapshot.captionCues
     captionStyle = snapshot.captionStyle
     videoLayers = snapshot.videoLayers
+    previewPlacements = [:]
   }
 
   // MARK: - Video layers
 
   /// Appends a layer on top of the existing ones. Does NOT trigger a rebuild.
   func addVideoLayer(_ descriptor: VideoLayerDescriptor) {
+    previewPlacements = [:]
     videoLayers.append(descriptor)
+  }
+
+  /// Overrides only x, y, size and opacity of the layer with the same `id`
+  /// for the preview. Returns false when the layer does not exist.
+  func previewVideoLayer(_ descriptor: VideoLayerDescriptor) -> Bool {
+    guard var preview = videoLayers.first(where: { $0.id == descriptor.id }) else {
+      return false
+    }
+    preview.x = descriptor.x
+    preview.y = descriptor.y
+    preview.widthFraction = descriptor.widthFraction
+    preview.opacity = descriptor.opacity
+    previewPlacements[descriptor.id] = preview
+    return true
   }
 
   /// Replaces the layer with the same `id`, keeping its resolved source
@@ -518,6 +537,7 @@ final class TimelineComposition {
     guard let index = videoLayers.firstIndex(where: { $0.id == descriptor.id }) else {
       return nil
     }
+    previewPlacements = [:]
     let previous = videoLayers[index]
     var next = descriptor
     next.trimEndMs = descriptor.trimEndMs ?? previous.trimEndMs
@@ -532,6 +552,7 @@ final class TimelineComposition {
   /// exist. Does NOT trigger a rebuild.
   @discardableResult
   func removeVideoLayer(id: String) -> Bool {
+    previewPlacements = [:]
     let before = videoLayers.count
     videoLayers.removeAll { $0.id == id }
     return videoLayers.count != before
@@ -614,7 +635,8 @@ final class TimelineComposition {
       var layerInstructions: [AVMutableVideoCompositionLayerInstruction] = []
       for placedIndex in piece.activeLayers.reversed() {
         let placed = placedLayers[placedIndex]
-        let layer = videoLayers[placed.layerIndex]
+        let committed = videoLayers[placed.layerIndex]
+        let layer = previewPlacements[committed.id] ?? committed
         let pipInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: placed.track)
         pipInstruction.setTransform(
           VideoLayerTiming.layerTransform(

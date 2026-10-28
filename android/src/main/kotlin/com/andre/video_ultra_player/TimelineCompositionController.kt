@@ -95,6 +95,8 @@ internal class TimelineCompositionController(
     private var surface: Surface? = null
     private var player: CompositionPlayer? = null
     private var playerUsesMultiInput = false
+    /** Compositor settings of the player's current composition (layers only). */
+    private var liveLayerSettings: VideoLayerCompositorSettings? = null
     private var eventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
@@ -239,6 +241,9 @@ internal class TimelineCompositionController(
         val builder = CompositionPlayer.Builder(context)
         if (multiInput) {
             builder.setVideoGraphFactory(MultipleInputVideoGraph.Factory())
+            // Required by experimentalRedrawLastFrame, which re-composites the
+            // paused frame after a live layer placement change.
+            builder.experimentalSetEnableReplayableCache(true)
         }
         playerUsesMultiInput = multiInput
         return builder
@@ -279,7 +284,46 @@ internal class TimelineCompositionController(
         captionStyle,
         compositionConfig,
         videoLayers
-    )
+    ).also { composition ->
+        liveLayerSettings = composition.videoCompositorSettings as? VideoLayerCompositorSettings
+    }
+
+    /**
+     * Moves/resizes a layer on the live composition without rebuilding it.
+     * Returns false when the player's composition does not contain the layer
+     * (the caller then rebuilds).
+     */
+    private fun applyLivePlacement(layer: VideoLayerDescriptor): Boolean {
+        val settings = liveLayerSettings ?: return false
+        if (!settings.hasLayer(layer.id)) return false
+        settings.updatePlacement(layer)
+        val currentPlayer = player
+        if (currentPlayer != null && !currentPlayer.isPlaying) {
+            try {
+                currentPlayer.experimentalRedrawLastFrame()
+            } catch (error: Throwable) {
+                Log.w("VideoUltraPlayer", "Layer redraw failed", error)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Live feedback during a gesture: shows the placement of the layer with the
+     * same id (x, y, size, opacity) without touching the history or exports.
+     */
+    fun previewVideoLayer(rawLayer: Map<*, *>) {
+        val preview = VideoLayerDescriptor.from(rawLayer)
+        val current = videoLayers.firstOrNull { it.id == preview.id } ?: return
+        applyLivePlacement(
+            current.copy(
+                x = preview.x,
+                y = preview.y,
+                widthFraction = preview.widthFraction,
+                opacity = preview.opacity
+            )
+        )
+    }
 
     fun setEventSink(eventSink: EventChannel.EventSink?) {
         this.eventSink = eventSink
@@ -615,6 +659,12 @@ internal class TimelineCompositionController(
         }
         pushEditSnapshot()
         videoLayers = videoLayers.toMutableList().also { it[index] = merged }
+        // Placement-only edits stay on the live composition: no player
+        // recreation, so the preview does not flash on commit.
+        if (current.differsOnlyInPlacement(merged) && applyLivePlacement(merged)) {
+            emitState()
+            return
+        }
         rebuildCompositionPreservingPlayback()
     }
 

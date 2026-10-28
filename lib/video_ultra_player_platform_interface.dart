@@ -234,6 +234,12 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('updateVideoLayer() has not been implemented.');
   }
 
+  /// Shows [layer]'s position, size and opacity on the preview right away,
+  /// without touching the edit history or the exported state.
+  Future<void> previewVideoLayer(int textureId, Map<String, dynamic> layer) {
+    throw UnimplementedError('previewVideoLayer() has not been implemented.');
+  }
+
   /// Removes the video layer identified by [layerId].
   Future<void> removeVideoLayer(int textureId, String layerId) {
     throw UnimplementedError('removeVideoLayer() has not been implemented.');

@@ -331,6 +331,14 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
   }
 
   @override
+  Future<void> previewVideoLayer(int textureId, Map<String, dynamic> layer) {
+    return methodChannel.invokeMethod<void>(
+      'previewVideoLayer',
+      <String, Object?>{'textureId': textureId, 'layer': layer},
+    );
+  }
+
+  @override
   Future<void> removeVideoLayer(int textureId, String layerId) {
     return methodChannel.invokeMethod<void>(
       'removeVideoLayer',

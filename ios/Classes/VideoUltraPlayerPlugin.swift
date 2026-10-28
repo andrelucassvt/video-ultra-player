@@ -258,6 +258,21 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       } catch {
         result(Self.videoLayerError("updateVideoLayer", error))
       }
+    case "previewVideoLayer":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let layerDict = args["layer"] as? [String: Any],
+            let descriptor = VideoLayerDescriptor(dictionary: layerDict) else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "previewVideoLayer requires a valid layer map.",
+          details: nil
+        ))
+        return
+      }
+      controller.previewVideoLayer(descriptor)
+      result(nil)
     case "removeVideoLayer":
       guard let controller = controller(for: call, result: result),
             let args = call.arguments as? [String: Any]
@@ -1125,6 +1140,13 @@ private final class TimelinePlayerController {
     } else {
       try rebuildPreservingPlayback(positionMs: positionMs)
     }
+  }
+
+  /// Live gesture feedback: regenerates only the video composition with the
+  /// previewed placement — no snapshot, no rebuild.
+  func previewVideoLayer(_ descriptor: VideoLayerDescriptor) {
+    guard composition.previewVideoLayer(descriptor) else { return }
+    applyUpdatedVideoComposition()
   }
 
   func removeVideoLayer(id: String) throws {
