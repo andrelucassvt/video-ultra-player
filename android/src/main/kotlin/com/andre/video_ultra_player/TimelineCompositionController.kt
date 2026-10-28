@@ -241,9 +241,6 @@ internal class TimelineCompositionController(
         val builder = CompositionPlayer.Builder(context)
         if (multiInput) {
             builder.setVideoGraphFactory(MultipleInputVideoGraph.Factory())
-            // Required by experimentalRedrawLastFrame, which re-composites the
-            // paused frame after a live layer placement change.
-            builder.experimentalSetEnableReplayableCache(true)
         }
         playerUsesMultiInput = multiInput
         return builder
@@ -289,23 +286,17 @@ internal class TimelineCompositionController(
     }
 
     /**
-     * Moves/resizes a layer on the live composition without rebuilding it.
-     * Returns false when the player's composition does not contain the layer
-     * (the caller then rebuilds).
+     * Moves/resizes a layer on the live composition without rebuilding it:
+     * the compositor reads the placement per frame. Returns true only while
+     * playing — a paused multi-input player cannot re-composite its frame
+     * (`MultipleInputVideoGraph.redraw` throws UnsupportedOperationException on
+     * the playback thread and kills the app), so a paused edit must rebuild.
      */
     private fun applyLivePlacement(layer: VideoLayerDescriptor): Boolean {
         val settings = liveLayerSettings ?: return false
         if (!settings.hasLayer(layer.id)) return false
         settings.updatePlacement(layer)
-        val currentPlayer = player
-        if (currentPlayer != null && !currentPlayer.isPlaying) {
-            try {
-                currentPlayer.experimentalRedrawLastFrame()
-            } catch (error: Throwable) {
-                Log.w("VideoUltraPlayer", "Layer redraw failed", error)
-            }
-        }
-        return true
+        return player?.isPlaying == true
     }
 
     /**
