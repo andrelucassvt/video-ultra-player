@@ -1,8 +1,8 @@
 import AVFoundation
 import UIKit
 
-/// Hardware decoders are limited: every layer decodes alongside the main video.
-let maxVideoLayers = 3
+/// One layer, matching Android (its multi-input preview stalls with more).
+let maxVideoLayers = 1
 
 enum VideoLayerError: Error {
   case limitReached

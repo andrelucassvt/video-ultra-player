@@ -2,8 +2,8 @@
 
 ### Picture-in-picture video layers
 
-- Added `TimelineVideoLayer` and `NativeTimelinePlayer.addVideoLayer` / `updateVideoLayer` / `removeVideoLayer`: up to `maxVideoLayers` (3) video layers composited over the main timeline, identical in the preview and the exported MP4. Each layer has a timeline start, a source trim, a normalized center, a width fraction of the frame (height follows the source aspect) and opacity. Layers are video-only, stack in list order above the main video and below text overlays and captions, and are part of the native undo/redo history.
-- `addVideoLayer` returns the layer with `trimEnd` resolved and the displayed `sourceWidth`/`sourceHeight`; a fourth layer fails with `PlatformException(code: 'video_layer_limit')`.
+- Added `TimelineVideoLayer` and `NativeTimelinePlayer.addVideoLayer` / `updateVideoLayer` / `removeVideoLayer`: a picture-in-picture video layer (`maxVideoLayers` is 1: with more, the Android multi-input preview stalls) composited over the main timeline, identical in the preview and the exported MP4. Each layer has a timeline start, a source trim, a normalized center, a width fraction of the frame (height follows the source aspect) and opacity. Layers are video-only, stack in list order above the main video and below text overlays and captions, and are part of the native undo/redo history.
+- `addVideoLayer` returns the layer with `trimEnd` resolved and the displayed `sourceWidth`/`sourceHeight`; a layer past the limit fails with `PlatformException(code: 'video_layer_limit')`. `previewVideoLayer` shows placement changes live during gestures, and `heightFraction` allows free (stretched) resizing.
 - Android: layers are extra video sequences composited by `MultipleInputVideoGraph`/`DefaultVideoCompositor`; with layers, text and captions are applied after compositing and HDR is tone-mapped to SDR.
 - iOS: layers are extra composition tracks; video composition instructions are split at every layer edge.
 

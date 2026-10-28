@@ -18,8 +18,11 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Hardware decoders are limited: every layer decodes alongside the main video. */
-internal const val MAX_VIDEO_LAYERS = 3
+/**
+ * One layer: with three video sequences the multi-input CompositionPlayer
+ * preview stalls when the primary sequence switches items (media3 1.10.1).
+ */
+internal const val MAX_VIDEO_LAYERS = 1
 
 /** Media id of the invisible clips that pad a layer sequence. */
 internal const val LAYER_FILLER_MEDIA_ID = "video_ultra_player_layer_filler"

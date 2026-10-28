@@ -418,9 +418,10 @@ class NativeTimelinePlayer {
 
   // ── Video layers ─────────────────────────────────────────────────────────
 
-  /// Maximum number of simultaneous video layers. Devices decode every layer
-  /// at the same time as the main video, and hardware decoders are limited.
-  static const int maxVideoLayers = 3;
+  /// Maximum number of video layers. Limited to one: the Android preview
+  /// composites layers with media3's experimental multi-input
+  /// CompositionPlayer, which stalls once three video sequences play together.
+  static const int maxVideoLayers = 1;
 
   /// Adds a picture-in-picture [layer] on top of the timeline (above every
   /// existing layer, below text overlays and captions). The edit enters the

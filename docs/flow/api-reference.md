@@ -131,7 +131,7 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 | `previewVideoLayer` | `Future<void> previewVideoLayer(TimelineVideoLayer layer)` | `previewVideoLayer` | `textureId`, `layer` — só posicionamento (x, y, largura, opacidade) na prévia, sem histórico nem export; para feedback durante gestos |
 | `removeVideoLayer` | `Future<void> removeVideoLayer(String layerId)` | `removeVideoLayer` | `textureId`, `layerId` |
 
-`NativeTimelinePlayer.maxVideoLayers = 3`. O limite é aplicado pelo nativo: a 4ª camada responde `PlatformException(code: 'video_layer_limit')`. `updateVideoLayer` casa por `id` (no-op quando o id não existe). As camadas entram no histórico nativo de undo/redo e sobrevivem a `setCompositionConfig`, mas **não** a `load`/`dispose`: o app as reaplica. Os três métodos exigem `load` completo.
+`NativeTimelinePlayer.maxVideoLayers = 1`. O limite é aplicado pelo nativo: a 4ª camada responde `PlatformException(code: 'video_layer_limit')`. `updateVideoLayer` casa por `id` (no-op quando o id não existe). As camadas entram no histórico nativo de undo/redo e sobrevivem a `setCompositionConfig`, mas **não** a `load`/`dispose`: o app as reaplica. Os três métodos exigem `load` completo.
 
 ### Thumbnails
 
@@ -294,7 +294,7 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 
 ## Regras de Negócio Relevantes
 
-- **Camadas de vídeo** — `lib/src/native_timeline_player.dart` → `addVideoLayer`: no máximo `maxVideoLayers` (3), aplicado pelo nativo (`video_layer_limit`); a resposta é a fonte da verdade de `trimEnd` e das dimensões da fonte.
+- **Camadas de vídeo** — `lib/src/native_timeline_player.dart` → `addVideoLayer`: no máximo `maxVideoLayers` (1 — a prévia Android multi-entrada do media3 trava com 3 trilhas de vídeo), aplicado pelo nativo (`video_layer_limit`); a resposta é a fonte da verdade de `trimEnd` e das dimensões da fonte.
 Validações que rodam **no Dart**, antes de qualquer `invokeMethod` — todas em `lib/src/native_timeline_player.dart` salvo indicação:
 
 - **Sessão obrigatória** — `_requireTextureId()` (linha 371): tudo exceto `load`, `exportTimeline` e `generateThumbnails` lança `StateError` sem `load` completo.
