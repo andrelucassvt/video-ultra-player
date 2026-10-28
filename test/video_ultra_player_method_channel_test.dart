@@ -25,6 +25,15 @@ void main() {
           if (methodCall.method == 'renderGrid') {
             return '/tmp/grid.mp4';
           }
+          if (methodCall.method == 'addVideoLayer') {
+            return <String, dynamic>{
+              ...((methodCall.arguments as Map)['layer'] as Map)
+                  .cast<String, dynamic>(),
+              'trimEndMs': 5000,
+              'sourceWidth': 1080,
+              'sourceHeight': 1920,
+            };
+          }
           return null;
         });
   });
@@ -504,6 +513,39 @@ void main() {
       await platform.removeTextOverlay(77, 'text-1');
       expect(calls.single.method, 'removeTextOverlay');
       expect(calls.single.arguments, {'textureId': 77, 'overlayId': 'text-1'});
+    });
+  });
+
+  group('video layers', () {
+    const layerPayload = <String, dynamic>{
+      'id': 'layer-1',
+      'path': '/v.mp4',
+      'startMs': 1500,
+      'trimStartMs': 0,
+      'x': 0.5,
+      'y': 0.5,
+      'widthFraction': 0.5,
+      'opacity': 1.0,
+    };
+
+    test('addVideoLayer sends payload and returns the resolved map', () async {
+      final resolved = await platform.addVideoLayer(77, layerPayload);
+      expect(calls.single.method, 'addVideoLayer');
+      expect(calls.single.arguments, {'textureId': 77, 'layer': layerPayload});
+      expect(resolved['trimEndMs'], 5000);
+      expect(resolved['sourceWidth'], 1080);
+    });
+
+    test('updateVideoLayer sends correct payload', () async {
+      await platform.updateVideoLayer(77, layerPayload);
+      expect(calls.single.method, 'updateVideoLayer');
+      expect(calls.single.arguments, {'textureId': 77, 'layer': layerPayload});
+    });
+
+    test('removeVideoLayer sends textureId and layerId', () async {
+      await platform.removeVideoLayer(77, 'layer-1');
+      expect(calls.single.method, 'removeVideoLayer');
+      expect(calls.single.arguments, {'textureId': 77, 'layerId': 'layer-1'});
     });
   });
 }

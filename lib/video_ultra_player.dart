@@ -24,4 +24,5 @@ export 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 export 'package:video_ultra_player/src/models/timeline_grid_composition.dart';
 export 'package:video_ultra_player/src/models/timeline_player_state.dart';
 export 'package:video_ultra_player/src/models/timeline_text_overlay.dart';
+export 'package:video_ultra_player/src/models/timeline_video_layer.dart';
 export 'package:video_ultra_player/src/native_timeline_player.dart';

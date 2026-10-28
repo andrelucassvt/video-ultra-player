@@ -6,6 +6,7 @@ import 'package:video_ultra_player/src/models/timeline_export_progress.dart';
 import 'package:video_ultra_player/src/models/timeline_grid_composition.dart';
 import 'package:video_ultra_player/src/models/timeline_player_state.dart';
 import 'package:video_ultra_player/src/models/timeline_text_overlay.dart';
+import 'package:video_ultra_player/src/models/timeline_video_layer.dart';
 import 'package:video_ultra_player/video_ultra_player_platform_interface.dart';
 
 /// Controls a native timeline player that composes and plays a sequence of
@@ -413,6 +414,48 @@ class NativeTimelinePlayer {
   Future<void> removeTextOverlay(String overlayId) {
     _requireTextureId();
     return _platform.removeTextOverlay(textureId!, overlayId);
+  }
+
+  // ── Video layers ─────────────────────────────────────────────────────────
+
+  /// Maximum number of simultaneous video layers. Devices decode every layer
+  /// at the same time as the main video, and hardware decoders are limited.
+  static const int maxVideoLayers = 3;
+
+  /// Adds a picture-in-picture [layer] on top of the timeline (above every
+  /// existing layer, below text overlays and captions). The edit enters the
+  /// native undo/redo history.
+  ///
+  /// Returns the layer with [TimelineVideoLayer.trimEnd] resolved to the
+  /// source end when it was `null`, plus the displayed source dimensions.
+  ///
+  /// Throws a `PlatformException` with code `video_layer_limit` when the
+  /// timeline already has [maxVideoLayers] layers. Layers do not survive
+  /// [load]/[dispose]; re-add them after reloading.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<TimelineVideoLayer> addVideoLayer(TimelineVideoLayer layer) async {
+    _requireTextureId();
+    final resolved = await _platform.addVideoLayer(textureId!, layer.toJson());
+    return TimelineVideoLayer.fromJson(resolved);
+  }
+
+  /// Replaces the layer whose [TimelineVideoLayer.id] matches [layer]'s id.
+  /// Changing only position, size or opacity is cheap; changing the time
+  /// window rebuilds the composition — call it on gesture commit only.
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> updateVideoLayer(TimelineVideoLayer layer) {
+    _requireTextureId();
+    return _platform.updateVideoLayer(textureId!, layer.toJson());
+  }
+
+  /// Removes the layer identified by [layerId].
+  ///
+  /// Requires [load] to have completed. Throws [StateError] otherwise.
+  Future<void> removeVideoLayer(String layerId) {
+    _requireTextureId();
+    return _platform.removeVideoLayer(textureId!, layerId);
   }
 
   // ── Captions ─────────────────────────────────────────────────────────────

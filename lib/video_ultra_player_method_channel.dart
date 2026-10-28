@@ -308,6 +308,36 @@ class MethodChannelVideoUltraPlayer extends VideoUltraPlayerPlatform {
     );
   }
 
+  // ── Video layers ─────────────────────────────────────────────────────────
+
+  @override
+  Future<Map<String, dynamic>> addVideoLayer(
+    int textureId,
+    Map<String, dynamic> layer,
+  ) async {
+    final resolved = await methodChannel.invokeMapMethod<String, dynamic>(
+      'addVideoLayer',
+      <String, Object?>{'textureId': textureId, 'layer': layer},
+    );
+    return resolved ?? layer;
+  }
+
+  @override
+  Future<void> updateVideoLayer(int textureId, Map<String, dynamic> layer) {
+    return methodChannel.invokeMethod<void>(
+      'updateVideoLayer',
+      <String, Object?>{'textureId': textureId, 'layer': layer},
+    );
+  }
+
+  @override
+  Future<void> removeVideoLayer(int textureId, String layerId) {
+    return methodChannel.invokeMethod<void>(
+      'removeVideoLayer',
+      <String, Object?>{'textureId': textureId, 'layerId': layerId},
+    );
+  }
+
   // ── Captions ─────────────────────────────────────────────────────────────
 
   @override

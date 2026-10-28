@@ -215,6 +215,30 @@ abstract class VideoUltraPlayerPlatform extends PlatformInterface {
     throw UnimplementedError('removeTextOverlay() has not been implemented.');
   }
 
+  // ── Video layers ─────────────────────────────────────────────────────────
+
+  /// Adds a picture-in-picture video layer on top of the loaded timeline.
+  ///
+  /// [layer] is a JSON-compatible map produced by [TimelineVideoLayer.toJson].
+  /// Returns the same map with `trimEndMs` resolved and the displayed
+  /// `sourceWidth`/`sourceHeight` of the source.
+  Future<Map<String, dynamic>> addVideoLayer(
+    int textureId,
+    Map<String, dynamic> layer,
+  ) {
+    throw UnimplementedError('addVideoLayer() has not been implemented.');
+  }
+
+  /// Replaces the video layer whose `id` matches [layer].
+  Future<void> updateVideoLayer(int textureId, Map<String, dynamic> layer) {
+    throw UnimplementedError('updateVideoLayer() has not been implemented.');
+  }
+
+  /// Removes the video layer identified by [layerId].
+  Future<void> removeVideoLayer(int textureId, String layerId) {
+    throw UnimplementedError('removeVideoLayer() has not been implemented.');
+  }
+
   // ── Captions ─────────────────────────────────────────────────────────────
 
   /// Replaces the caption cues and style of the loaded timeline.

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -281,6 +282,45 @@ class MockVideoUltraPlayerPlatform
   Future<void> removeAudioTrack(int textureId) async {
     calls.add('removeAudioTrack');
     lastTextureId = textureId;
+  }
+
+  Map<String, dynamic>? lastVideoLayerPayload;
+  String? lastRemovedVideoLayerId;
+  Object? addVideoLayerError;
+
+  @override
+  Future<Map<String, dynamic>> addVideoLayer(
+    int textureId,
+    Map<String, dynamic> layer,
+  ) async {
+    calls.add('addVideoLayer');
+    lastTextureId = textureId;
+    lastVideoLayerPayload = layer;
+    final error = addVideoLayerError;
+    if (error != null) throw error;
+    return <String, dynamic>{
+      ...layer,
+      'trimEndMs': 5000,
+      'sourceWidth': 1080,
+      'sourceHeight': 1920,
+    };
+  }
+
+  @override
+  Future<void> updateVideoLayer(
+    int textureId,
+    Map<String, dynamic> layer,
+  ) async {
+    calls.add('updateVideoLayer');
+    lastTextureId = textureId;
+    lastVideoLayerPayload = layer;
+  }
+
+  @override
+  Future<void> removeVideoLayer(int textureId, String layerId) async {
+    calls.add('removeVideoLayer');
+    lastTextureId = textureId;
+    lastRemovedVideoLayerId = layerId;
   }
 
   @override
@@ -1119,6 +1159,85 @@ void main() {
         expect(fakePlatform.lastTextOverlayPayload?['text'], 'Hello');
       },
     );
+  });
+
+  // ── Video layers ─────────────────────────────────────────────────────────
+
+  const sampleLayer = TimelineVideoLayer(
+    id: 'layer-1',
+    path: '/layer.mp4',
+    start: Duration(milliseconds: 1500),
+  );
+
+  group('video layers', () {
+    test('add/update/remove throw StateError before load', () {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      expect(() => player.addVideoLayer(sampleLayer), throwsStateError);
+      expect(() => player.updateVideoLayer(sampleLayer), throwsStateError);
+      expect(() => player.removeVideoLayer('layer-1'), throwsStateError);
+    });
+
+    test(
+      'addVideoLayer sends payload and returns the resolved layer',
+      () async {
+        final player = NativeTimelinePlayer(platform: fakePlatform);
+        await player.load(const [
+          TimelineClip(path: '/a.mp4', type: MediaType.video),
+        ]);
+
+        final resolved = await player.addVideoLayer(sampleLayer);
+
+        expect(fakePlatform.lastTextureId, 42);
+        expect(fakePlatform.lastVideoLayerPayload, <String, dynamic>{
+          'id': 'layer-1',
+          'path': '/layer.mp4',
+          'startMs': 1500,
+          'trimStartMs': 0,
+          'x': 0.5,
+          'y': 0.5,
+          'widthFraction': 0.5,
+          'opacity': 1.0,
+        });
+        expect(resolved.trimEnd, const Duration(seconds: 5));
+        expect(resolved.sourceWidth, 1080);
+        expect(resolved.sourceHeight, 1920);
+      },
+    );
+
+    test('native video_layer_limit error propagates', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
+      fakePlatform.addVideoLayerError = PlatformException(
+        code: 'video_layer_limit',
+      );
+
+      await expectLater(
+        player.addVideoLayer(sampleLayer),
+        throwsA(
+          isA<PlatformException>().having(
+            (e) => e.code,
+            'code',
+            'video_layer_limit',
+          ),
+        ),
+      );
+    });
+
+    test('update and remove delegate with the texture id', () async {
+      final player = NativeTimelinePlayer(platform: fakePlatform);
+      await player.load(const [
+        TimelineClip(path: '/a.mp4', type: MediaType.video),
+      ]);
+
+      await player.updateVideoLayer(sampleLayer.copyWith(x: 0.2));
+      expect(fakePlatform.calls, contains('updateVideoLayer'));
+      expect(fakePlatform.lastVideoLayerPayload?['x'], 0.2);
+
+      await player.removeVideoLayer('layer-1');
+      expect(fakePlatform.lastRemovedVideoLayerId, 'layer-1');
+    });
   });
 
   group('removeTextOverlay', () {
