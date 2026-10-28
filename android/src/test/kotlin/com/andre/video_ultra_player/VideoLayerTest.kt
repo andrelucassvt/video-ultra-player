@@ -129,38 +129,50 @@ internal class VideoLayerTest {
     }
 
     @Test
-    fun layerSequence_fillsAroundTheLayerWithStillImagesInsteadOfGaps() {
+    fun layerSequence_padsWithInvisibleClipsOfTheSameVideo() {
         val placed = PlacedVideoLayer(
-            layer().copy(
-                sourceDurationMs = 6_000L,
-                sourceWidth = 1080,
-                sourceHeight = 1920,
-                fillerImagePath = "/cache/transparent.png"
-            ),
+            layer().copy(sourceDurationMs = 6_000L, sourceWidth = 1080, sourceHeight = 1920),
             1_500L..5_500L
         )
 
-        val sequence = videoLayerSequence(placed, TimelineRenderSize(1080, 1920), 10_000L)
-        val items = sequence.editedMediaItems
+        val items = videoLayerSequence(placed, TimelineRenderSize(1080, 1920), 10_000L)
+            .editedMediaItems
 
-        // Gaps in the primary multi-input sequence stall the main sequence
-        // after a seek (StuckPlayerException) — the fillers must be real items.
-        assertEquals(3, items.size)
+        // Gaps stall seeks and an image→video switch inside the primary
+        // multi-input sequence freezes the preview: padding must be video.
         assertEquals(
             listOf(LAYER_FILLER_MEDIA_ID, "", LAYER_FILLER_MEDIA_ID),
             items.map { if (it.mediaItem.mediaId == LAYER_FILLER_MEDIA_ID) it.mediaItem.mediaId else "" }
         )
         assertEquals(false, items.any { it.mediaItem.mediaId == "androidx-media3-GapMediaItem" })
-        assertEquals(1_500_000L, items[0].durationUs)
-        assertEquals(4_500_000L, items[2].durationUs)
+        assertEquals(1_500L, items[0].mediaItem.clippingConfiguration.endPositionMs)
+        assertEquals(4_500L, items[2].mediaItem.clippingConfiguration.endPositionMs)
+    }
+
+    @Test
+    fun layerSequence_paddingLongerThanTheSource_isSplitIntoClips() {
+        val placed = PlacedVideoLayer(
+            layer(startMs = 2_500L, trimStartMs = 0L, trimEndMs = 1_000L)
+                .copy(sourceDurationMs = 1_000L),
+            2_500L..3_500L
+        )
+
+        val items = videoLayerSequence(placed, TimelineRenderSize(1080, 1920), 3_500L)
+            .editedMediaItems
+
+        // 2,5 s of padding from a 1 s source: 1 s + 1 s + 0,5 s, then the layer.
+        assertEquals(
+            listOf(1_000L, 1_000L, 500L),
+            items.take(3).map { it.mediaItem.clippingConfiguration.endPositionMs }
+        )
+        assertEquals(4, items.size)
     }
 
     @Test
     fun layerSequence_startingAtZeroAndRunningToTheEnd_hasNoFiller() {
         val placed = PlacedVideoLayer(
             layer(startMs = 0L, trimStartMs = 0L, trimEndMs = 10_000L).copy(
-                sourceDurationMs = 10_000L,
-                fillerImagePath = "/cache/transparent.png"
+                sourceDurationMs = 10_000L
             ),
             0L..10_000L
         )

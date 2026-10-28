@@ -606,8 +606,7 @@ internal class TimelineCompositionController(
             trimEndMs = update.trimEndMs ?: current.trimEndMs,
             sourceDurationMs = current.sourceDurationMs,
             sourceWidth = current.sourceWidth,
-            sourceHeight = current.sourceHeight,
-            fillerImagePath = current.fillerImagePath
+            sourceHeight = current.sourceHeight
         )
         // An unchanged layer must not push an empty undo entry.
         if (merged == current) {
@@ -1146,8 +1145,7 @@ internal fun resolveVideoLayer(
         trimEndMs = trimEndMs,
         sourceDurationMs = metadata.durationMs,
         sourceWidth = metadata.width,
-        sourceHeight = metadata.height,
-        fillerImagePath = LayerFillerImage.path(context)
+        sourceHeight = metadata.height
     )
 }
 
