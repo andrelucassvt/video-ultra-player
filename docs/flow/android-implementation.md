@@ -111,6 +111,7 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
   - **Player:** é recriado com `MultipleInputVideoGraph.Factory()`, porque o grafo padrão mostra só uma sequência e apenas loga um warning. Com camadas, o player é recriado a **cada** rebuild: um segundo `setComposition` no mesmo player multi-entrada trava a sequência principal em BUFFERING (`ERROR_CODE_TIMEOUT`).
   - **Ordem das sequências:** cada camada vira uma sequência só de vídeo em `videoSequenceOrder` — a última camada primeiro (a entrada 0 é desenhada por cima) e a principal por último.
   - **Duração das sequências:** cada sequência de camada é preenchida com um PNG transparente (`LayerFillerImage`) antes e depois da camada até a duração total, para que qualquer primária cubra a timeline. `addGap` não é usado: um seek para dentro de um gap na primária trava a sequência principal (`StuckPlayerException`).
+  - **Seek com camadas:** se o player seguir em BUFFERING 1,5 s depois do último `seekTo`/`seekToClip`, o `layerSeekWatchdog` recria o player na posição (o seek no player multi-entrada pode travar sem erro).
   - **Visibilidade:** `VideoLayerCompositorSettings` devolve `alphaScale = 0` fora da janela da camada.
   - **Texto e legendas:** viram efeito de `Composition` (`setEffects`, depois do compositor, em tempo de timeline) para ficarem acima das camadas.
   - **HDR:** a composição é forçada para `HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL`, porque o `DefaultVideoCompositor` rejeita HDR e espaços de cor misturados.
