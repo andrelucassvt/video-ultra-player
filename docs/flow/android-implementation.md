@@ -5,6 +5,7 @@ source_state: clean
 verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/onda-2-identidade-editor.md
@@ -113,6 +114,8 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
   - **Duração das sequências:** cada sequência de camada é preenchida antes e depois da camada até a duração total, para que qualquer primária cubra a timeline. O preenchimento são trechos do próprio vídeo da camada com `AlphaScale(0f)`, divididos em pedaços quando o vazio é maior que a fonte. Não se usa `addGap`, porque um seek para dentro do gap trava a sequência principal. Também não se usa um PNG transparente: a troca imagem→vídeo dentro da sequência congelou a prévia.
   - **Seek com camadas:** `seekTo`/`seekToClip` não chamam o seek do media3. Guardam `pendingLayerSeekMs` e recriam o player na posição com debounce de 150 ms, porque o seek multi-entrada pode travar em BUFFERING ou, após o fim de uma entrada, quebrar o compositor (`checkState(!isInputEnded)`).
   - **Posicionamento ao vivo:** `previewVideoLayer` e `updateVideoLayer` só de posicionamento atualizam `VideoLayerCompositorSettings.updatePlacement` (âncora, escala relativa ao tamanho pré-escalado e alpha). Com o player tocando, os próximos quadros já saem na posição nova, sem rebuild. Pausado não há como recompor o quadro: `MultipleInputVideoGraph.redraw` lança `UnsupportedOperationException` e derruba o app. Por isso a edição confirmada reconstrói, e a troca é feita sem piscar: o player novo é preparado sem `Surface` enquanto o antigo mantém o último quadro. No READY ele assume a `Surface`; se estiver pausado, toca mudo por 60 ms para desenhar o primeiro quadro, e a posição reportada fica em `positionOverrideMs`. Altura livre (`heightFraction`) usa `Presentation.LAYOUT_STRETCH_TO_FIT` e escala X/Y independentes no posicionamento ao vivo.
+  - **Áudio da camada:** com `volume > 0` e `sourceHasAudio`, a sequência da camada declara `setOf(VIDEO, AUDIO)`. O item da camada mantém o áudio, com `GainProcessor` quando `volume < 1`; os preenchimentos invisíveis seguem sem áudio, e o media3 completa com silêncio. `experimentalSetForceAudioTrack` não é usado porque conflita com `trackTypes` explícitos. Muda ou sem áudio, a sequência continua só de vídeo.
+  - **Volume do clipe:** `TimelineClip.volume < 1` adiciona um `GainProcessor` (`AudioTrackGainProvider`) aos efeitos de áudio do item em `effectsFor`.
   - **Visibilidade:** `VideoLayerCompositorSettings` usa só a âncora e a opacidade da camada. Fora da janela, a camada fica invisível pelos trechos com `AlphaScale(0f)`; os timestamps da prévia chegam deslocados e não servem para isso.
   - **Texto e legendas:** viram efeito de `Composition` (`setEffects`, depois do compositor, em tempo de timeline) para ficarem acima das camadas.
   - **HDR:** a composição é forçada para `HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL`, porque o `DefaultVideoCompositor` rejeita HDR e espaços de cor misturados.

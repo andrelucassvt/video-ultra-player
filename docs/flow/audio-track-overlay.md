@@ -2,9 +2,9 @@
 generated_at: 2026-07-31
 source_commit: 1e11b62
 source_state: clean
-verified_at: 2026-07-31
+verified_at: 2026-10-28
 status: current
-related_plans: []
+related_plans: [luma-vid:docs/plan/layer-audio-volume.md]
 ---
 
 # Flow: Trilha de Áudio Externa
@@ -86,6 +86,7 @@ Nos dois casos a trilha entra no `exportCurrentTimeline`, porque o export recons
 
 ## Regras de Negócio Relevantes
 
+- **Volume de clipe e de camada** — além da faixa externa, a mixagem aplica `TimelineClip.volume` a cada clipe e `TimelineVideoLayer.volume` ao áudio da camada (iOS: `AVMutableAudioMixInputParameters` em `makeAudioMix`; Android: `GainProcessor` com `AudioTrackGainProvider`). `0` remove o áudio.
 - **Uma trilha externa por player** — `currentAudioTrack` (iOS) e `audioTrack` (Android) são campos únicos; `setAudioTrack` substitui.
 - **Exige `load`** — `_requireTextureId()` em ambos os métodos Dart.
 - **`trimEnd` é ponto absoluto na fonte** — documentado em `audio_track.dart` e implementado nos dois nativos (`effectiveTrimEndMs` no Android).

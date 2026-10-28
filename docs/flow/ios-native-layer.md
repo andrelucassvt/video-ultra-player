@@ -5,6 +5,7 @@ source_state: dirty
 verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/onda-2-identidade-editor.md
@@ -109,7 +110,8 @@ No karaokê, `CaptionLayers.presentationSegments` particiona toda a janela do cu
   - **Instruções:** `VideoLayerTiming.instructionRanges` corta as instruções em cada borda de camada. O resultado é contíguo, como o AVFoundation exige, e lista em cada trecho as camadas ativas em ordem decrescente acima da principal. A trilha de texto continua prepended no índice 0.
   - **Edições de posicionamento:** mover, redimensionar ou mudar a opacidade usa o caminho cirúrgico (`applyUpdatedVideoComposition`). `previewVideoLayer` usa o mesmo caminho com um posicionamento temporário (`previewPlacements`), sem snapshot; qualquer edição confirmada de camada o descarta.
   - **Edições estruturais:** início, trim, add e remove usam `rebuildPreservingPlayback`.
-  - **Metadados:** são lidos na `buildQueue` (`resolveVideoLayer`).
+  - **Metadados:** são lidos na `buildQueue` (`resolveVideoLayer`), inclusive `sourceHasAudio`.
+  - **Áudio:** com `volume > 0`, a camada insere também uma trilha de áudio no mesmo intervalo, com o volume dela no `makeAudioMix`. O volume do clipe entra no `setVolume` por trecho. Mudar o volume reconstrói, porque `differsOnlyInPlacement` exige volume igual (o caminho cirúrgico não refaz o `audioMix`).
 - **Trilha de áudio só existe se algum clipe tiver áudio** — `TimelineComposition.build`: o guard `hasAnyClipAudio` evita criar a trilha vazia; sem ele o carregamento falhava silenciosamente (corrigido em 2.0.5 conforme `CHANGELOG.md`).
 - **Speed é aplicado com `scaleTimeRange`** — vídeo e áudio são escalados separadamente, e o `TimelineSegment` guarda a duração escalada.
 - **`trimEnd` prevalece sobre `duration`** — `effectiveRange`: com `trimEndMs` presente, a duração é `trimEnd - trimStart` clampada pela duração do asset; o mínimo defensivo é 100 ms.

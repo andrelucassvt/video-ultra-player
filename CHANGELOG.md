@@ -4,6 +4,7 @@
 
 - Added `TimelineVideoLayer` and `NativeTimelinePlayer.addVideoLayer` / `updateVideoLayer` / `removeVideoLayer`: a picture-in-picture video layer (`maxVideoLayers` is 1: with more, the Android multi-input preview stalls) composited over the main timeline, identical in the preview and the exported MP4. Each layer has a timeline start, a source trim, a normalized center, a width fraction of the frame (height follows the source aspect) and opacity. Layers are video-only, stack in list order above the main video and below text overlays and captions, and are part of the native undo/redo history.
 - `addVideoLayer` returns the layer with `trimEnd` resolved and the displayed `sourceWidth`/`sourceHeight`; a layer past the limit fails with `PlatformException(code: 'video_layer_limit')`. `previewVideoLayer` shows placement changes live during gestures, and `heightFraction` allows free (stretched) resizing.
+- Added `TimelineClip.volume` and `TimelineVideoLayer.volume` (0 removes the audio). The layer's audio is mixed with the timeline, and `addVideoLayer` reports `sourceHasAudio`.
 - Android: layers are extra video sequences composited by `MultipleInputVideoGraph`/`DefaultVideoCompositor`; with layers, text and captions are applied after compositing and HDR is tone-mapped to SDR.
 - iOS: layers are extra composition tracks; video composition instructions are split at every layer edge.
 

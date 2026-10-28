@@ -5,6 +5,7 @@ source_state: clean
 verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/text-overlays/00-indice.md
 ---
@@ -174,6 +175,7 @@ Imutável, com `toJson`, `copyWith`, `==` e `hashCode`.
 | `trimStart` | `Duration?` | `null` | `trimStartMs` | Omitido do JSON quando `null`. Ignorado para imagem. |
 | `trimEnd` | `Duration?` | `null` | `trimEndMs` | **Ponto absoluto na fonte**, não duração; precede `duration` em vídeo. |
 | `transitionToNext` | `ClipTransition?` | `null` | `transitionToNext` | Omitido quando `null`. |
+| `volume` | `double` | `1.0` | `volume` | Volume do áudio do clipe em `[0, 1]`; `0` o remove da mixagem. Omitido quando `1.0`. |
 
 ### `TimelineCompositionConfig` (`.../timeline_composition_config.dart`)
 
@@ -225,6 +227,8 @@ Imutável, com `toJson`/`fromJson` (ms no canal), `copyWith`, `==` e `hashCode`.
 | `widthFraction` | `double` | `0.5` | `widthFraction` | Largura relativa ao quadro. |
 | `heightFraction` | `double?` | `null` | `heightFraction` | Altura relativa ao quadro; `null` = proporção da fonte, com valor = livre (esticado); omitida quando nula. |
 | `opacity` | `double` | `1.0` | `opacity` | `[0,1]`. |
+| `volume` | `double` | `1.0` | `volume` | Volume do áudio da camada, misturado ao principal; `0` a silencia. Omitido quando `1.0`. |
+| `sourceHasAudio` | `bool?` | `null` | `sourceHasAudio` | Só leitura: preenchido pelo nativo na resposta de `addVideoLayer`; nunca enviado. |
 | `sourceWidth` / `sourceHeight` | `int?` | `null` | `sourceWidth` / `sourceHeight` | Só leitura: preenchidos pelo nativo na resposta de `addVideoLayer` (já com rotação); nunca enviados. |
 
 `duration` = `trimEnd - trimStart` (nulo enquanto `trimEnd` não for resolvido). Visível em `[start, start + duration)`, limitado pela duração total.
