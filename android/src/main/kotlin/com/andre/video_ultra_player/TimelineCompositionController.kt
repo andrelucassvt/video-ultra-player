@@ -17,6 +17,7 @@ import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.Size
 import androidx.media3.effect.Crop
+import androidx.media3.effect.MultipleInputVideoGraph
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
@@ -78,10 +79,12 @@ internal class TimelineCompositionController(
     private var textOverlays: List<TextOverlayDescriptor> = emptyList()
     private var captionCues: List<CaptionCueDescriptor> = emptyList()
     private var captionStyle: CaptionStyleDescriptor? = null
+    private var videoLayers: List<VideoLayerDescriptor> = emptyList()
     private val editHistory = TimelineEditModel()
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
     private var surface: Surface? = null
     private var player: CompositionPlayer? = null
+    private var playerUsesMultiInput = false
     private var eventSink: EventChannel.EventSink? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
@@ -166,6 +169,7 @@ internal class TimelineCompositionController(
     ): Long {
         compositionConfig = config
         clips = resolvedClips.toMutableList()
+        videoLayers = emptyList()
         renderSize = outputSizeFor(compositionConfig, clips.first())
         rebuildSegments()
 
@@ -183,7 +187,30 @@ internal class TimelineCompositionController(
         textureEntry = entry
         surface = renderSurface
 
-        player = CompositionPlayer.Builder(context)
+        player = createPlayer(renderSurface, multiInput = false)
+            .also { compositionPlayer ->
+                compositionPlayer.setComposition(currentComposition())
+                compositionPlayer.prepare()
+            }
+
+        mainHandler.post(stateRunnable)
+        return entry.id()
+    }
+
+    /**
+     * Builds the preview player on [renderSurface]. Video layers need the
+     * multi-input video graph — the default single-input graph silently shows
+     * one sequence only — so the player is recreated when layers appear or
+     * disappear (see [rebuildCompositionPreservingPlayback]). Without layers
+     * the default graph is kept, exactly as before layers existed.
+     */
+    private fun createPlayer(renderSurface: Surface, multiInput: Boolean): CompositionPlayer {
+        val builder = CompositionPlayer.Builder(context)
+        if (multiInput) {
+            builder.setVideoGraphFactory(MultipleInputVideoGraph.Factory())
+        }
+        playerUsesMultiInput = multiInput
+        return builder
             .build()
             .also { compositionPlayer ->
                 compositionPlayer.setVideoSurface(
@@ -209,23 +236,19 @@ internal class TimelineCompositionController(
                         }
                     }
                 )
-                compositionPlayer.setComposition(
-                    buildTimelineComposition(
-                        clips,
-                        renderSize,
-                        audioTrack,
-                        textOverlays,
-                        captionCues,
-                        captionStyle,
-                        compositionConfig
-                    )
-                )
-                compositionPlayer.prepare()
             }
-
-        mainHandler.post(stateRunnable)
-        return entry.id()
     }
+
+    private fun currentComposition(): Composition = buildTimelineComposition(
+        clips,
+        renderSize,
+        audioTrack,
+        textOverlays,
+        captionCues,
+        captionStyle,
+        compositionConfig,
+        videoLayers
+    )
 
     fun setEventSink(eventSink: EventChannel.EventSink?) {
         this.eventSink = eventSink
@@ -483,6 +506,92 @@ internal class TimelineCompositionController(
     }
 
     /**
+     * Adds a picture-in-picture layer on top of the existing ones. Source
+     * metadata is read on [mediaMetadataExecutor]; the edit itself (and the
+     * composition rebuild) happens back on the main thread. [onDone] receives
+     * the resolved layer map, [onError] any failure — including
+     * `IllegalStateException("video_layer_limit")` past [MAX_VIDEO_LAYERS].
+     */
+    fun addVideoLayer(
+        rawLayer: Map<*, *>,
+        onDone: (Map<String, Any?>) -> Unit,
+        onError: (Throwable) -> Unit
+    ) {
+        val descriptor = try {
+            VideoLayerDescriptor.from(rawLayer)
+        } catch (error: Throwable) {
+            onError(error)
+            return
+        }
+        if (videoLayers.size >= MAX_VIDEO_LAYERS) {
+            onError(IllegalStateException("video_layer_limit"))
+            return
+        }
+        mediaMetadataExecutor.execute {
+            val resolved = try {
+                resolveVideoLayer(context, descriptor)
+            } catch (error: Throwable) {
+                mainHandler.post { onError(error) }
+                return@execute
+            }
+            mainHandler.post {
+                if (disposed) {
+                    onError(IllegalStateException("Player disposed while adding a layer."))
+                    return@post
+                }
+                if (videoLayers.size >= MAX_VIDEO_LAYERS) {
+                    onError(IllegalStateException("video_layer_limit"))
+                    return@post
+                }
+                try {
+                    pushEditSnapshot()
+                    videoLayers = videoLayers + resolved
+                    rebuildCompositionPreservingPlayback()
+                    onDone(resolved.toResponseMap())
+                } catch (error: Throwable) {
+                    onError(error)
+                }
+            }
+        }
+    }
+
+    /**
+     * Replaces the layer with the same `id` (no-op when it does not exist),
+     * keeping the source metadata resolved by [addVideoLayer]. Effects are
+     * immutable, so callers should invoke this only on gesture commit.
+     */
+    fun updateVideoLayer(rawLayer: Map<*, *>) {
+        val update = VideoLayerDescriptor.from(rawLayer)
+        val index = videoLayers.indexOfFirst { it.id == update.id }
+        if (index == -1) {
+            emitState()
+            return
+        }
+        val current = videoLayers[index]
+        pushEditSnapshot()
+        videoLayers = videoLayers.toMutableList().also {
+            it[index] = update.copy(
+                trimEndMs = update.trimEndMs ?: current.trimEndMs,
+                sourceDurationMs = current.sourceDurationMs,
+                sourceWidth = current.sourceWidth,
+                sourceHeight = current.sourceHeight
+            )
+        }
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /** Removes the layer with the given [layerId] (no-op when it does not exist). */
+    fun removeVideoLayer(layerId: String) {
+        if (videoLayers.none { it.id == layerId }) {
+            emitState()
+            return
+        }
+        pushEditSnapshot()
+        videoLayers = videoLayers.filterNot { it.id == layerId }
+        rebuildCompositionPreservingPlayback()
+    }
+
+    /**
      * Extracts the audio of the current composition (trims, speeds and gaps
      * included) to [outputPath] as an m4a file. Progress is reported through
      * the same callback contract used by exports.
@@ -518,6 +627,7 @@ internal class TimelineCompositionController(
         val currentTextOverlays = textOverlays
         val currentCaptionCues = captionCues
         val currentCaptionStyle = captionStyle
+        val currentVideoLayers = videoLayers
         return TimelineCompositionExporter(context).also { exporter ->
             exporter.exportFromClips(
                 currentClips,
@@ -528,7 +638,8 @@ internal class TimelineCompositionController(
                 currentCaptionStyle,
                 compositionConfig,
                 outputPath,
-                callback
+                callback,
+                currentVideoLayers
             )
         }
     }
@@ -557,19 +668,18 @@ internal class TimelineCompositionController(
 
     private fun rebuildCompositionPreservingPlayback() {
         rebuildSegments()
-        val currentPlayer = player ?: return
+        var currentPlayer = player ?: return
         val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = currentPlayer.isPlaying
+        val needsMultiInput = videoLayers.isNotEmpty()
+        val activeSurface = surface
+        if (needsMultiInput != playerUsesMultiInput && activeSurface != null) {
+            currentPlayer.release()
+            currentPlayer = createPlayer(activeSurface, needsMultiInput)
+            player = currentPlayer
+        }
         currentPlayer.setComposition(
-            buildTimelineComposition(
-                clips,
-                renderSize,
-                audioTrack,
-                textOverlays,
-                captionCues,
-                captionStyle,
-                compositionConfig
-            ),
+            currentComposition(),
             positionMs.coerceIn(0L, totalDurationMs)
         )
         currentPlayer.prepare()
@@ -641,7 +751,8 @@ internal class TimelineCompositionController(
             audioTrack = audioTrack,
             textOverlays = textOverlays,
             captionCues = captionCues,
-            captionStyle = captionStyle
+            captionStyle = captionStyle,
+            videoLayers = videoLayers
         )
     }
 
@@ -651,6 +762,7 @@ internal class TimelineCompositionController(
         textOverlays = snapshot.textOverlays
         captionCues = snapshot.captionCues
         captionStyle = snapshot.captionStyle
+        videoLayers = snapshot.videoLayers
         rebuildCompositionPreservingPlayback()
     }
 }
@@ -742,7 +854,8 @@ internal class TimelineCompositionExporter(
         captionStyle: CaptionStyleDescriptor? = null,
         config: TimelineCompositionConfig = TimelineCompositionConfig(),
         outputPath: String?,
-        callback: TimelineExportCallback
+        callback: TimelineExportCallback,
+        videoLayers: List<VideoLayerDescriptor> = emptyList()
     ) {
         val composition = buildTimelineComposition(
             clips,
@@ -751,7 +864,8 @@ internal class TimelineCompositionExporter(
             textOverlays,
             captionCues,
             captionStyle,
-            config
+            config,
+            videoLayers
         )
         exportComposition(
             composition,
@@ -872,29 +986,116 @@ private fun buildTimelineComposition(
     textOverlays: List<TextOverlayDescriptor> = emptyList(),
     captionCues: List<CaptionCueDescriptor> = emptyList(),
     captionStyle: CaptionStyleDescriptor? = null,
-    config: TimelineCompositionConfig = TimelineCompositionConfig()
+    config: TimelineCompositionConfig = TimelineCompositionConfig(),
+    videoLayers: List<VideoLayerDescriptor> = emptyList()
 ): Composition {
+    val timelineDurationMs = clips.sumOf { it.scaledDurationMs }
+    val placedLayers = videoLayers.mapNotNull { layer ->
+        layer.visibleWindowMs(layer.sourceDurationMs, timelineDurationMs)
+            ?.let { PlacedVideoLayer(layer, it) }
+    }
+    // With layers, text and captions move to a Composition-level effect,
+    // applied after the compositor, so they stay above every layer. Their
+    // windows are then in timeline time, not clip time.
+    val composeOverlays = placedLayers.isNotEmpty()
+
     var clipStartMs = 0L
     val items = clips.map { clip ->
-        val item = editedMediaItemFor(
-            clip,
-            renderSize,
-            textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs),
-            clipStartMs,
-            captionCues,
-            captionStyle
-        )
+        val item = if (composeOverlays) {
+            editedMediaItemFor(clip, renderSize, clipStartMs = clipStartMs)
+        } else {
+            editedMediaItemFor(
+                clip,
+                renderSize,
+                textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs),
+                clipStartMs,
+                captionCues,
+                captionStyle
+            )
+        }
         clipStartMs += clip.scaledDurationMs
         item
     }
-    val sequences = mutableListOf(EditedMediaItemSequence.withAudioAndVideoFrom(items))
-    val timelineDurationMs = clips.sumOf { it.scaledDurationMs }
+    val mainSequence = EditedMediaItemSequence.withAudioAndVideoFrom(items)
+    if (!composeOverlays) {
+        val sequences = mutableListOf(mainSequence)
+        if (audioTrack != null && audioTrack.offsetMs < timelineDurationMs) {
+            sequences.add(audioSequenceFor(audioTrack, timelineDurationMs))
+        }
+        return Composition.Builder(sequences)
+            .setHdrMode(config.media3HdrMode)
+            .build()
+    }
+
+    val sequences = mutableListOf<EditedMediaItemSequence>()
+    val layersBySequence = mutableMapOf<Int, PlacedVideoLayer>()
+    for (layerIndex in videoSequenceOrder(placedLayers.size)) {
+        if (layerIndex == -1) {
+            sequences.add(mainSequence)
+        } else {
+            val placed = placedLayers[layerIndex]
+            layersBySequence[sequences.size] = placed
+            sequences.add(videoLayerSequence(placed, renderSize, timelineDurationMs))
+        }
+    }
     if (audioTrack != null && audioTrack.offsetMs < timelineDurationMs) {
         sequences.add(audioSequenceFor(audioTrack, timelineDurationMs))
     }
     return Composition.Builder(sequences)
-        .setHdrMode(config.media3HdrMode)
+        .setVideoCompositorSettings(VideoLayerCompositorSettings(renderSize, layersBySequence))
+        .setEffects(timelineOverlayEffects(renderSize, textOverlays, captionCues, captionStyle))
+        // The multi-input compositor rejects HDR and mixed color spaces.
+        .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
         .build()
+}
+
+/** Text and captions as one post-compositor effect, in timeline time. */
+private fun timelineOverlayEffects(
+    renderSize: TimelineRenderSize,
+    textOverlays: List<TextOverlayDescriptor>,
+    captionCues: List<CaptionCueDescriptor>,
+    captionStyle: CaptionStyleDescriptor?
+): Effects {
+    val videoEffects = mutableListOf<Effect>()
+    if (textOverlays.isNotEmpty()) {
+        videoEffects.add(
+            OverlayEffect(textOverlays.map { TimelineTextOverlay(it, renderSize.height) })
+        )
+    }
+    if (captionCues.isNotEmpty() && captionStyle != null) {
+        videoEffects.add(
+            OverlayEffect(
+                listOf(
+                    CaptionOverlay(
+                        captionCues,
+                        captionStyle,
+                        renderSize.width,
+                        renderSize.height,
+                        0L
+                    )
+                )
+            )
+        )
+    }
+    return Effects(emptyList(), videoEffects)
+}
+
+/**
+ * Resolves the source metadata of a layer (duration and displayed size, after
+ * rotation) and its open `trimEndMs`. Blocking: never on the main thread.
+ */
+internal fun resolveVideoLayer(
+    context: Context,
+    layer: VideoLayerDescriptor
+): VideoLayerDescriptor {
+    val metadata = SourceMetadataCache.get(context, layer.path, TimelineMediaType.VIDEO)
+    val trimEndMs = (layer.trimEndMs ?: metadata.durationMs).coerceAtMost(metadata.durationMs)
+    return layer.copy(
+        trimEndMs = trimEndMs,
+        sourceDurationMs = metadata.durationMs,
+        sourceWidth = metadata.width,
+        sourceHeight = metadata.height
+    )
 }
 
 internal fun preferredVideoBitrate(

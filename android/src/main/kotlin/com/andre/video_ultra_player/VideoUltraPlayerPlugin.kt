@@ -228,6 +228,44 @@ class VideoUltraPlayerPlugin :
                 controller.removeAudioTrack()
                 result.success(null)
             }
+            "addVideoLayer" -> withController(call, result) { controller ->
+                val layer = (call.arguments as? Map<*, *>)?.get("layer") as? Map<*, *>
+                if (layer == null) {
+                    result.error("invalid_arguments", "Expected layer.", null)
+                    return@withController
+                }
+                controller.addVideoLayer(
+                    layer,
+                    onDone = { resolved -> result.success(resolved) },
+                    onError = { error -> result.videoLayerError("addVideoLayer", error) }
+                )
+            }
+            "updateVideoLayer" -> withController(call, result) { controller ->
+                val layer = (call.arguments as? Map<*, *>)?.get("layer") as? Map<*, *>
+                if (layer == null) {
+                    result.error("invalid_arguments", "Expected layer.", null)
+                    return@withController
+                }
+                try {
+                    controller.updateVideoLayer(layer)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    result.videoLayerError("updateVideoLayer", error)
+                }
+            }
+            "removeVideoLayer" -> withController(call, result) { controller ->
+                val layerId = (call.arguments as? Map<*, *>)?.get("layerId") as? String
+                if (layerId == null) {
+                    result.error("invalid_arguments", "Expected layerId.", null)
+                    return@withController
+                }
+                try {
+                    controller.removeVideoLayer(layerId)
+                    result.success(null)
+                } catch (error: Throwable) {
+                    result.videoLayerError("removeVideoLayer", error)
+                }
+            }
             "addTextOverlay" -> withController(call, result) { controller ->
                 val overlay = (call.arguments as? Map<*, *>)?.get("overlay") as? Map<*, *>
                 if (overlay == null) {
@@ -660,6 +698,24 @@ class VideoUltraPlayerPlugin :
             val paths = ThumbnailGenerator(context).generate(videoPath, timestampsMs, width)
             mainHandler.post { result.success(paths) }
         }
+    }
+
+    /** Layer edit failures; the layer limit keeps its own code for the app. */
+    private fun Result.videoLayerError(method: String, error: Throwable) {
+        if (error is IllegalStateException && error.message == "video_layer_limit") {
+            error(
+                "video_layer_limit",
+                "A timeline supports at most $MAX_VIDEO_LAYERS video layers.",
+                null
+            )
+            return
+        }
+        Log.e("VideoUltraPlayer", "$method failed", error)
+        error(
+            "edit_failed",
+            "$method failed: ${error.message ?: error.toString()}",
+            Log.getStackTraceString(error)
+        )
     }
 
     private fun withController(

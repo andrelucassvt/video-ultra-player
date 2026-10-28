@@ -5,7 +5,8 @@ internal data class TimelineEditSnapshot(
     val audioTrack: AudioTrackDescriptor?,
     val textOverlays: List<TextOverlayDescriptor>,
     val captionCues: List<CaptionCueDescriptor> = emptyList(),
-    val captionStyle: CaptionStyleDescriptor? = null
+    val captionStyle: CaptionStyleDescriptor? = null,
+    val videoLayers: List<VideoLayerDescriptor> = emptyList()
 )
 
 internal class TimelineEditModel(
