@@ -108,7 +108,7 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 ## Regras de Negócio Relevantes
 
 - **Camadas de vídeo (`TimelineVideoLayer`)** — `VideoLayer.kt` + `buildTimelineComposition`. Sem camadas, a composição e o player (`SingleInputVideoGraph`) são os de antes. Com camadas:
-  - **Player:** é recriado com `MultipleInputVideoGraph.Factory()`, porque o grafo padrão mostra só uma sequência e apenas loga um warning.
+  - **Player:** é recriado com `MultipleInputVideoGraph.Factory()`, porque o grafo padrão mostra só uma sequência e apenas loga um warning. Com camadas, o player é recriado a **cada** rebuild: um segundo `setComposition` no mesmo player multi-entrada trava a sequência principal em BUFFERING (`ERROR_CODE_TIMEOUT`).
   - **Ordem das sequências:** cada camada vira uma sequência só de vídeo em `videoSequenceOrder` — a última camada primeiro (a entrada 0 é desenhada por cima) e a principal por último.
   - **Duração das sequências:** cada sequência de camada é preenchida com gap até a duração total, para que qualquer primária cubra a timeline.
   - **Gaps:** os gaps renderizam quadros opacos, por isso `VideoLayerCompositorSettings` devolve `alphaScale = 0` fora da janela da camada.

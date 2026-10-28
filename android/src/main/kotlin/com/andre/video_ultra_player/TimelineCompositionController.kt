@@ -677,7 +677,13 @@ internal class TimelineCompositionController(
         val wasPlaying = currentPlayer.isPlaying
         val needsMultiInput = videoLayers.isNotEmpty()
         val activeSurface = surface
-        if (needsMultiInput != playerUsesMultiInput && activeSurface != null) {
+        // A multi-input CompositionPlayer only renders its first composition:
+        // a second setComposition leaves the secondary sequence stuck in
+        // BUFFERING until the stuck-player detector fails with
+        // ERROR_CODE_TIMEOUT. With layers, every rebuild gets a fresh player.
+        if ((needsMultiInput || needsMultiInput != playerUsesMultiInput) &&
+            activeSurface != null
+        ) {
             currentPlayer.release()
             currentPlayer = createPlayer(activeSurface, needsMultiInput)
             player = currentPlayer
