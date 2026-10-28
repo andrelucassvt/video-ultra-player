@@ -524,6 +524,7 @@ final class TimelineComposition {
     preview.x = descriptor.x
     preview.y = descriptor.y
     preview.widthFraction = descriptor.widthFraction
+    preview.heightFraction = descriptor.heightFraction
     preview.opacity = descriptor.opacity
     previewPlacements[descriptor.id] = preview
     return true
@@ -645,7 +646,8 @@ final class TimelineComposition {
             renderSize: renderSize,
             x: layer.x,
             y: layer.y,
-            widthFraction: layer.widthFraction
+            widthFraction: layer.widthFraction,
+            heightFraction: layer.heightFraction
           ),
           at: piece.range.start
         )

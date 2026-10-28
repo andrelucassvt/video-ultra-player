@@ -76,4 +76,13 @@ void main() {
     expect(moved.trimEnd, layer.trimEnd);
     expect(moved.widthFraction, layer.widthFraction);
   });
+
+  test('heightFraction is optional and only serialized when set', () {
+    expect(layer.heightFraction, isNull);
+    expect(layer.toJson().containsKey('heightFraction'), isFalse);
+
+    final stretched = layer.copyWith(heightFraction: 0.3);
+    expect(stretched.toJson()['heightFraction'], 0.3);
+    expect(TimelineVideoLayer.fromJson(stretched.toJson()), stretched);
+  });
 }

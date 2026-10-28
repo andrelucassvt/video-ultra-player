@@ -195,7 +195,13 @@ internal class VideoLayerTest {
 
         // Same anchor math as layerAnchorNdc; size relative to the baked 0.5.
         assertEquals(
-            LayerOverlayPlacement(anchorX = -0.5f, anchorY = 0.5f, scale = 1.5f, alpha = 0.5f),
+            LayerOverlayPlacement(
+                anchorX = -0.5f,
+                anchorY = 0.5f,
+                scaleX = 1.5f,
+                scaleY = 1.5f,
+                alpha = 0.5f
+            ),
             settings.placementFor(0)
         )
         assertEquals(null, settings.placementFor(1))
@@ -211,5 +217,45 @@ internal class VideoLayerTest {
         settings.updatePlacement(layer().copy(id = "other", x = 0.1))
 
         assertEquals(0f, settings.placementFor(0)?.anchorX)
+    }
+
+    @Test
+    fun layerPixelSize_withHeightFraction_stretchesIndependently() {
+        val size = layerPixelSize(
+            widthFraction = 0.5,
+            heightFraction = 0.25,
+            sourceWidth = 1080,
+            sourceHeight = 1920,
+            renderSize = TimelineRenderSize(1080, 1920)
+        )
+
+        // 0.25 of the frame height, not 540 · 1920/1080.
+        assertEquals(540, size.width)
+        assertEquals(480, size.height)
+    }
+
+    @Test
+    fun from_readsOptionalHeightFraction() {
+        assertEquals(0.3, VideoLayerDescriptor.from(fullMap() + ("heightFraction" to 0.3)).heightFraction)
+        assertEquals(null, VideoLayerDescriptor.from(fullMap()).heightFraction)
+        assertEquals(
+            0.3,
+            VideoLayerDescriptor.from(fullMap() + ("heightFraction" to 0.3)).toMap()["heightFraction"]
+        )
+    }
+
+    @Test
+    fun compositorSettings_liveFreeResizeScalesAxesIndependently() {
+        val baked = layer().copy(sourceWidth = 1080, sourceHeight = 1920)
+        val settings = VideoLayerCompositorSettings(
+            renderSize = TimelineRenderSize(1080, 1920),
+            layersBySequence = mapOf(0 to PlacedVideoLayer(baked, 1_500L..5_500L))
+        )
+
+        // Baked: 540 x 960 px (aspect kept). Live: 0.5 wide, 0.25 tall = 540 x 480.
+        settings.updatePlacement(baked.copy(heightFraction = 0.25))
+
+        assertEquals(1f, settings.placementFor(0)?.scaleX)
+        assertEquals(0.5f, settings.placementFor(0)?.scaleY)
     }
 }

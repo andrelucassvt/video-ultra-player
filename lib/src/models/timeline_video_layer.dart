@@ -11,8 +11,10 @@ import 'package:flutter/foundation.dart';
 ///
 /// [x] and [y] are the center of the layer in normalized frame coordinates
 /// (`(0, 0)` is the top-left corner, `(1, 1)` the bottom-right).
-/// [widthFraction] is the layer width as a fraction of the frame width; the
-/// height follows the source aspect ratio.
+/// [widthFraction] is the layer width as a fraction of the frame width.
+/// [heightFraction] is the height as a fraction of the frame height; when
+/// `null` the height follows the source aspect ratio, otherwise width and
+/// height are independent and the video is stretched to fill the box.
 ///
 /// Layers are video-only: their audio is never mixed. The order of the
 /// layers is their z-order — later layers are drawn on top of earlier ones,
@@ -22,7 +24,8 @@ class TimelineVideoLayer {
   /// Creates a [TimelineVideoLayer].
   ///
   /// [x] and [y] must be in `[0.0, 1.0]`; [widthFraction] must be in
-  /// `[0.1, 1.0]`; [opacity] must be in `[0.0, 1.0]`.
+  /// `[0.1, 1.0]`; [heightFraction], when set, must be in `[0.05, 1.0]`;
+  /// [opacity] must be in `[0.0, 1.0]`.
   const TimelineVideoLayer({
     required this.id,
     required this.path,
@@ -32,12 +35,17 @@ class TimelineVideoLayer {
     this.x = 0.5,
     this.y = 0.5,
     this.widthFraction = 0.5,
+    this.heightFraction,
     this.opacity = 1.0,
     this.sourceWidth,
     this.sourceHeight,
   }) : assert(x >= 0.0 && x <= 1.0),
        assert(y >= 0.0 && y <= 1.0),
        assert(widthFraction >= 0.1 && widthFraction <= 1.0),
+       assert(
+         heightFraction == null ||
+             (heightFraction >= 0.05 && heightFraction <= 1.0),
+       ),
        assert(opacity >= 0.0 && opacity <= 1.0);
 
   /// Creates a [TimelineVideoLayer] from a channel map (durations in ms).
@@ -56,6 +64,7 @@ class TimelineVideoLayer {
       x: (json['x'] as num? ?? 0.5).toDouble(),
       y: (json['y'] as num? ?? 0.5).toDouble(),
       widthFraction: (json['widthFraction'] as num? ?? 0.5).toDouble(),
+      heightFraction: (json['heightFraction'] as num?)?.toDouble(),
       opacity: (json['opacity'] as num? ?? 1.0).toDouble(),
       sourceWidth: (json['sourceWidth'] as num?)?.toInt(),
       sourceHeight: (json['sourceHeight'] as num?)?.toInt(),
@@ -86,6 +95,10 @@ class TimelineVideoLayer {
 
   /// Width of the layer as a fraction of the frame width, in `[0.1, 1.0]`.
   final double widthFraction;
+
+  /// Height of the layer as a fraction of the frame height, or `null` to keep
+  /// the source aspect ratio (no stretching).
+  final double? heightFraction;
 
   /// Opacity of the layer in `[0.0, 1.0]`.
   final double opacity;
@@ -118,6 +131,7 @@ class TimelineVideoLayer {
     'x': x,
     'y': y,
     'widthFraction': widthFraction,
+    if (heightFraction != null) 'heightFraction': heightFraction,
     'opacity': opacity,
   };
 
@@ -131,6 +145,7 @@ class TimelineVideoLayer {
     double? x,
     double? y,
     double? widthFraction,
+    double? heightFraction,
     double? opacity,
     int? sourceWidth,
     int? sourceHeight,
@@ -143,6 +158,7 @@ class TimelineVideoLayer {
     x: x ?? this.x,
     y: y ?? this.y,
     widthFraction: widthFraction ?? this.widthFraction,
+    heightFraction: heightFraction ?? this.heightFraction,
     opacity: opacity ?? this.opacity,
     sourceWidth: sourceWidth ?? this.sourceWidth,
     sourceHeight: sourceHeight ?? this.sourceHeight,
@@ -160,6 +176,7 @@ class TimelineVideoLayer {
           x == other.x &&
           y == other.y &&
           widthFraction == other.widthFraction &&
+          heightFraction == other.heightFraction &&
           opacity == other.opacity &&
           sourceWidth == other.sourceWidth &&
           sourceHeight == other.sourceHeight;
@@ -174,6 +191,7 @@ class TimelineVideoLayer {
     x,
     y,
     widthFraction,
+    heightFraction,
     opacity,
     sourceWidth,
     sourceHeight,

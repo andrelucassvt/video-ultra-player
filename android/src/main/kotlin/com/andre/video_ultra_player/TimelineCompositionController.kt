@@ -66,6 +66,16 @@ private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
  */
 private const val LAYER_SEEK_DEBOUNCE_MS = 150L
 
+/** Upper bound for a replacement player to reach READY before it is swapped in anyway. */
+private const val PLAYER_SWAP_TIMEOUT_MS = 2_500L
+
+/**
+ * A paused player attached to a Surface after READY does not draw its frame
+ * (and the multi-input graph cannot redraw). The swapped-in player plays muted
+ * for this long so its first frame reaches the texture, then pauses.
+ */
+private const val PAUSED_SWAP_RENDER_MS = 60L
+
 /**
  * Shared pool for blocking source-metadata reads. Bounded so a long timeline
  * cannot spawn one thread per clip.
@@ -95,6 +105,26 @@ internal class TimelineCompositionController(
     private var surface: Surface? = null
     private var player: CompositionPlayer? = null
     private var playerUsesMultiInput = false
+    /**
+     * Replacement player being prepared off-screen. The old player keeps the
+     * texture (and its last frame) until this one is READY, so recreating the
+     * player for a layer edit or seek does not flash the preview.
+     */
+    private var pendingPlayer: CompositionPlayer? = null
+    private var pendingSwap: Runnable? = null
+    private var pendingWantsPlay = false
+    /** Position shown while a replacement is pending or after a paused swap. */
+    private var positionOverrideMs: Long? = null
+    /** Volume to restore once the muted first-frame play of a paused swap ends. */
+    private var swapNudgeVolume: Float? = null
+
+    /** Ends the muted first-frame play early (user took over play/pause). */
+    private fun endSwapNudge() {
+        val volume = swapNudgeVolume ?: return
+        swapNudgeVolume = null
+        player?.volume = volume
+    }
+
     /** Compositor settings of the player's current composition (layers only). */
     private var liveLayerSettings: VideoLayerCompositorSettings? = null
     private var eventSink: EventChannel.EventSink? = null
@@ -137,6 +167,7 @@ internal class TimelineCompositionController(
     private fun deferLayerSeek(positionMs: Long): Boolean {
         if (videoLayers.isEmpty() || player == null) return false
         pendingLayerSeekMs = positionMs
+        positionOverrideMs = positionMs
         mainHandler.removeCallbacks(layerSeekRebuild)
         mainHandler.postDelayed(layerSeekRebuild, LAYER_SEEK_DEBOUNCE_MS)
         emitState()
@@ -237,7 +268,7 @@ internal class TimelineCompositionController(
      * disappear (see [rebuildCompositionPreservingPlayback]). Without layers
      * the default graph is kept, exactly as before layers existed.
      */
-    private fun createPlayer(renderSurface: Surface, multiInput: Boolean): CompositionPlayer {
+    private fun createPlayer(renderSurface: Surface?, multiInput: Boolean): CompositionPlayer {
         val builder = CompositionPlayer.Builder(context)
         if (multiInput) {
             builder.setVideoGraphFactory(MultipleInputVideoGraph.Factory())
@@ -246,10 +277,9 @@ internal class TimelineCompositionController(
         return builder
             .build()
             .also { compositionPlayer ->
-                compositionPlayer.setVideoSurface(
-                    renderSurface,
-                    Size(renderSize.width, renderSize.height)
-                )
+                renderSurface?.let {
+                    compositionPlayer.setVideoSurface(it, Size(renderSize.width, renderSize.height))
+                }
                 compositionPlayer.addListener(
                     object : Player.Listener {
                         override fun onPlayerError(error: PlaybackException) {
@@ -311,6 +341,7 @@ internal class TimelineCompositionController(
                 x = preview.x,
                 y = preview.y,
                 widthFraction = preview.widthFraction,
+                heightFraction = preview.heightFraction,
                 opacity = preview.opacity
             )
         )
@@ -360,11 +391,24 @@ internal class TimelineCompositionController(
     }
 
     fun play() {
+        if (pendingPlayer != null) {
+            pendingWantsPlay = true
+            emitState()
+            return
+        }
+        endSwapNudge()
+        positionOverrideMs = null
         player?.play()
         emitState()
     }
 
     fun pause() {
+        if (pendingPlayer != null) {
+            pendingWantsPlay = false
+            emitState()
+            return
+        }
+        endSwapNudge()
         player?.pause()
         emitState()
     }
@@ -372,6 +416,7 @@ internal class TimelineCompositionController(
     fun seekTo(positionMs: Long) {
         val targetMs = positionMs.coerceIn(0L, totalDurationMs)
         if (deferLayerSeek(targetMs)) return
+        positionOverrideMs = null
         player?.seekTo(targetMs)
         emitState()
     }
@@ -379,6 +424,7 @@ internal class TimelineCompositionController(
     fun seekToClip(clipIndex: Int) {
         val startMs = segments.getOrNull(clipIndex)?.startMs ?: return
         if (deferLayerSeek(startMs)) return
+        positionOverrideMs = null
         player?.seekTo(startMs)
         emitState()
     }
@@ -727,6 +773,7 @@ internal class TimelineCompositionController(
         disposed = true
         mainHandler.removeCallbacks(stateRunnable)
         mainHandler.removeCallbacks(layerSeekRebuild)
+        discardPendingPlayer()
         eventSink = null
         player?.release()
         player = null
@@ -750,10 +797,11 @@ internal class TimelineCompositionController(
         rebuildSegments()
         var currentPlayer = player ?: return
         val positionMs = pendingLayerSeekMs
+            ?: positionOverrideMs
             ?: currentPlayer.currentPosition.coerceAtLeast(0L)
         // Play intent, not isPlaying: a player still in BUFFERING with
         // playWhenReady must resume after being recreated.
-        val wasPlaying = currentPlayer.playWhenReady
+        val wasPlaying = if (pendingPlayer != null) pendingWantsPlay else currentPlayer.playWhenReady
         mainHandler.removeCallbacks(layerSeekRebuild)
         pendingLayerSeekMs = null
         val needsMultiInput = videoLayers.isNotEmpty()
@@ -765,9 +813,8 @@ internal class TimelineCompositionController(
         if ((needsMultiInput || needsMultiInput != playerUsesMultiInput) &&
             activeSurface != null
         ) {
-            currentPlayer.release()
-            currentPlayer = createPlayer(activeSurface, needsMultiInput)
-            player = currentPlayer
+            prepareReplacementPlayer(needsMultiInput, positionMs.coerceIn(0L, totalDurationMs), wasPlaying)
+            return
         }
         currentPlayer.setComposition(
             currentComposition(),
@@ -781,6 +828,79 @@ internal class TimelineCompositionController(
     }
 
     /**
+     * Builds the next player without a Surface while the current one keeps
+     * showing its last frame; [swapInPendingPlayer] hands over the texture
+     * once the new player is READY (or after a timeout).
+     */
+    private fun prepareReplacementPlayer(multiInput: Boolean, positionMs: Long, wantsPlay: Boolean) {
+        discardPendingPlayer()
+        endSwapNudge()
+        player?.pause()
+        val next = createPlayer(renderSurface = null, multiInput = multiInput)
+        pendingPlayer = next
+        pendingWantsPlay = wantsPlay
+        positionOverrideMs = positionMs
+        val swap = Runnable { swapInPendingPlayer(next) }
+        pendingSwap = swap
+        next.addListener(
+            object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY && pendingPlayer === next) {
+                        mainHandler.removeCallbacks(swap)
+                        swap.run()
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    if (pendingPlayer === next) {
+                        mainHandler.removeCallbacks(swap)
+                        swap.run()
+                    }
+                }
+            }
+        )
+        next.setComposition(currentComposition(), positionMs)
+        next.prepare()
+        mainHandler.postDelayed(swap, PLAYER_SWAP_TIMEOUT_MS)
+        emitState()
+    }
+
+    private fun swapInPendingPlayer(next: CompositionPlayer) {
+        if (pendingPlayer !== next || disposed) return
+        pendingPlayer = null
+        pendingSwap?.let { mainHandler.removeCallbacks(it) }
+        pendingSwap = null
+        player?.release()
+        player = next
+        surface?.let { next.setVideoSurface(it, Size(renderSize.width, renderSize.height)) }
+        if (pendingWantsPlay) {
+            positionOverrideMs = null
+            next.play()
+        } else {
+            // Draw the first frame: play muted for a moment, then pause.
+            // The reported position stays on positionOverrideMs.
+            swapNudgeVolume = next.volume
+            next.volume = 0f
+            next.play()
+            mainHandler.postDelayed({
+                if (player === next && swapNudgeVolume != null) {
+                    next.pause()
+                    endSwapNudge()
+                    emitState()
+                }
+            }, PAUSED_SWAP_RENDER_MS)
+        }
+        emitState()
+    }
+
+    private fun discardPendingPlayer() {
+        pendingSwap?.let { mainHandler.removeCallbacks(it) }
+        pendingSwap = null
+        pendingPlayer?.release()
+        pendingPlayer = null
+    }
+
+    /**
      * Emits playback state, skipping the channel round-trip when nothing
      * changed. Without this a paused player would push ~30 identical messages
      * per second, waking the Dart UI on every one.
@@ -789,6 +909,7 @@ internal class TimelineCompositionController(
         val sink = eventSink ?: return
         val currentPlayer = player
         val positionMs = pendingLayerSeekMs
+            ?: positionOverrideMs
             ?: currentPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
         val segmentIndex = segmentIndexFor(positionMs)
         val segment = segments.getOrNull(segmentIndex)
@@ -796,7 +917,13 @@ internal class TimelineCompositionController(
             globalPosition = positionMs.coerceAtMost(totalDurationMs),
             clipIndex = segmentIndex,
             localPosition = (segment?.let { positionMs - it.startMs } ?: 0L).coerceAtLeast(0L),
-            isPlaying = currentPlayer?.isPlaying == true,
+            // Neither a pending replacement nor the muted first-frame play of
+            // a paused swap is user playback.
+            isPlaying = if (pendingPlayer != null) {
+                pendingWantsPlay
+            } else {
+                currentPlayer?.isPlaying == true && swapNudgeVolume == null
+            },
             totalDuration = totalDurationMs,
             clipDurationsMs = segments.map { it.durationMs },
             canUndo = editHistory.canUndo,

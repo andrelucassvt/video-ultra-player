@@ -222,7 +222,8 @@ Imutável, com `toJson`/`fromJson` (ms no canal), `copyWith`, `==` e `hashCode`.
 | `trimStart` | `Duration` | `zero` | `trimStartMs` | Offset na fonte. |
 | `trimEnd` | `Duration?` | `null` | `trimEndMs` | Ponto absoluto na fonte; `null` = fim da fonte (resolvido no add); omitido quando nulo. |
 | `x` / `y` | `double` | `0.5` | `x` / `y` | Centro normalizado; `(0,0)` = canto superior esquerdo. |
-| `widthFraction` | `double` | `0.5` | `widthFraction` | Largura relativa ao quadro; altura pela proporção da fonte. |
+| `widthFraction` | `double` | `0.5` | `widthFraction` | Largura relativa ao quadro. |
+| `heightFraction` | `double?` | `null` | `heightFraction` | Altura relativa ao quadro; `null` = proporção da fonte, com valor = livre (esticado); omitida quando nula. |
 | `opacity` | `double` | `1.0` | `opacity` | `[0,1]`. |
 | `sourceWidth` / `sourceHeight` | `int?` | `null` | `sourceWidth` / `sourceHeight` | Só leitura: preenchidos pelo nativo na resposta de `addVideoLayer` (já com rotação); nunca enviados. |
 

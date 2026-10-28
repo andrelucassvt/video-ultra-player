@@ -40,6 +40,8 @@ internal data class VideoLayerDescriptor(
     val y: Double,
     val widthFraction: Double,
     val opacity: Double,
+    /** Fraction of the frame height; null keeps the source aspect ratio. */
+    val heightFraction: Double? = null,
     val sourceDurationMs: Long = 0L,
     val sourceWidth: Int = 0,
     val sourceHeight: Int = 0
@@ -54,6 +56,7 @@ internal data class VideoLayerDescriptor(
         put("x", x)
         put("y", y)
         put("widthFraction", widthFraction)
+        heightFraction?.let { put("heightFraction", it) }
         put("opacity", opacity)
     }
 
@@ -76,7 +79,8 @@ internal data class VideoLayerDescriptor(
                 y = ((map["y"] as? Number)?.toDouble() ?: 0.5).coerceIn(0.0, 1.0),
                 widthFraction = ((map["widthFraction"] as? Number)?.toDouble() ?: 0.5)
                     .coerceIn(0.1, 1.0),
-                opacity = ((map["opacity"] as? Number)?.toDouble() ?: 1.0).coerceIn(0.0, 1.0)
+                opacity = ((map["opacity"] as? Number)?.toDouble() ?: 1.0).coerceIn(0.0, 1.0),
+                heightFraction = (map["heightFraction"] as? Number)?.toDouble()?.coerceIn(0.05, 1.0)
             )
         }
     }
@@ -104,14 +108,22 @@ internal fun VideoLayerDescriptor.visibleWindowMs(
 internal fun videoSequenceOrder(layerCount: Int): List<Int> =
     (layerCount - 1 downTo 0).toList() + (-1)
 
-/** Pixel size of a layer: [widthFraction] of the frame, height by source aspect. */
+/**
+ * Pixel size of a layer: [widthFraction] of the frame width; the height is
+ * [heightFraction] of the frame height when set (free, stretched), otherwise
+ * it follows the source aspect.
+ */
 internal fun layerPixelSize(
     widthFraction: Double,
+    heightFraction: Double? = null,
     sourceWidth: Int,
     sourceHeight: Int,
     renderSize: TimelineRenderSize
 ): Size {
     val width = evenLayerDimension(widthFraction * renderSize.width)
+    if (heightFraction != null) {
+        return Size(width, evenLayerDimension(heightFraction * renderSize.height))
+    }
     val aspect = if (sourceWidth > 0 && sourceHeight > 0) {
         sourceHeight.toDouble() / sourceWidth
     } else {
@@ -166,11 +178,15 @@ internal class VideoLayerCompositorSettings(
         val baked = layersBySequence[inputId]?.descriptor ?: return null
         val current = livePlacements[baked.id] ?: baked
         val (anchorX, anchorY) = layerAnchorNdc(current.x, current.y)
+        // The source was pre-scaled by Presentation to the baked pixel size;
+        // live edits scale each axis relative to it (free resize stretches).
+        val bakedSize = baked.pixelSize(renderSize)
+        val currentSize = current.pixelSize(renderSize)
         return LayerOverlayPlacement(
             anchorX = anchorX,
             anchorY = anchorY,
-            // The source was pre-scaled by Presentation to the baked width.
-            scale = (current.widthFraction / baked.widthFraction).toFloat(),
+            scaleX = currentSize.width.toFloat() / bakedSize.width,
+            scaleY = currentSize.height.toFloat() / bakedSize.height,
             alpha = current.opacity.toFloat()
         )
     }
@@ -179,7 +195,7 @@ internal class VideoLayerCompositorSettings(
         val placement = placementFor(inputId) ?: return StaticOverlaySettings.Builder().build()
         return StaticOverlaySettings.Builder()
             .setBackgroundFrameAnchor(placement.anchorX, placement.anchorY)
-            .setScale(placement.scale, placement.scale)
+            .setScale(placement.scaleX, placement.scaleY)
             .setAlphaScale(placement.alpha)
             .build()
     }
@@ -188,14 +204,29 @@ internal class VideoLayerCompositorSettings(
 internal data class LayerOverlayPlacement(
     val anchorX: Float,
     val anchorY: Float,
-    val scale: Float,
+    val scaleX: Float,
+    val scaleY: Float,
     val alpha: Float
 )
 
+internal fun VideoLayerDescriptor.pixelSize(renderSize: TimelineRenderSize): Size =
+    layerPixelSize(
+        widthFraction = widthFraction,
+        heightFraction = heightFraction,
+        sourceWidth = sourceWidth,
+        sourceHeight = sourceHeight,
+        renderSize = renderSize
+    )
+
 /** True when [other] differs from this layer only in x, y, size or opacity. */
 internal fun VideoLayerDescriptor.differsOnlyInPlacement(other: VideoLayerDescriptor): Boolean =
-    copy(x = other.x, y = other.y, widthFraction = other.widthFraction, opacity = other.opacity) ==
-        other
+    copy(
+        x = other.x,
+        y = other.y,
+        widthFraction = other.widthFraction,
+        heightFraction = other.heightFraction,
+        opacity = other.opacity
+    ) == other
 
 /**
  * Video-only sequence spanning the whole timeline: invisible clips of the same
@@ -217,16 +248,13 @@ internal fun videoLayerSequence(
     val layer = placed.descriptor
     val visibleMs = placed.windowMs.last - placed.windowMs.first
     val sourceDurationMs = max(layer.sourceDurationMs, layer.trimStartMs + visibleMs)
-    val pixelSize = layerPixelSize(
-        layer.widthFraction,
-        layer.sourceWidth,
-        layer.sourceHeight,
-        renderSize
-    )
+    val pixelSize = layer.pixelSize(renderSize)
+    // Stretch to the exact box: with a free height the video is distorted on
+    // purpose; with the source aspect the box already matches it.
     val scaleToLayer = Presentation.createForWidthAndHeight(
         pixelSize.width,
         pixelSize.height,
-        Presentation.LAYOUT_SCALE_TO_FIT
+        Presentation.LAYOUT_STRETCH_TO_FIT
     )
     val item = layerClip(
         layer.path,

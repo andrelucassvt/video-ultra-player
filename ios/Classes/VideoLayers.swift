@@ -21,6 +21,8 @@ struct VideoLayerDescriptor: Equatable {
   var x: CGFloat
   var y: CGFloat
   var widthFraction: CGFloat
+  /// Fraction of the frame height; nil keeps the source aspect ratio.
+  var heightFraction: CGFloat?
   var opacity: Float
   var sourceDurationMs: Int64 = 0
   var sourceWidth: Int = 0
@@ -42,6 +44,9 @@ struct VideoLayerDescriptor: Equatable {
     self.widthFraction = CGFloat(
       min(max((dictionary["widthFraction"] as? NSNumber)?.doubleValue ?? 0.5, 0.1), 1)
     )
+    self.heightFraction = (dictionary["heightFraction"] as? NSNumber).map {
+      CGFloat(min(max($0.doubleValue, 0.05), 1))
+    }
     self.opacity = Float(min(max((dictionary["opacity"] as? NSNumber)?.doubleValue ?? 1, 0), 1))
   }
 
@@ -61,6 +66,7 @@ struct VideoLayerDescriptor: Equatable {
       "sourceHeight": sourceHeight,
     ]
     if let trimEndMs { map["trimEndMs"] = trimEndMs }
+    if let heightFraction { map["heightFraction"] = Double(heightFraction) }
     return map
   }
 
@@ -120,28 +126,31 @@ enum VideoLayerTiming {
   }
 
   /// Track-to-render transform of a layer: orient the source, scale it to
-  /// `widthFraction` of the frame width (keeping its aspect) and center it at
-  /// the normalized (`x`, `y`) — render coordinates have y pointing down.
+  /// `widthFraction` of the frame width — and to `heightFraction` of the frame
+  /// height when set (free, stretched), otherwise keeping its aspect — and
+  /// center it at the normalized (`x`, `y`); render y points down.
   static func layerTransform(
     naturalSize: CGSize,
     preferredTransform: CGAffineTransform,
     renderSize: CGSize,
     x: CGFloat,
     y: CGFloat,
-    widthFraction: CGFloat
+    widthFraction: CGFloat,
+    heightFraction: CGFloat? = nil
   ) -> CGAffineTransform {
     let orientedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
     let sourceWidth = max(abs(orientedRect.width), 1)
-    let sourceHeight = abs(orientedRect.height)
+    let sourceHeight = max(abs(orientedRect.height), 1)
     let targetWidth = renderSize.width * widthFraction
-    let scale = targetWidth / sourceWidth
-    let targetHeight = sourceHeight * scale
+    let scaleX = targetWidth / sourceWidth
+    let targetHeight = heightFraction.map { renderSize.height * $0 } ?? sourceHeight * scaleX
+    let scaleY = targetHeight / sourceHeight
 
     return preferredTransform
       .concatenating(
         CGAffineTransform(translationX: -orientedRect.origin.x, y: -orientedRect.origin.y)
       )
-      .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+      .concatenating(CGAffineTransform(scaleX: scaleX, y: scaleY))
       .concatenating(
         CGAffineTransform(
           translationX: renderSize.width * x - targetWidth / 2,
