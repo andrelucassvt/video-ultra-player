@@ -6,6 +6,7 @@ struct TimelineEditSnapshot {
   let textOverlays: [TextOverlayDescriptor]
   let captionCues: [CaptionCueDescriptor]
   let captionStyle: CaptionStyleDescriptor?
+  var videoLayers: [VideoLayerDescriptor] = []
 }
 
 final class TimelineEditModel {

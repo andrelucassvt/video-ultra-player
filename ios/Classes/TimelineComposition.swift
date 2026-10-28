@@ -212,6 +212,18 @@ final class TimelineComposition {
   /// Caption cues rendered on top of the video (nil style = no captions).
   private(set) var captionCues: [CaptionCueDescriptor] = []
   private(set) var captionStyle: CaptionStyleDescriptor?
+  /// Picture-in-picture layers, in z-order (last on top).
+  private(set) var videoLayers: [VideoLayerDescriptor] = []
+
+  /// A layer inserted in the current `AVMutableComposition`.
+  private struct PlacedLayer {
+    let layerIndex: Int
+    let track: AVCompositionTrack
+    let range: CMTimeRange
+    let naturalSize: CGSize
+    let preferredTransform: CGAffineTransform
+  }
+  private var placedLayers: [PlacedLayer] = []
 
   private(set) var totalDuration = CMTime.zero
 
@@ -234,6 +246,7 @@ final class TimelineComposition {
     currentConfig = config
     if let audioTrack { self.currentAudioTrack = audioTrack }
     segments = []
+    placedLayers = []
     totalDuration = .zero
     audioMix = nil
 
@@ -329,6 +342,7 @@ final class TimelineComposition {
     }
 
     totalDuration = startTime
+    placedLayers = try insertVideoLayers(into: mutableComposition)
 
     // Insert external audio track (if set) as a separate composition track.
     var externalAudioCompositionTrack: AVCompositionTrack? = nil
@@ -475,7 +489,8 @@ final class TimelineComposition {
       audioTrack: currentAudioTrack,
       textOverlays: textOverlays,
       captionCues: captionCues,
-      captionStyle: captionStyle
+      captionStyle: captionStyle,
+      videoLayers: videoLayers
     )
   }
 
@@ -485,6 +500,142 @@ final class TimelineComposition {
     textOverlays = snapshot.textOverlays
     captionCues = snapshot.captionCues
     captionStyle = snapshot.captionStyle
+    videoLayers = snapshot.videoLayers
+  }
+
+  // MARK: - Video layers
+
+  /// Appends a layer on top of the existing ones. Does NOT trigger a rebuild.
+  func addVideoLayer(_ descriptor: VideoLayerDescriptor) {
+    videoLayers.append(descriptor)
+  }
+
+  /// Replaces the layer with the same `id`, keeping its resolved source
+  /// metadata. Returns the previous value (nil when the id does not exist).
+  /// Does NOT trigger a rebuild.
+  @discardableResult
+  func updateVideoLayer(_ descriptor: VideoLayerDescriptor) -> VideoLayerDescriptor? {
+    guard let index = videoLayers.firstIndex(where: { $0.id == descriptor.id }) else {
+      return nil
+    }
+    let previous = videoLayers[index]
+    var next = descriptor
+    next.trimEndMs = descriptor.trimEndMs ?? previous.trimEndMs
+    next.sourceDurationMs = previous.sourceDurationMs
+    next.sourceWidth = previous.sourceWidth
+    next.sourceHeight = previous.sourceHeight
+    videoLayers[index] = next
+    return previous
+  }
+
+  /// Removes the layer with the given `id`. Returns false when it does not
+  /// exist. Does NOT trigger a rebuild.
+  @discardableResult
+  func removeVideoLayer(id: String) -> Bool {
+    let before = videoLayers.count
+    videoLayers.removeAll { $0.id == id }
+    return videoLayers.count != before
+  }
+
+  /// Resolves a layer's source duration, displayed size (after rotation) and
+  /// open `trimEndMs`. Blocking — call it on the build queue.
+  static func resolveVideoLayer(_ descriptor: VideoLayerDescriptor) throws -> VideoLayerDescriptor {
+    let asset = AVURLAsset(url: URL(fileURLWithPath: descriptor.path))
+    guard let track = asset.tracks(withMediaType: .video).first else {
+      throw TimelineCompositionError.missingVideoTrack(descriptor.path)
+    }
+    let durationMs = asset.duration.isNumeric
+      ? Int64((CMTimeGetSeconds(asset.duration) * 1_000).rounded())
+      : 0
+    let oriented = CGRect(origin: .zero, size: track.naturalSize)
+      .applying(track.preferredTransform)
+    var resolved = descriptor
+    resolved.sourceDurationMs = durationMs
+    resolved.sourceWidth = Int(abs(oriented.width).rounded())
+    resolved.sourceHeight = Int(abs(oriented.height).rounded())
+    resolved.trimEndMs = min(descriptor.trimEndMs ?? durationMs, durationMs)
+    return resolved
+  }
+
+  /// Inserts every layer that is visible before the timeline end as its own
+  /// video track. Layers are muted: their audio is never inserted.
+  private func insertVideoLayers(into composition: AVMutableComposition) throws -> [PlacedLayer] {
+    var placed: [PlacedLayer] = []
+    for (layerIndex, layer) in videoLayers.enumerated() {
+      let start = CMTime(value: layer.startMs, timescale: 1_000)
+      guard CMTimeCompare(start, totalDuration) < 0 else { continue }
+      let asset = AVURLAsset(url: URL(fileURLWithPath: layer.path))
+      guard let sourceTrack = asset.tracks(withMediaType: .video).first else {
+        throw TimelineCompositionError.missingVideoTrack(layer.path)
+      }
+      let assetDuration = asset.duration.isNumeric ? asset.duration : .zero
+      let trimStart = CMTime(value: layer.trimStartMs, timescale: 1_000)
+      let trimEnd = layer.trimEndMs.map { CMTime(value: $0, timescale: 1_000) } ?? assetDuration
+      var length = CMTimeSubtract(CMTimeMinimum(trimEnd, assetDuration), trimStart)
+      length = CMTimeMinimum(length, CMTimeSubtract(totalDuration, start))
+      guard isPositive(length) else { continue }
+
+      guard let track = composition.addMutableTrack(
+        withMediaType: .video,
+        preferredTrackID: kCMPersistentTrackID_Invalid
+      ) else {
+        throw TimelineCompositionError.cannotCreateCompositionTrack
+      }
+      try track.insertTimeRange(
+        CMTimeRange(start: trimStart, duration: length),
+        of: sourceTrack,
+        at: start
+      )
+      placed.append(
+        PlacedLayer(
+          layerIndex: layerIndex,
+          track: track,
+          range: CMTimeRange(start: start, duration: length),
+          naturalSize: sourceTrack.naturalSize,
+          preferredTransform: sourceTrack.preferredTransform
+        )
+      )
+    }
+    return placed
+  }
+
+  /// Layer-aware instructions: the timeline is cut at every layer edge and
+  /// each piece stacks the visible layers (last layer first = on top) above
+  /// the main track.
+  private func layeredInstructions() -> [AVMutableVideoCompositionInstruction] {
+    let ranges = VideoLayerTiming.instructionRanges(
+      segments: segments.map { CMTimeRange(start: $0.startTime, duration: $0.duration) },
+      layers: placedLayers.map { $0.range }
+    )
+    return ranges.map { piece in
+      let segment = segments[piece.segmentIndex]
+      let instruction = AVMutableVideoCompositionInstruction()
+      instruction.timeRange = piece.range
+      var layerInstructions: [AVMutableVideoCompositionLayerInstruction] = []
+      for placedIndex in piece.activeLayers.reversed() {
+        let placed = placedLayers[placedIndex]
+        let layer = videoLayers[placed.layerIndex]
+        let pipInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: placed.track)
+        pipInstruction.setTransform(
+          VideoLayerTiming.layerTransform(
+            naturalSize: placed.naturalSize,
+            preferredTransform: placed.preferredTransform,
+            renderSize: renderSize,
+            x: layer.x,
+            y: layer.y,
+            widthFraction: layer.widthFraction
+          ),
+          at: piece.range.start
+        )
+        pipInstruction.setOpacity(layer.opacity, at: piece.range.start)
+        layerInstructions.append(pipInstruction)
+      }
+      let main = layerInstruction(for: segment, at: piece.range.start)
+      main.setOpacity(1, at: piece.range.start)
+      layerInstructions.append(main)
+      instruction.layerInstructions = layerInstructions
+      return instruction
+    }
   }
 
   var clipCount: Int {
@@ -645,13 +796,15 @@ final class TimelineComposition {
       value: 1,
       timescale: currentConfig.preserveSourceQuality ? sourceFrameRate : 30
     )
-    let instructions = segments.map { segment in
-      singleLayerInstruction(
-        for: segment,
-        start: segment.startTime,
-        duration: segment.duration
-      )
-    }
+    let instructions = placedLayers.isEmpty
+      ? segments.map { segment in
+        singleLayerInstruction(
+          for: segment,
+          start: segment.startTime,
+          duration: segment.duration
+        )
+      }
+      : layeredInstructions()
 
     let hasText = includeTextOverlays && !textOverlays.isEmpty
     let hasCaptions = includeCaptions && hasCaptionsState

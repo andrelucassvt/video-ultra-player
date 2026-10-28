@@ -218,6 +218,64 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       } catch {
         result(FlutterError(code: "edit_failed", message: "removeAudioTrack failed", details: "\(error)"))
       }
+    case "addVideoLayer":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let layerDict = args["layer"] as? [String: Any],
+            let descriptor = VideoLayerDescriptor(dictionary: layerDict) else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "addVideoLayer requires a valid layer map.",
+          details: nil
+        ))
+        return
+      }
+      controller.addVideoLayer(descriptor) { outcome in
+        switch outcome {
+        case .success(let resolved):
+          result(resolved)
+        case .failure(let error):
+          result(Self.videoLayerError("addVideoLayer", error))
+        }
+      }
+    case "updateVideoLayer":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let layerDict = args["layer"] as? [String: Any],
+            let descriptor = VideoLayerDescriptor(dictionary: layerDict) else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "updateVideoLayer requires a valid layer map.",
+          details: nil
+        ))
+        return
+      }
+      do {
+        try controller.updateVideoLayer(descriptor)
+        result(nil)
+      } catch {
+        result(Self.videoLayerError("updateVideoLayer", error))
+      }
+    case "removeVideoLayer":
+      guard let controller = controller(for: call, result: result),
+            let args = call.arguments as? [String: Any]
+      else { return }
+      guard let layerId = args["layerId"] as? String else {
+        result(FlutterError(
+          code: "invalid_arguments",
+          message: "removeVideoLayer requires layerId (String).",
+          details: nil
+        ))
+        return
+      }
+      do {
+        try controller.removeVideoLayer(id: layerId)
+        result(nil)
+      } catch {
+        result(Self.videoLayerError("removeVideoLayer", error))
+      }
     case "addTextOverlay":
       guard let controller = controller(for: call, result: result),
             let args = call.arguments as? [String: Any]
@@ -655,6 +713,18 @@ public class VideoUltraPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
     )
   }
 
+  /// Layer edit failures; the layer limit keeps its own code for the app.
+  private static func videoLayerError(_ method: String, _ error: Error) -> FlutterError {
+    if case VideoLayerError.limitReached = error {
+      return FlutterError(
+        code: "video_layer_limit",
+        message: "A timeline supports at most \(maxVideoLayers) video layers.",
+        details: nil
+      )
+    }
+    return FlutterError(code: "edit_failed", message: "\(method) failed", details: "\(error)")
+  }
+
   private func controller(
     for call: FlutterMethodCall,
     result: FlutterResult
@@ -988,6 +1058,75 @@ private final class TimelinePlayerController {
     applyUpdatedTextOverlays()
   }
 
+  // MARK: - Video layers
+
+  /// Reads the layer's source metadata on the build queue, then adds it and
+  /// rebuilds on the main thread. Fails with `VideoLayerError.limitReached`
+  /// past `maxVideoLayers`.
+  func addVideoLayer(
+    _ descriptor: VideoLayerDescriptor,
+    completion: @escaping (Result<[String: Any], Error>) -> Void
+  ) {
+    guard composition.videoLayers.count < maxVideoLayers else {
+      completion(.failure(VideoLayerError.limitReached))
+      return
+    }
+    Self.buildQueue.async { [weak self] in
+      let resolved: VideoLayerDescriptor
+      do {
+        resolved = try TimelineComposition.resolveVideoLayer(descriptor)
+      } catch {
+        DispatchQueue.main.async { completion(.failure(error)) }
+        return
+      }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        guard self.composition.videoLayers.count < maxVideoLayers else {
+          completion(.failure(VideoLayerError.limitReached))
+          return
+        }
+        do {
+          let positionMs = self.player.currentTime().timelineMilliseconds
+          self.pushEditSnapshot()
+          self.composition.addVideoLayer(resolved)
+          try self.rebuildPreservingPlayback(positionMs: positionMs)
+          completion(.success(resolved.toResponseMap()))
+        } catch {
+          completion(.failure(error))
+        }
+      }
+    }
+  }
+
+  /// Moving, resizing or fading a layer only regenerates the video
+  /// composition; changing its time window or source needs a full rebuild.
+  func updateVideoLayer(_ descriptor: VideoLayerDescriptor) throws {
+    guard let current = composition.videoLayers.first(where: { $0.id == descriptor.id }) else {
+      emitState()
+      return
+    }
+    let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
+    composition.updateVideoLayer(descriptor)
+    let updated = composition.videoLayers.first(where: { $0.id == descriptor.id }) ?? current
+    if updated.differsOnlyInPlacement(from: current) {
+      applyUpdatedVideoComposition()
+    } else {
+      try rebuildPreservingPlayback(positionMs: positionMs)
+    }
+  }
+
+  func removeVideoLayer(id: String) throws {
+    guard composition.videoLayers.contains(where: { $0.id == id }) else {
+      emitState()
+      return
+    }
+    let positionMs = player.currentTime().timelineMilliseconds
+    pushEditSnapshot()
+    composition.removeVideoLayer(id: id)
+    try rebuildPreservingPlayback(positionMs: positionMs)
+  }
+
   // MARK: - Captions
 
   func setCaptions(_ cues: [CaptionCueDescriptor], style: CaptionStyleDescriptor) {
@@ -1193,6 +1332,23 @@ private final class TimelinePlayerController {
       renderSize: composition.outputRenderSize,
       totalDuration: composition.totalDuration
     )
+    player.currentItem?.videoComposition = composition.updatedVideoComposition()
+    if player.rate == 0 {
+      let time = player.currentTime()
+      player.seek(
+        to: time,
+        toleranceBefore: .zero,
+        toleranceAfter: .zero
+      ) { [weak self] _ in
+        self?.texture.requestFrame()
+      }
+    }
+    emitState()
+  }
+
+  /// Reassigns the video composition in place (layer placement changed) and,
+  /// when paused, re-renders the current frame.
+  private func applyUpdatedVideoComposition() {
     player.currentItem?.videoComposition = composition.updatedVideoComposition()
     if player.rate == 0 {
       let time = player.currentTime()
