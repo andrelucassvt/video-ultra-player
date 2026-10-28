@@ -1,10 +1,11 @@
 ---
 generated_at: 2026-07-31
-source_commit: 00e2335
+source_commit: 44650fd
 source_state: clean
-verified_at: 2026-08-02
+verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/onda-2-identidade-editor.md
   - docs/plan/text-overlays/00-indice.md
@@ -106,6 +107,14 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 
 ## Regras de Negócio Relevantes
 
+- **Camadas de vídeo (`TimelineVideoLayer`)** — `VideoLayer.kt` + `buildTimelineComposition`. Sem camadas, a composição e o player (`SingleInputVideoGraph`) são os de antes. Com camadas:
+  - **Player:** é recriado com `MultipleInputVideoGraph.Factory()`, porque o grafo padrão mostra só uma sequência e apenas loga um warning.
+  - **Ordem das sequências:** cada camada vira uma sequência só de vídeo em `videoSequenceOrder` — a última camada primeiro (a entrada 0 é desenhada por cima) e a principal por último.
+  - **Duração das sequências:** cada sequência de camada é preenchida com gap até a duração total, para que qualquer primária cubra a timeline.
+  - **Gaps:** os gaps renderizam quadros opacos, por isso `VideoLayerCompositorSettings` devolve `alphaScale = 0` fora da janela da camada.
+  - **Texto e legendas:** viram efeito de `Composition` (`setEffects`, depois do compositor, em tempo de timeline) para ficarem acima das camadas.
+  - **HDR:** a composição é forçada para `HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL`, porque o `DefaultVideoCompositor` rejeita HDR e espaços de cor misturados.
+  - **Metadados:** são lidos no `mediaMetadataExecutor` (`resolveVideoLayer`).
 - **`setDurationUs` usa a duração da fonte, não a cortada** — `editedMediaItemFor`: Media3 valida `clippingEndPositionMs * 1000 <= durationUs`; usar a duração cortada quebra o invariante sempre que `trimStartMs > 0` (por exemplo depois de um split). O comentário no código registra isso.
 - **Todo rebuild preserva posição e estado de play** — `rebuildCompositionPreservingPlayback`: `setComposition(composition, positionMs.coerceIn(0, totalDurationMs))` e `play()` se `wasPlaying`.
 - **Alinhamento exige rebuild** — efeitos Media3 são imutáveis; `setClipAlignment` reconstrói a composição inteira (documentado também em `setClipSpeed`/`setAudioTrack`: chamar só no commit do controle, não a cada tick de arrasto).

@@ -1,10 +1,11 @@
 ---
 generated_at: 2026-07-31
-source_commit: 21182b1
+source_commit: 44650fd
 source_state: clean
-verified_at: 2026-08-02
+verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/text-overlays/00-indice.md
 ---
@@ -86,6 +87,7 @@ Split merece atenção porque é a operação que mais mexe na semântica de tri
 
 ## Regras de Negócio Relevantes
 
+- **Camadas (`TimelineVideoLayer`) no histórico** — `TimelineEditSnapshot.videoLayers` (iOS `TimelineEditModel.swift`, Android `TimelineEditModel.kt`): `add/update/removeVideoLayer` empurram um snapshot e entram no undo/redo nativo junto com clips, áudio, textos e legendas.
 - **Edição preserva `textureId` e posição** — é o contrato central: `rebuildPreservingPlayback` / `rebuildCompositionPreservingPlayback` nunca re-registram a textura.
 - **Snapshot antes da mutação** — `pushEditSnapshot()` é chamado antes de alterar o modelo em todas as operações, inclusive `setClipAlignment` e as de trilha de áudio.
 - **`pushSnapshot` limpa o redo** — `TimelineEditModel` nas duas plataformas.

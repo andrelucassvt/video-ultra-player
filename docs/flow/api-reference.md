@@ -1,10 +1,11 @@
 ---
 generated_at: 2026-08-02
-source_commit: 21182b1
+source_commit: 44650fd
 source_state: clean
-verified_at: 2026-08-02
+verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/text-overlays/00-indice.md
 ---
 
@@ -121,6 +122,16 @@ Trajeto de uma chamada qualquer, do app até o nativo — exemplificado com `set
 
 `updateTextOverlay` casa por `TimelineTextOverlay.id` (no-op quando o id não existe). Os três exigem `load` completo; no iOS o parse falho do overlay responde `FlutterError("invalid_arguments")` em vez de silenciar (`VideoUltraPlayerPlugin.swift` cases `addTextOverlay`/`updateTextOverlay`).
 
+### Video layers (PiP)
+
+| Método | Assinatura | Channel | Payload |
+|---|---|---|---|
+| `addVideoLayer` | `Future<TimelineVideoLayer> addVideoLayer(TimelineVideoLayer layer)` | `addVideoLayer` | `textureId`, `layer` → responde o mapa da camada com `trimEndMs` resolvido + `sourceWidth`/`sourceHeight` |
+| `updateVideoLayer` | `Future<void> updateVideoLayer(TimelineVideoLayer layer)` | `updateVideoLayer` | `textureId`, `layer` |
+| `removeVideoLayer` | `Future<void> removeVideoLayer(String layerId)` | `removeVideoLayer` | `textureId`, `layerId` |
+
+`NativeTimelinePlayer.maxVideoLayers = 3`. O limite é aplicado pelo nativo: a 4ª camada responde `PlatformException(code: 'video_layer_limit')`. `updateVideoLayer` casa por `id` (no-op quando o id não existe). As camadas entram no histórico nativo de undo/redo e sobrevivem a `setCompositionConfig`, mas **não** a `load`/`dispose`: o app as reaplica. Os três métodos exigem `load` completo.
+
 ### Thumbnails
 
 | Método | Assinatura | Channel | Payload | Retorno |
@@ -198,6 +209,24 @@ Imutável, com `toJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts no
 | `opacity` | `double` | `1.0` | `opacity` | `[0.0, 1.0]`. |
 | `textAlign` | `TimelineTextAlign` | `center` | `textAlign` | Serializado por `.name` (`left`/`center`/`right`). |
 
+### `TimelineVideoLayer` (`.../timeline_video_layer.dart`)
+
+Imutável, com `toJson`/`fromJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts: `x`/`y` em `[0,1]`, `widthFraction` em `[0.1, 1.0]`, `opacity` em `[0,1]`. A ordem da lista de camadas é a ordem Z (a última por cima); todas ficam acima do vídeo principal e abaixo de texto/legendas. Camadas são só vídeo (sem áudio).
+
+| Campo | Tipo | Default | Chave JSON | Nota |
+|---|---|---|---|---|
+| `id` | `String` | obrigatório | `id` | Gerado pelo app. |
+| `path` | `String` | obrigatório | `path` | Vídeo-fonte. |
+| `start` | `Duration` | obrigatório | `startMs` | Início na timeline. |
+| `trimStart` | `Duration` | `zero` | `trimStartMs` | Offset na fonte. |
+| `trimEnd` | `Duration?` | `null` | `trimEndMs` | Ponto absoluto na fonte; `null` = fim da fonte (resolvido no add); omitido quando nulo. |
+| `x` / `y` | `double` | `0.5` | `x` / `y` | Centro normalizado; `(0,0)` = canto superior esquerdo. |
+| `widthFraction` | `double` | `0.5` | `widthFraction` | Largura relativa ao quadro; altura pela proporção da fonte. |
+| `opacity` | `double` | `1.0` | `opacity` | `[0,1]`. |
+| `sourceWidth` / `sourceHeight` | `int?` | `null` | `sourceWidth` / `sourceHeight` | Só leitura: preenchidos pelo nativo na resposta de `addVideoLayer` (já com rotação); nunca enviados. |
+
+`duration` = `trimEnd - trimStart` (nulo enquanto `trimEnd` não for resolvido). Visível em `[start, start + duration)`, limitado pela duração total.
+
 ### `TimelinePlayerState` (`.../timeline_player_state.dart`)
 
 Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial()` (tudo zerado/pausado) e `copyWith`.
@@ -263,6 +292,7 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 
 ## Regras de Negócio Relevantes
 
+- **Camadas de vídeo** — `lib/src/native_timeline_player.dart` → `addVideoLayer`: no máximo `maxVideoLayers` (3), aplicado pelo nativo (`video_layer_limit`); a resposta é a fonte da verdade de `trimEnd` e das dimensões da fonte.
 Validações que rodam **no Dart**, antes de qualquer `invokeMethod` — todas em `lib/src/native_timeline_player.dart` salvo indicação:
 
 - **Sessão obrigatória** — `_requireTextureId()` (linha 371): tudo exceto `load`, `exportTimeline` e `generateThumbnails` lança `StateError` sem `load` completo.

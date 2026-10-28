@@ -1,10 +1,11 @@
 ---
 generated_at: 2026-07-31
-source_commit: 1e11b62
+source_commit: 44650fd
 source_state: clean
-verified_at: 2026-07-31
+verified_at: 2026-10-28
 status: current
 related_plans:
+  - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
 ---
 
@@ -88,6 +89,7 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 
 ## Regras de Negócio Relevantes
 
+- **Camadas (`TimelineVideoLayer`) não sobrevivem a `load`** — cada `load` cria um compositor novo sem camadas; quem as mantém (o app) precisa reaplicá-las em ordem após o `load`. `setCompositionConfig` preserva as camadas.
 - **Timeline não pode ser vazia** — `lib/src/native_timeline_player.dart`: `load` e `exportTimeline` lançam `ArgumentError`; no Android `parseTimelineClips` reforça com `require(rawClips.isNotEmpty())`.
 - **`textureId` é a identidade da sessão** — os plugins nativos resolvem o controller por ele; sem `load` não há id e a chamada falha em Dart.
 - **`volume` em `[0.0, 1.0]`** — validado em Dart (`RangeError`) e reforçado no nativo (`min/max` no iOS, `coerceIn` no Android).
