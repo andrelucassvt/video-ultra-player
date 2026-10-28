@@ -112,15 +112,17 @@ internal class VideoLayerTest {
     }
 
     @Test
-    fun compositorSettings_hideLayerOutsideItsWindow() {
+    fun compositorSettings_keepLayerOpacityAtAnyTimestamp() {
         val settings = VideoLayerCompositorSettings(
             renderSize = TimelineRenderSize(1080, 1920),
             layersBySequence = mapOf(0 to PlacedVideoLayer(layer(), 1_500L..5_500L))
         )
 
-        assertEquals(0f, settings.getOverlaySettings(0, 1_000_000L).alphaScale)
+        // Preview timestamps can be offset: the filler stills hide the layer
+        // outside its window, so the alpha must never depend on time.
+        assertEquals(0.8f, settings.getOverlaySettings(0, 1_000_000L).alphaScale)
         assertEquals(0.8f, settings.getOverlaySettings(0, 2_000_000L).alphaScale)
-        assertEquals(0f, settings.getOverlaySettings(0, 5_500_000L).alphaScale)
+        assertEquals(0.8f, settings.getOverlaySettings(0, 1_000_000_000_000L).alphaScale)
         // The main sequence is drawn at full opacity, untouched.
         assertEquals(1f, settings.getOverlaySettings(1, 2_000_000L).alphaScale)
         assertEquals(1080, settings.getOutputSize(emptyList()).width)

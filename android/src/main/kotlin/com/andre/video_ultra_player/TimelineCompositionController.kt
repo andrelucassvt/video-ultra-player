@@ -57,13 +57,14 @@ private const val IDLE_STATE_INTERVAL_MS = 250L
 private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
 
 /**
- * With video layers, a seek on a live multi-input CompositionPlayer can leave
- * it in BUFFERING forever (media3 1.10.1); a freshly created player always
- * reaches READY. Past this delay after the last seek the player is recreated
- * at the seek position. On the emulator every multi-input seek stalled, so
- * the delay only needs to cover a scrub settling (it is re-armed per seek).
+ * With video layers the live multi-input CompositionPlayer is never seeked:
+ * a seek can stall in BUFFERING forever, and seeking back after an input
+ * reached its end crashes the compositor (`DefaultVideoCompositor`
+ * `checkState(!isInputEnded)` → VideoFrameProcessingException). A fresh
+ * player always starts cleanly (~130 ms on device), so seeks are replaced by
+ * recreating the player at the target, debounced so a scrub recreates once.
  */
-private const val LAYER_SEEK_STALL_TIMEOUT_MS = 400L
+private const val LAYER_SEEK_DEBOUNCE_MS = 150L
 
 /**
  * Shared pool for blocking source-metadata reads. Bounded so a long timeline
@@ -119,21 +120,25 @@ internal class TimelineCompositionController(
         val canRedo: Boolean
     )
 
-    private val layerSeekWatchdog = Runnable {
-        val currentPlayer = player ?: return@Runnable
-        if (disposed || videoLayers.isEmpty()) return@Runnable
-        if (currentPlayer.playbackState == Player.STATE_BUFFERING) {
-            Log.w("VideoUltraPlayer", "Multi-input seek stalled; recreating the player.")
-            rebuildCompositionPreservingPlayback()
-        }
+    /** Target of a layer seek still waiting for the debounced rebuild. */
+    private var pendingLayerSeekMs: Long? = null
+
+    private val layerSeekRebuild = Runnable {
+        if (disposed || pendingLayerSeekMs == null) return@Runnable
+        rebuildCompositionPreservingPlayback()
     }
 
-    /** Re-armed on every seek, so it fires once the scrub settles. */
-    private fun armLayerSeekWatchdog() {
-        mainHandler.removeCallbacks(layerSeekWatchdog)
-        if (videoLayers.isNotEmpty()) {
-            mainHandler.postDelayed(layerSeekWatchdog, LAYER_SEEK_STALL_TIMEOUT_MS)
-        }
+    /**
+     * Returns true when the seek was taken over (layers present): the player
+     * is recreated at [positionMs] once the scrub settles.
+     */
+    private fun deferLayerSeek(positionMs: Long): Boolean {
+        if (videoLayers.isEmpty() || player == null) return false
+        pendingLayerSeekMs = positionMs
+        mainHandler.removeCallbacks(layerSeekRebuild)
+        mainHandler.postDelayed(layerSeekRebuild, LAYER_SEEK_DEBOUNCE_MS)
+        emitState()
+        return true
     }
 
     private val stateRunnable = object : Runnable {
@@ -330,15 +335,16 @@ internal class TimelineCompositionController(
     }
 
     fun seekTo(positionMs: Long) {
-        player?.seekTo(positionMs.coerceIn(0L, totalDurationMs))
-        armLayerSeekWatchdog()
+        val targetMs = positionMs.coerceIn(0L, totalDurationMs)
+        if (deferLayerSeek(targetMs)) return
+        player?.seekTo(targetMs)
         emitState()
     }
 
     fun seekToClip(clipIndex: Int) {
         val startMs = segments.getOrNull(clipIndex)?.startMs ?: return
+        if (deferLayerSeek(startMs)) return
         player?.seekTo(startMs)
-        armLayerSeekWatchdog()
         emitState()
     }
 
@@ -680,7 +686,7 @@ internal class TimelineCompositionController(
     fun dispose() {
         disposed = true
         mainHandler.removeCallbacks(stateRunnable)
-        mainHandler.removeCallbacks(layerSeekWatchdog)
+        mainHandler.removeCallbacks(layerSeekRebuild)
         eventSink = null
         player?.release()
         player = null
@@ -703,11 +709,13 @@ internal class TimelineCompositionController(
     private fun rebuildCompositionPreservingPlayback() {
         rebuildSegments()
         var currentPlayer = player ?: return
-        val positionMs = currentPlayer.currentPosition.coerceAtLeast(0L)
-        // Play intent, not isPlaying: a player stalled in BUFFERING with
+        val positionMs = pendingLayerSeekMs
+            ?: currentPlayer.currentPosition.coerceAtLeast(0L)
+        // Play intent, not isPlaying: a player still in BUFFERING with
         // playWhenReady must resume after being recreated.
         val wasPlaying = currentPlayer.playWhenReady
-        mainHandler.removeCallbacks(layerSeekWatchdog)
+        mainHandler.removeCallbacks(layerSeekRebuild)
+        pendingLayerSeekMs = null
         val needsMultiInput = videoLayers.isNotEmpty()
         val activeSurface = surface
         // A multi-input CompositionPlayer only renders its first composition:
@@ -740,7 +748,8 @@ internal class TimelineCompositionController(
     private fun emitState() {
         val sink = eventSink ?: return
         val currentPlayer = player
-        val positionMs = currentPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        val positionMs = pendingLayerSeekMs
+            ?: currentPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
         val segmentIndex = segmentIndexFor(positionMs)
         val segment = segments.getOrNull(segmentIndex)
         val state = EmittedState(

@@ -141,11 +141,11 @@ internal data class PlacedVideoLayer(
 )
 
 /**
- * Positions each layer sequence at its center and hides it outside its window:
- * the gaps around a layer render as opaque blank frames, and the compositor
- * asks for overlay settings per frame, so `alphaScale = 0` keeps them from
- * covering the main video. Sequences without a layer (the main one) use the
- * default full-frame settings.
+ * Positions each layer sequence at its center. Visibility outside the layer
+ * window comes from the transparent filler stills, not from timestamps: the
+ * preview player hands the compositor offset presentation times, so a
+ * time-window check hid the layer for good. Sequences without a layer (the
+ * main one) use the default full-frame settings.
  */
 internal class VideoLayerCompositorSettings(
     private val renderSize: TimelineRenderSize,
@@ -156,12 +156,10 @@ internal class VideoLayerCompositorSettings(
 
     override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
         val placed = layersBySequence[inputId] ?: return StaticOverlaySettings.Builder().build()
-        val timeMs = presentationTimeUs / 1_000L
-        val visible = timeMs >= placed.windowMs.first && timeMs < placed.windowMs.last
         val (anchorX, anchorY) = layerAnchorNdc(placed.descriptor.x, placed.descriptor.y)
         return StaticOverlaySettings.Builder()
             .setBackgroundFrameAnchor(anchorX, anchorY)
-            .setAlphaScale(if (visible) placed.descriptor.opacity.toFloat() else 0f)
+            .setAlphaScale(placed.descriptor.opacity.toFloat())
             .build()
     }
 }
