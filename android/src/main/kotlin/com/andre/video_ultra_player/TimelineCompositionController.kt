@@ -60,9 +60,10 @@ private const val EXPORT_PROGRESS_INTERVAL_MS = 100L
  * With video layers, a seek on a live multi-input CompositionPlayer can leave
  * it in BUFFERING forever (media3 1.10.1); a freshly created player always
  * reaches READY. Past this delay after the last seek the player is recreated
- * at the seek position.
+ * at the seek position. On the emulator every multi-input seek stalled, so
+ * the delay only needs to cover a scrub settling (it is re-armed per seek).
  */
-private const val LAYER_SEEK_STALL_TIMEOUT_MS = 1_500L
+private const val LAYER_SEEK_STALL_TIMEOUT_MS = 400L
 
 /**
  * Shared pool for blocking source-metadata reads. Bounded so a long timeline
