@@ -106,7 +106,7 @@ No karaokê, `CaptionLayers.presentationSegments` particiona toda a janela do cu
 
 ## Regras de Negócio Relevantes
 
-- **Camadas de vídeo (`TimelineVideoLayer`)** — `VideoLayers.swift` + `TimelineComposition.insertVideoLayers`. Cada camada é uma `AVMutableCompositionTrack` de vídeo, sem áudio.
+- **Camadas de vídeo (`TimelineVideoLayer`)** — `VideoLayers.swift` + `TimelineComposition.insertVideoLayers`. Cada camada é uma `AVMutableCompositionTrack` de vídeo e, quando audível (`volume > 0` e fonte com áudio), também uma de áudio.
   - **Instruções:** `VideoLayerTiming.instructionRanges` corta as instruções em cada borda de camada. O resultado é contíguo, como o AVFoundation exige, e lista em cada trecho as camadas ativas em ordem decrescente acima da principal. A trilha de texto continua prepended no índice 0.
   - **Edições de posicionamento:** mover, redimensionar ou mudar a opacidade usa o caminho cirúrgico (`applyUpdatedVideoComposition`). `previewVideoLayer` usa o mesmo caminho com um posicionamento temporário (`previewPlacements`), sem snapshot; qualquer edição confirmada de camada o descarta.
   - **Edições estruturais:** início, trim, add e remove usam `rebuildPreservingPlayback`.

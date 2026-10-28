@@ -1127,6 +1127,8 @@ private final class TimelinePlayerController {
     merged.sourceDurationMs = current.sourceDurationMs
     merged.sourceWidth = current.sourceWidth
     merged.sourceHeight = current.sourceHeight
+    // Dart never sends sourceHasAudio (native-owned): keep the resolved one.
+    merged.sourceHasAudio = current.sourceHasAudio
     guard merged != current else {
       emitState()
       return

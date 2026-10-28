@@ -214,7 +214,7 @@ Imutável, com `toJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts no
 
 ### `TimelineVideoLayer` (`.../timeline_video_layer.dart`)
 
-Imutável, com `toJson`/`fromJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts: `x`/`y` em `[0,1]`, `widthFraction` em `[0.1, 1.0]`, `opacity` em `[0,1]`. A ordem da lista de camadas é a ordem Z (a última por cima); todas ficam acima do vídeo principal e abaixo de texto/legendas. Camadas são só vídeo (sem áudio).
+Imutável, com `toJson`/`fromJson` (ms no canal), `copyWith`, `==` e `hashCode`. Asserts: `x`/`y` em `[0,1]`, `widthFraction` em `[0.1, 1.0]`, `opacity` em `[0,1]`. A ordem da lista de camadas é a ordem Z (a última por cima); todas ficam acima do vídeo principal e abaixo de texto/legendas. O áudio da camada é misturado ao principal no `volume` dela (`0` a silencia).
 
 | Campo | Tipo | Default | Chave JSON | Nota |
 |---|---|---|---|---|

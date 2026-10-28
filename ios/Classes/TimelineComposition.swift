@@ -587,7 +587,8 @@ final class TimelineComposition {
   }
 
   /// Inserts every layer that is visible before the timeline end as its own
-  /// video track. Layers are muted: their audio is never inserted.
+  /// video track, plus its audio track when the layer is audible
+  /// (`volume > 0` and the source has audio).
   private func insertVideoLayers(into composition: AVMutableComposition) throws -> [PlacedLayer] {
     var placed: [PlacedLayer] = []
     for (layerIndex, layer) in videoLayers.enumerated() {
