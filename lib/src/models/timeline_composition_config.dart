@@ -13,6 +13,10 @@ enum OutputAspectRatio {
 
   /// Preserves the aspect ratio of the first clip in the timeline.
   original,
+
+  /// Uses [TimelineCompositionConfig.customWidth] ×
+  /// [TimelineCompositionConfig.customHeight] as the output canvas.
+  custom,
 }
 
 /// Strategy used by the native compositor when the input video is HDR.
@@ -37,15 +41,35 @@ class TimelineCompositionConfig {
   /// Creates a [TimelineCompositionConfig].
   ///
   /// [baseWidth] must be a positive integer (defaults to 1080).
+  ///
+  /// With [OutputAspectRatio.custom], [customWidth] and [customHeight] are
+  /// required, even and within [minCustomDimension]..[maxCustomDimension];
+  /// other aspect ratios ignore them. [frameRate], when set, must be within
+  /// 1..[maxFrameRate].
   factory TimelineCompositionConfig({
     OutputAspectRatio aspectRatio = OutputAspectRatio.original,
     int baseWidth = 1080,
     TimelineHdrMode hdrMode = TimelineHdrMode.keepHdr,
     bool preserveSourceQuality = false,
     bool enablePreview = true,
+    int? customWidth,
+    int? customHeight,
+    int? frameRate,
   }) {
     if (baseWidth <= 0) {
       throw ArgumentError.value(baseWidth, 'baseWidth', 'Must be positive.');
+    }
+    final isCustom = aspectRatio == OutputAspectRatio.custom;
+    if (isCustom) {
+      _checkCustomDimension(customWidth, 'customWidth');
+      _checkCustomDimension(customHeight, 'customHeight');
+    }
+    if (frameRate != null && (frameRate < 1 || frameRate > maxFrameRate)) {
+      throw ArgumentError.value(
+        frameRate,
+        'frameRate',
+        'Must be between 1 and $maxFrameRate.',
+      );
     }
     return TimelineCompositionConfig._(
       aspectRatio: aspectRatio,
@@ -53,6 +77,9 @@ class TimelineCompositionConfig {
       hdrMode: hdrMode,
       preserveSourceQuality: preserveSourceQuality,
       enablePreview: enablePreview,
+      customWidth: isCustom ? customWidth : null,
+      customHeight: isCustom ? customHeight : null,
+      frameRate: frameRate,
     );
   }
 
@@ -62,13 +89,42 @@ class TimelineCompositionConfig {
     required this.hdrMode,
     required this.preserveSourceQuality,
     required this.enablePreview,
+    required this.customWidth,
+    required this.customHeight,
+    required this.frameRate,
   });
+
+  /// Smallest accepted [customWidth] / [customHeight].
+  static const int minCustomDimension = 16;
+
+  /// Largest accepted [customWidth] / [customHeight].
+  static const int maxCustomDimension = 4096;
+
+  /// Largest accepted [frameRate].
+  static const int maxFrameRate = 60;
+
+  static void _checkCustomDimension(int? value, String name) {
+    if (value == null ||
+        value.isOdd ||
+        value < minCustomDimension ||
+        value > maxCustomDimension) {
+      throw ArgumentError.value(
+        value,
+        name,
+        'Must be even and between $minCustomDimension and '
+        '$maxCustomDimension.',
+      );
+    }
+  }
 
   /// The output aspect ratio used by the native compositor.
   final OutputAspectRatio aspectRatio;
 
-  /// Horizontal pixel count of the output canvas. Height is derived from
-  /// [aspectRatio].
+  /// Pixel count of the longer side of the canvas for
+  /// [OutputAspectRatio.ratio16x9], [OutputAspectRatio.ratio9x16] and
+  /// [OutputAspectRatio.ratio1x1]; the other side is derived from
+  /// [aspectRatio]. Ignored by [OutputAspectRatio.original] and
+  /// [OutputAspectRatio.custom].
   final int baseWidth;
 
   /// HDR handling requested from the native composition pipeline.
@@ -89,6 +145,22 @@ class TimelineCompositionConfig {
   /// accepts the flag but ignores it in this version.
   final bool enablePreview;
 
+  /// Canvas width with [OutputAspectRatio.custom]; `null` otherwise.
+  final int? customWidth;
+
+  /// Canvas height with [OutputAspectRatio.custom]; `null` otherwise.
+  final int? customHeight;
+
+  /// Target frame rate of the exported MP4, applied **only on export** — the
+  /// preview keeps its own rate.
+  ///
+  /// It is a ceiling: Android only drops frames, so a 30 fps source exported
+  /// at 60 stays at 30, while iOS writes a constant rate by repeating frames.
+  /// Both look the same. When set it wins over [preserveSourceQuality] for
+  /// the frame rate (bitrate is unaffected). `null` keeps each platform's
+  /// default.
+  final int? frameRate;
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'aspectRatio': aspectRatio.name,
@@ -96,15 +168,25 @@ class TimelineCompositionConfig {
       'hdrMode': hdrMode.name,
       'preserveSourceQuality': preserveSourceQuality,
       'enablePreview': enablePreview,
+      if (customWidth != null) 'customWidth': customWidth,
+      if (customHeight != null) 'customHeight': customHeight,
+      if (frameRate != null) 'frameRate': frameRate,
     };
   }
 
+  /// Fields left `null` keep their current value, so [copyWith] cannot clear
+  /// [customWidth], [customHeight] or [frameRate]; build a new config instead.
+  /// Switching away from [OutputAspectRatio.custom] drops the custom size, so
+  /// switching back needs [customWidth] and [customHeight] again.
   TimelineCompositionConfig copyWith({
     OutputAspectRatio? aspectRatio,
     int? baseWidth,
     TimelineHdrMode? hdrMode,
     bool? preserveSourceQuality,
     bool? enablePreview,
+    int? customWidth,
+    int? customHeight,
+    int? frameRate,
   }) {
     return TimelineCompositionConfig(
       aspectRatio: aspectRatio ?? this.aspectRatio,
@@ -113,6 +195,9 @@ class TimelineCompositionConfig {
       preserveSourceQuality:
           preserveSourceQuality ?? this.preserveSourceQuality,
       enablePreview: enablePreview ?? this.enablePreview,
+      customWidth: customWidth ?? this.customWidth,
+      customHeight: customHeight ?? this.customHeight,
+      frameRate: frameRate ?? this.frameRate,
     );
   }
 
@@ -123,10 +208,21 @@ class TimelineCompositionConfig {
         other.baseWidth == baseWidth &&
         other.hdrMode == hdrMode &&
         other.preserveSourceQuality == preserveSourceQuality &&
-        other.enablePreview == enablePreview;
+        other.enablePreview == enablePreview &&
+        other.customWidth == customWidth &&
+        other.customHeight == customHeight &&
+        other.frameRate == frameRate;
   }
 
   @override
   int get hashCode => Object.hash(
-      aspectRatio, baseWidth, hdrMode, preserveSourceQuality, enablePreview);
+    aspectRatio,
+    baseWidth,
+    hdrMode,
+    preserveSourceQuality,
+    enablePreview,
+    customWidth,
+    customHeight,
+    frameRate,
+  );
 }

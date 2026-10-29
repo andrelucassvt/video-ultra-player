@@ -16,6 +16,8 @@ class TimelinePlayerState {
     this.clipDurations = const [],
     this.canUndo = false,
     this.canRedo = false,
+    this.frameWidth = 0,
+    this.frameHeight = 0,
   });
 
   /// A zero-position, paused state suitable as an initial value before [load].
@@ -27,7 +29,9 @@ class TimelinePlayerState {
       totalDuration = Duration.zero,
       clipDurations = const [],
       canUndo = false,
-      canRedo = false;
+      canRedo = false,
+      frameWidth = 0,
+      frameHeight = 0;
 
   /// Elapsed playback time measured from the very start of the timeline.
   final Duration globalPosition;
@@ -56,6 +60,23 @@ class TimelinePlayerState {
   /// Whether the native edit history currently has a redo snapshot.
   final bool canRedo;
 
+  /// Pixel width of the frame the preview texture is showing right now; `0`
+  /// until the first frame is drawn.
+  ///
+  /// It trails [NativeTimelinePlayer.setCompositionConfig]: until the native
+  /// side draws a frame at the new size, the texture still holds the previous
+  /// one. Lay the texture out with [frameAspectRatio] to keep that frame
+  /// undistorted during the switch.
+  final int frameWidth;
+
+  /// Pixel height of the frame the preview texture is showing; see
+  /// [frameWidth].
+  final int frameHeight;
+
+  /// [frameWidth] / [frameHeight], or `null` while no frame was drawn.
+  double? get frameAspectRatio =>
+      frameWidth > 0 && frameHeight > 0 ? frameWidth / frameHeight : null;
+
   factory TimelinePlayerState.fromMap(Map<dynamic, dynamic> map) {
     final rawClipDurations = map['clipDurationsMs'];
     final clipDurations = <Duration>[];
@@ -76,6 +97,8 @@ class TimelinePlayerState {
       clipDurations: clipDurations,
       canUndo: map['canUndo'] == true,
       canRedo: map['canRedo'] == true,
+      frameWidth: _readInt(map, 'frameWidth'),
+      frameHeight: _readInt(map, 'frameHeight'),
     );
   }
 
@@ -88,6 +111,8 @@ class TimelinePlayerState {
     List<Duration>? clipDurations,
     bool? canUndo,
     bool? canRedo,
+    int? frameWidth,
+    int? frameHeight,
   }) {
     return TimelinePlayerState(
       globalPosition: globalPosition ?? this.globalPosition,
@@ -98,6 +123,8 @@ class TimelinePlayerState {
       clipDurations: clipDurations ?? this.clipDurations,
       canUndo: canUndo ?? this.canUndo,
       canRedo: canRedo ?? this.canRedo,
+      frameWidth: frameWidth ?? this.frameWidth,
+      frameHeight: frameHeight ?? this.frameHeight,
     );
   }
 
@@ -122,6 +149,8 @@ class TimelinePlayerState {
     if (other.totalDuration != totalDuration) return false;
     if (other.canUndo != canUndo) return false;
     if (other.canRedo != canRedo) return false;
+    if (other.frameWidth != frameWidth) return false;
+    if (other.frameHeight != frameHeight) return false;
     if (other.clipDurations.length != clipDurations.length) return false;
     for (var i = 0; i < clipDurations.length; i++) {
       if (other.clipDurations[i] != clipDurations[i]) return false;
@@ -140,6 +169,8 @@ class TimelinePlayerState {
       Object.hashAll(clipDurations),
       canUndo,
       canRedo,
+      frameWidth,
+      frameHeight,
     );
   }
 }

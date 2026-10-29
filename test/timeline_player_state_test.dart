@@ -40,5 +40,33 @@ void main() {
       expect(state.canUndo, isTrue);
       expect(state.canRedo, isTrue);
     });
+
+    test('fromMap reads the displayed frame size', () {
+      final state = TimelinePlayerState.fromMap({
+        'frameWidth': 1080,
+        'frameHeight': 1920,
+      });
+
+      expect(state.frameWidth, 1080);
+      expect(state.frameHeight, 1920);
+      expect(state.frameAspectRatio, 1080 / 1920);
+    });
+
+    test('frameAspectRatio is null before the first frame', () {
+      expect(const TimelinePlayerState.initial().frameAspectRatio, isNull);
+      expect(TimelinePlayerState.fromMap({}).frameAspectRatio, isNull);
+    });
+
+    test('equality distinguishes the frame size', () {
+      const state = TimelinePlayerState.initial();
+      final sized = state.copyWith(frameWidth: 1080, frameHeight: 1920);
+
+      expect(state == sized, isFalse);
+      expect(sized, state.copyWith(frameWidth: 1080, frameHeight: 1920));
+      expect(
+        sized.hashCode,
+        state.copyWith(frameWidth: 1080, frameHeight: 1920).hashCode,
+      );
+    });
   });
 }

@@ -2,9 +2,10 @@
 generated_at: 2026-07-31
 source_commit: 44650fd
 source_state: dirty
-verified_at: 2026-10-28
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
@@ -61,7 +62,7 @@ No karaokê, `CaptionLayers.presentationSegments` particiona toda a janela do cu
 13. **Alinhamento sem rebuild** — `setClipAlignment(clipIndex:x:y:)`
     `pushEditSnapshot()` + `composition.updateAlignment(...)` e atribuição direta em `player.currentItem?.videoComposition`.
 13b. **Resolução/proporção sem rebuild** — `setCompositionConfig(_:)` → `TimelineComposition.updateConfig(_:)`
-    Só o `renderSize` e os transforms por segmento dependem da config, então a `AVMutableComposition` (e todas as fontes já abertas) fica intacta: recalcula o `renderSize`, re-gera a videoComposition, reatribui ao item, atualiza o render size dos textos na textura e, se pausado, faz seek de tolerância zero + `requestFrame()`. Não empurra snapshot de edição — config de saída não é undo-ável. Nada é redecodificado e o `textureId` não muda.
+    Só o `renderSize` e os transforms por segmento dependem da config, então a `AVMutableComposition` (e todas as fontes já abertas) fica intacta: recalcula o `renderSize`, re-gera a videoComposition, reatribui ao item, atualiza o render size dos textos na textura e, se pausado, faz seek de tolerância zero + `requestFrame()`. `renderSize(for:)` trata `.custom` como `customWidth × customHeight` (com `evenSize`, e fallback para o tamanho do primeiro clipe sem dimensões). Quando só `frameRate` muda, `updateConfig` devolve `nil`: o fps é lido apenas por `buildExportAsset`, que o passa a `makeVideoComposition(exportFrameRate:)` para definir o `frameDuration` do export. Não empurra snapshot de edição — config de saída não é undo-ável. Nada é redecodificado e o `textureId` não muda.
 14. **Text overlays** — `addTextOverlay` / `updateTextOverlay` / `removeTextOverlay(id:)` → `applyUpdatedVideoComposition()`
     `pushEditSnapshot()` → mutação em `TimelineComposition.textOverlays` → `updatedVideoComposition()` (wrapper de `makeVideoComposition()`) → `player.currentItem?.videoComposition = ...`; se pausado, seek de tolerância zero + `texture.requestFrame()` para o frame pausado refletir o texto. A janela de cada `CATextLayer` é `[AVCoreAnimationBeginTimeAtZero + start, + end)` com `fillMode = .forwards`.
 14b. **Captions** — `setCaptions` / `removeCaptions` → `applyUpdatedCaptions()`

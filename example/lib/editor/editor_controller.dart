@@ -53,6 +53,9 @@ class EditorController extends ChangeNotifier {
   String? _exportMessage;
   OutputAspectRatio _aspectRatio = OutputAspectRatio.ratio9x16;
   int _baseWidth = 1080;
+  int _customWidth = 1080;
+  int _customHeight = 1350;
+  int _frameRate = 30;
   double _pixelsPerSecond = 72;
   Timer? _seekThrottleTimer;
   Duration? _queuedSeekPosition;
@@ -93,7 +96,12 @@ class EditorController extends ChangeNotifier {
   String? get exportMessage => _exportMessage;
   OutputAspectRatio get aspectRatio => _aspectRatio;
   int get baseWidth => _baseWidth;
-  String get resolutionLabel => '${_baseWidth}p';
+  int get customWidth => _customWidth;
+  int get customHeight => _customHeight;
+  int get frameRate => _frameRate;
+  String get resolutionLabel => _aspectRatio == OutputAspectRatio.custom
+      ? '$_customWidth×$_customHeight'
+      : '${_baseWidth}p';
   bool get hasTimeline => _textureId != null;
   double get pixelsPerSecond => _pixelsPerSecond;
   double get minPixelsPerSecond => 44;
@@ -114,9 +122,13 @@ class EditorController extends ChangeNotifier {
   bool get canRedo => _redoSnapshots.isNotEmpty;
 
   TimelineCompositionConfig get compositionConfig {
+    final isCustom = _aspectRatio == OutputAspectRatio.custom;
     return TimelineCompositionConfig(
       aspectRatio: _aspectRatio,
       baseWidth: _baseWidth,
+      customWidth: isCustom ? _customWidth : null,
+      customHeight: isCustom ? _customHeight : null,
+      frameRate: _frameRate,
     );
   }
 
@@ -126,6 +138,7 @@ class EditorController extends ChangeNotifier {
       OutputAspectRatio.ratio9x16 => 9 / 16,
       OutputAspectRatio.ratio1x1 => 1,
       OutputAspectRatio.original => null,
+      OutputAspectRatio.custom => _customWidth / _customHeight,
     };
   }
 
@@ -415,6 +428,37 @@ class EditorController extends ChangeNotifier {
     _baseWidth = next;
     _notify();
     await _applyCompositionConfig();
+  }
+
+  /// Sets the custom canvas, rounded up to even and clamped to the range
+  /// [TimelineCompositionConfig] accepts.
+  Future<void> setCustomSize(int width, int height) async {
+    final nextWidth = _evenCustomDimension(width);
+    final nextHeight = _evenCustomDimension(height);
+    if (_customWidth == nextWidth && _customHeight == nextHeight) return;
+    _customWidth = nextWidth;
+    _customHeight = nextHeight;
+    _notify();
+    if (_aspectRatio == OutputAspectRatio.custom) {
+      await _applyCompositionConfig();
+    }
+  }
+
+  /// Export frame rate. The native side keeps the preview as is and only
+  /// stores it for the next export.
+  Future<void> setFrameRate(int fps) async {
+    if (_frameRate == fps) return;
+    _frameRate = fps;
+    _notify();
+    await _applyCompositionConfig();
+  }
+
+  int _evenCustomDimension(int value) {
+    final even = value.isOdd ? value + 1 : value;
+    return even.clamp(
+      TimelineCompositionConfig.minCustomDimension,
+      TimelineCompositionConfig.maxCustomDimension,
+    );
   }
 
   /// Pushes the current output config to the native compositor **in place**.

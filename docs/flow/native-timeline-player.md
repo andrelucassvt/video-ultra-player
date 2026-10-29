@@ -2,9 +2,10 @@
 generated_at: 2026-07-31
 source_commit: 44650fd
 source_state: clean
-verified_at: 2026-10-28
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
 ---
@@ -98,7 +99,7 @@ Quando o player não é mais necessário, `dispose()` limpa o estado Dart, remov
 - **Clipes de imagem ignoram trim** — usam `duration` (fallback 2000 ms) e viram vídeo: MP4 via `AVAssetWriter` no iOS (encodado uma vez por processo pelo `ImageClipVideoCache`, a 6 fps e com o lado maior limitado a 1920 px), `setImageDurationMs` + `setFrameRate(30)` no Android.
 - **`clipDurations` reflete a duração exibida** — já com speed aplicado (`scaledVideoDuration` no iOS, `scaledDurationMs` no Android).
 - **Fim da timeline não faz loop** — `didPlayToEnd` pausa no iOS; para tocar de novo o app precisa dar seek para zero (é o que `EditorController.playOrPause` faz ao detectar posição no fim).
-- **`renderSize` vem do `config`** — `original` usa o tamanho normalizado do primeiro clipe, considerando rotação; as outras proporções derivam de `baseWidth`, sempre arredondado para dimensão par. Overlays e legendas usam esse mesmo canvas.
+- **`renderSize` vem do `config`** — `original` usa o tamanho normalizado do primeiro clipe, considerando rotação; `custom` usa `customWidth × customHeight`; 16:9/9:16/1:1 derivam de `baseWidth` (o lado maior), sempre arredondado para dimensão par. `frameRate` não afeta o preview, só o export. Overlays e legendas usam esse mesmo canvas.
 - **Config de saída é trocada no lugar, não recarregada** — `setCompositionConfig` preserva `textureId` e todo o estado editado; `load` continua sendo só para trocar a timeline de fato. A config aplicada fica em `NativeTimelinePlayer.compositionConfig` e alimenta o `exportCurrentTimeline`, então "export = preview" continua valendo depois da troca.
 - **Config também define HDR e fidelidade** — no Android, `TimelineHdrMode` escolhe manter HDR ou fazer tone mapping para SDR via MediaCodec; o iOS preserva seu pipeline nativo de cor. `preserveSourceQuality` solicita bitrate/frame rate da origem durante o re-encode, com fallback do encoder quando necessário.
 - **Config de saída não entra no histórico** — nenhuma plataforma empurra snapshot em `setCompositionConfig`; undo não deve reverter proporção.

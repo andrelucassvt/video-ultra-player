@@ -2,9 +2,10 @@
 generated_at: 2026-08-02
 source_commit: 44650fd
 source_state: clean
-verified_at: 2026-10-28
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/text-overlays/00-indice.md
@@ -179,7 +180,7 @@ Imutável, com `toJson`, `copyWith`, `==` e `hashCode`.
 
 ### `TimelineCompositionConfig` (`.../timeline_composition_config.dart`)
 
-Factory com validação (`baseWidth` deve ser positivo, senão `ArgumentError`) e construtor privado `._`. Campos: `aspectRatio` (`OutputAspectRatio`, default `original`) e `baseWidth` (`int`, default `1080`). Tem `toJson` e `copyWith`.
+Factory com validação e construtor privado `._`. Campos: `aspectRatio` (`OutputAspectRatio`, default `original`), `baseWidth` (`int`, default `1080` — lado **maior** do canvas em 16:9/9:16/1:1, ignorado em `original` e `custom`), `hdrMode`, `preserveSourceQuality`, `enablePreview`, `customWidth`/`customHeight` (`int?`, só com `custom`; descartados nas outras proporções) e `frameRate` (`int?`, 1–60, **só no export** e com semântica de teto: Android descarta quadros com `FrameDropEffect`, iOS grava CFR no alvo; quando informado vence `preserveSourceQuality` no fps). `toJson` omite os campos `null`; `copyWith` usa `??` (não volta um campo para `null`); `==`/`hashCode` cobrem todos os campos. Constantes `minCustomDimension` (16), `maxCustomDimension` (4096) e `maxFrameRate` (60).
 
 ### `AudioTrack` (`.../audio_track.dart`)
 
@@ -246,6 +247,9 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 | `totalDuration` | `Duration` | `totalDuration` (ms) |
 | `clipDurations` | `List<Duration>` | `clipDurationsMs` |
 | `canUndo` / `canRedo` | `bool` | `canUndo` / `canRedo` |
+| `frameWidth` / `frameHeight` | `int` (0 = sem frame) | `frameWidth` / `frameHeight` |
+
+`frameAspectRatio` (`double?`) é a razão do frame que a textura **mostra agora**. Ela fica atrás do `setCompositionConfig`: até o nativo desenhar no tamanho novo, a textura mantém o frame anterior. O Android atualiza o valor no `setOnFrameConsumedListener` da `SurfaceTextureEntry` (próximo frame latched → `renderSize` atual). O iOS atualiza pelo tamanho do `CVPixelBuffer` publicado pela `TimelineTexture`. O consumidor usa esse valor para posicionar a textura sem esticar o frame antigo durante a troca.
 
 ### `TimelineExportProgress` (`.../timeline_export_progress.dart`)
 
@@ -272,7 +276,7 @@ Recebido do canal `.../events` via `fromMap`. Tem também o construtor `.initial
 | Enum | Arquivo | Valores |
 |---|---|---|
 | `MediaType` | `timeline_clip.dart` | `video`, `image` |
-| `OutputAspectRatio` | `timeline_composition_config.dart` | `ratio16x9`, `ratio9x16`, `ratio1x1`, `original` |
+| `OutputAspectRatio` | `timeline_composition_config.dart` | `ratio16x9`, `ratio9x16`, `ratio1x1`, `original`, `custom` |
 | `TransitionType` | `clip_transition.dart` | `none`, `crossfade` |
 | `TimelineExportState` | `timeline_export_progress.dart` | `idle`, `exporting`, `completed`, `failed` |
 | `TimelineTextAlign` | `timeline_text_overlay.dart` | `left`, `center`, `right` |
@@ -312,6 +316,8 @@ Validações que rodam **no Dart**, antes de qualquer `invokeMethod` — todas e
 - **`scale > 0`** — `assert` no construtor de `TimelineClip`.
 - **`volume` de áudio em `[0.0, 1.0]`** — `assert` no construtor de `AudioTrack`.
 - **`baseWidth` positivo** — `TimelineCompositionConfig` lança `ArgumentError` na factory.
+- **`custom` exige tamanho par em 16–4096** — sem `customWidth`/`customHeight`, ou com valor ímpar ou fora do intervalo, a factory lança `ArgumentError`. No nativo, um `custom` sem tamanho cai para o canvas de `original`.
+- **`frameRate` em 1–60** — fora disso, `ArgumentError`. `null` mantém o fps atual de cada plataforma.
 - **Progresso clampado** — `TimelineExportProgress.fromMap` força `[0.0, 1.0]` e cai em `idle` para estado desconhecido.
 - **Milissegundos no canal** — toda `Duration` vira `int` de milissegundos; `trimEnd` é ponto absoluto na fonte, não duração.
 

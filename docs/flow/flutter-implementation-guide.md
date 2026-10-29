@@ -36,7 +36,10 @@ final textureId = await player.load(
   clips,
   config: TimelineCompositionConfig(
     aspectRatio: OutputAspectRatio.ratio9x16,
-    baseWidth: 1080, // 1..4096
+    baseWidth: 1080, // lado maior do canvas; 1..4096
+    // Ou: aspectRatio: OutputAspectRatio.custom,
+    //     customWidth: 1080, customHeight: 1350, // pares, 16..4096
+    // frameRate: 24, // 1..60, teto aplicado só no export
   ),
 );
 

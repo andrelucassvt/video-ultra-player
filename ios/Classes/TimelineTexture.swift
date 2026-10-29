@@ -24,6 +24,14 @@ final class TimelineTexture: NSObject, FlutterTexture {
 
   var textureId: Int64?
 
+  /// Size of the frame last handed to Flutter (main thread). After a render
+  /// size change the texture keeps showing the previous frame until the new
+  /// composition draws, so the Dart side lays the texture out with this.
+  private(set) var displayedFrameSize: CGSize = .zero
+
+  /// Called on the main thread when [displayedFrameSize] changes.
+  var onDisplayedFrameSizeChanged: (() -> Void)?
+
   init(playerItem: AVPlayerItem, textureRegistry: FlutterTextureRegistry) {
     self.textureRegistry = textureRegistry
     videoOutput = AVPlayerItemVideoOutput(
@@ -168,6 +176,10 @@ final class TimelineTexture: NSObject, FlutterTexture {
       self.processingLock.unlock()
 
       guard shouldPublish else { return }
+      let frameSize = CGSize(
+        width: CVPixelBufferGetWidth(pixelBuffer),
+        height: CVPixelBufferGetHeight(pixelBuffer)
+      )
       self.bufferLock.lock()
       self.pixelBufferCache = pixelBuffer
       self.bufferLock.unlock()
@@ -179,6 +191,10 @@ final class TimelineTexture: NSObject, FlutterTexture {
         self.processingLock.unlock()
         if canNotify {
           self.textureRegistry?.textureFrameAvailable(textureId)
+          if self.displayedFrameSize != frameSize {
+            self.displayedFrameSize = frameSize
+            self.onDisplayedFrameSizeChanged?()
+          }
         }
       }
     }

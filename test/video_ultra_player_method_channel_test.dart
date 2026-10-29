@@ -189,6 +189,15 @@ void main() {
         baseWidth: 720,
       ).toJson(),
     );
+    await platform.setCompositionConfig(
+      77,
+      TimelineCompositionConfig(
+        aspectRatio: OutputAspectRatio.custom,
+        customWidth: 1080,
+        customHeight: 1350,
+        frameRate: 24,
+      ).toJson(),
+    );
     await platform.dispose(77);
 
     expect(calls.map((call) => call.method), [
@@ -198,6 +207,7 @@ void main() {
       'seekToClip',
       'setVolume',
       'setClipAlignment',
+      'setCompositionConfig',
       'setCompositionConfig',
       'dispose',
     ]);
@@ -209,6 +219,19 @@ void main() {
         'hdrMode': 'keepHdr',
         'preserveSourceQuality': false,
         'enablePreview': true,
+      },
+    });
+    expect(calls[7].arguments, {
+      'textureId': 77,
+      'config': {
+        'aspectRatio': 'custom',
+        'baseWidth': 1080,
+        'hdrMode': 'keepHdr',
+        'preserveSourceQuality': false,
+        'enablePreview': true,
+        'customWidth': 1080,
+        'customHeight': 1350,
+        'frameRate': 24,
       },
     });
     expect(calls[2].arguments, {'textureId': 77, 'positionMs': 300});

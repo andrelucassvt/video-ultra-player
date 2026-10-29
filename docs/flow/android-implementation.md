@@ -2,9 +2,10 @@
 generated_at: 2026-07-31
 source_commit: 44650fd
 source_state: clean
-verified_at: 2026-10-28
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - luma-vid:docs/plan/layer-audio-volume.md
   - luma-vid:docs/plan/timeline-precision-video-layers/00-indice.md
   - docs/plan/onda-1-quick-wins.md
@@ -57,7 +58,7 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 11. **Edição** — `trimClip` / `splitClip` / `insertClip` / `removeClip` / `moveClip` / `replaceClip` / `setClipSpeed` / `setClipAlignment`
     Cada um valida o índice, chama `pushEditSnapshot()`, muta `clips` e chama `rebuildCompositionPreservingPlayback()`.
 11b. **Resolução/proporção** — `setCompositionConfig(rawConfig)`
-    Efeitos Media3 são imutáveis, então a `Composition` ainda é reconstruída — mas os metadados já resolvidos, o player, a `Surface` e o `textureId` são reaproveitados, e posição/estado de play sobrevivem. Recalcula `outputSizeFor`, atualiza `setDefaultBufferSize` + `setVideoSurface` e chama `rebuildCompositionPreservingPlayback()`. Não empurra snapshot de edição — config de saída não é undo-ável. No-op quando a config ou o tamanho resultante não mudam.
+    Recalcula `outputSizeFor` (`internal`; `CUSTOM` usa `customWidth × customHeight` via `evenDimension`) e, quando o tamanho muda, chama `rebuildCompositionPreservingPlayback(forceReplacement = true)`. Ou seja, passa sempre pelo caminho de **player substituto**, como as camadas: um player pausado não redesenha depois de `setComposition`, e reaproveitar o player deixava o frame antigo esticado até o play. O substituto é preparado sem `Surface`; o antigo pausa e mantém o último frame. No swap (`swapInPendingPlayer`), `setDefaultBufferSize` e `setVideoSurface` recebem o tamanho novo e, se estava pausado, o player toca mudo por `PAUSED_SWAP_RENDER_MS` para desenhar o primeiro frame. `displayedFrameSize` (emitido como `frameWidth`/`frameHeight`) só passa ao `renderSize` novo no próximo frame consumido pelo Flutter (`setOnFrameConsumedListener`) e é ignorado enquanto há substituto pendente. Não empurra snapshot de edição: config de saída não é undo-ável. É no-op quando a config ou o tamanho resultante não mudam, e por isso mudar só o `frameRate` apenas guarda a config, que o próximo export lê.
 12. **Trilha de áudio** — `setAudioTrack(rawTrack)` / `removeAudioTrack()`
     `AudioTrackDescriptor.from` + `resolveAudioTrack` (resolve `sourceDurationMs`) e rebuild; remover sem trilha ativa só re-emite estado.
 13. **Text overlays** — `addTextOverlay(rawOverlay)` / `updateTextOverlay(rawOverlay)` / `removeTextOverlay(overlayId)`
@@ -65,7 +66,7 @@ Export tem duas portas: `exportTimeline` (a partir de uma lista de clipes crua, 
 14. **Undo/redo** — `undo()` / `redo()` → `TimelineEditModel` → `restoreEditSnapshot`
     Restaura `clips` + `audioTrack` + `textOverlays` do snapshot e faz rebuild; pilha vazia é no-op com `emitState()`.
 15. **Export da timeline crua** — `VideoUltraPlayerPlugin.exportTimeline` → `TimelineCompositionExporter.export`
-    Parseia clipes/config, calcula `outputSizeFor` e delega a `exportFromClips` sem trilha de áudio e sem overlays (`emptyList()`).
+    Parseia clipes/config, calcula `outputSizeFor` e delega a `exportFromClips` sem trilha de áudio e sem overlays (`emptyList()`). `exportFromClips` passa `exportFrameRate = config.frameRate` para `buildTimelineComposition`; o preview (`currentComposition()`) não passa, então o `FrameDropEffect` (`exportFrameRateEffects`) e o `setFrameRate` de imagem no fps-alvo só existem no export.
 16. **Export do estado atual** — `exportCurrentTimeline` → `TimelineCompositionController.startExportCurrentTimeline` → `exportFromClips`
     Passa `clips`, `renderSize`, `audioTrack` e `textOverlays` correntes — o MP4 sai com os textos do preview.
 17. **Transformer** — `TimelineCompositionExporter.exportFromClips`

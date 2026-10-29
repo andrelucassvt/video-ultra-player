@@ -2,9 +2,10 @@
 generated_at: 2026-07-31
 source_commit: 69e5dcf
 source_state: dirty
-verified_at: 2026-08-12
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - docs/plan/onda-1-quick-wins.md
   - docs/plan/text-overlays/00-indice.md
   - docs/plan/auto-caption-export-fixes.md
@@ -113,6 +114,8 @@ O plugin devolve apenas um path local. Levar o arquivo para a galeria é respons
 - **Arquivo existente é sobrescrito** — iOS remove o arquivo antes de exportar; Android chama `delete()` antes do `start`.
 - **Destino default é temporário** — `temporaryDirectory` (iOS) / `cacheDir` (Android), com UUID no nome; o app é responsável por persistir.
 - **`original` preserva o canvas da origem** — a dimensão normalizada do primeiro vídeo, já considerando rotação, define o `renderSize`; a legenda é calculada como fração da altura desse canvas.
+- **`frameRate` é um teto aplicado só no export** — o preview não muda e trocar só o fps não reconstrói o player. No Android, o `TimelineCompositionExporter` passa `exportFrameRate` para `buildTimelineComposition`, que adiciona um `FrameDropEffect` aos efeitos da `Composition` (depois de texto/legenda quando há camadas) e usa o mesmo fps em `setFrameRate` das imagens. Como só descarta quadros, uma fonte de 30 fps exportada a 60 continua em 30. No iOS, `buildExportAsset` passa o fps para `makeVideoComposition(exportFrameRate:)`, que define o `frameDuration` (CFR, repete quadros). Com `frameRate` informado, `preserveSourceQuality` deixa de afetar o fps e continua valendo para o bitrate.
+- **`custom` define o canvas direto** — `customWidth × customHeight` (pares) viram o `renderSize` nas duas plataformas.
 - **Qualidade da fonte é uma política de melhor fidelidade** — overlays exigem re-encode. `preserveSourceQuality` pede o bitrate máximo da origem no Android e seu frame rate nominal no iOS, mas o encoder pode aplicar fallback conforme a capacidade do dispositivo.
 - **Tone mapping via MediaCodec evita o caminho OpenGL** — `toneMapToSdrUsingMediaCodec` é aplicado à `Composition` Android para não depender de `GL_EXT_YUV_target`; fontes SDR não precisam de conversão HDR.
 

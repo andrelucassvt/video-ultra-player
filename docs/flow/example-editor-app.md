@@ -2,9 +2,10 @@
 generated_at: 2026-08-01
 source_commit: cf6ee32
 source_state: dirty
-verified_at: 2026-08-02
+verified_at: 2026-10-29
 status: current
 related_plans:
+  - luma-vid:docs/plan/custom-output-size-and-frame-rate.md
   - docs/plan/onda-2-identidade-editor.md
   - docs/plan/editor-ui-redesign-light.md
   - docs/plan/text-overlays/00-indice.md
@@ -60,7 +61,8 @@ O carregamento de mídia tem três origens: os assets do demo (copiados para `sy
     Vazio → `addAudioTrack` (`FilePicker` com extensões de áudio); ativo → slider de volume (`setAudioVolumePreview` no arrasto, `commitAudioVolume` no release) e remover.
 15. **Textos** — `example/lib/editor/widgets/text_track_row.dart` + `text_edit_sheet.dart`
     Faixa vazia → "Adicionar texto"; com overlays, um bloco por overlay posicionado por `start`/`end` na escala de `pixelsPerSecond`, destaque quando selecionado, tap → `selectTextOverlay` + sheet. O sheet edita conteúdo, cor/fundo (swatches), tamanho/opacidade/rotação (sliders), alinhamento (`SegmentedButton`), fonte (dropdown com fallback nativo), janela (`RangeSlider`) e excluir — tudo via `commitTextOverlay` no commit do controle.
-16. **Config de saída** — `setAspectRatio` / `setBaseWidth` → `_applyCompositionConfig`
+16. **Config de saída** — `setAspectRatio` / `setBaseWidth` / `setCustomSize` / `setFrameRate` → `_applyCompositionConfig`
+    O sheet de proporção tem a opção "Personalizado": campos Largura/Altura (só dígitos) aplicados no submit ou em "Aplicar", nunca a cada dígito; botão de inverter a orientação; chips de 24/30/60 fps com a nota "Aplicado ao exportar". `setCustomSize` arredonda para par e limita a 16–4096; `previewAspectRatio` vira `customWidth / customHeight` e `resolutionLabel` mostra `W×H`.
     Alteram `compositionConfig` e chamam `_player.setCompositionConfig(...)`, que muda resolução/proporção **no lugar**: a textura, os clipes, os textos, a trilha de áudio, o histórico nativo e a posição de playback sobrevivem — nada é redecodificado e o preview não pisca. Cliques em rajada coalescem: enquanto uma chamada está em voo, `_configUpdatePending` marca que falta aplicar e só uma chamada final (com o estado mais recente) é emitida.
 17. **Export** — `EditorToolbar._ExportButton` → `controller.export`
     Cria `systemTemp/video_ultra_player_example_exports`, chama `exportCurrentTimeline(outputPath:)`, assina `exportProgress` para o percentual, salva na galeria com `Gal.putVideo` e apaga o temporário. Sucesso define o sentinel `gallery_saved`; permissão negada lança `gallery_permission_denied` — ambos resolvidos na `EditorScreen`.

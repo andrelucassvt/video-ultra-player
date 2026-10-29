@@ -70,6 +70,7 @@ struct TimelineCompositionConfig {
     case ratio9x16
     case ratio1x1
     case original
+    case custom
   }
 
   enum HdrMode: String {
@@ -81,6 +82,11 @@ struct TimelineCompositionConfig {
   let baseWidth: Int
   let hdrMode: HdrMode
   let preserveSourceQuality: Bool
+  /// Canvas size for `.custom`; `nil` otherwise.
+  let customWidth: Int?
+  let customHeight: Int?
+  /// Export-only frame rate; `nil` keeps the default policy.
+  let frameRate: Int?
 
   init(dictionary: [String: Any]? = nil) {
     let aspectRatioValue = dictionary?["aspectRatio"] as? String
@@ -91,6 +97,12 @@ struct TimelineCompositionConfig {
     self.baseWidth = max(baseWidth?.intValue ?? 1080, 1)
     self.hdrMode = HdrMode(rawValue: hdrModeValue ?? "") ?? .keepHdr
     self.preserveSourceQuality = dictionary?["preserveSourceQuality"] as? Bool ?? false
+    let customWidth = (dictionary?["customWidth"] as? NSNumber)?.intValue
+    let customHeight = (dictionary?["customHeight"] as? NSNumber)?.intValue
+    self.customWidth = customWidth.flatMap { $0 > 0 ? $0 : nil }
+    self.customHeight = customHeight.flatMap { $0 > 0 ? $0 : nil }
+    let frameRate = (dictionary?["frameRate"] as? NSNumber)?.intValue
+    self.frameRate = frameRate.flatMap { $0 > 0 ? $0 : nil }
   }
 }
 
@@ -429,7 +441,8 @@ final class TimelineComposition {
       asset: playerItem.asset,
       videoComposition: makeVideoComposition(
         includeTextOverlays: true,
-        includeCaptions: true
+        includeCaptions: true,
+        exportFrameRate: config.frameRate.map { normalizedFrameRate(Float($0)) }
       ),
       audioMix: playerItem.audioMix
     )
@@ -834,15 +847,19 @@ final class TimelineComposition {
 
   // MARK: - Private
 
+  /// `exportFrameRate` is only passed by the export path: the preview keeps
+  /// the default rate whatever `frameRate` the config carries.
   private func makeVideoComposition(
     includeTextOverlays: Bool,
-    includeCaptions: Bool = false
+    includeCaptions: Bool = false,
+    exportFrameRate: Int32? = nil
   ) -> AVMutableVideoComposition {
     let videoComposition = AVMutableVideoComposition()
     videoComposition.renderSize = renderSize
     videoComposition.frameDuration = CMTime(
       value: 1,
-      timescale: currentConfig.preserveSourceQuality ? sourceFrameRate : 30
+      timescale: exportFrameRate
+        ?? (currentConfig.preserveSourceQuality ? sourceFrameRate : 30)
     )
     let instructions = placedLayers.isEmpty
       ? segments.map { segment in
@@ -1096,6 +1113,11 @@ final class TimelineComposition {
       return evenSize(CGSize(width: baseWidth, height: baseWidth))
     case .original:
       return evenSize(firstRenderableSize)
+    case .custom:
+      guard let width = config.customWidth, let height = config.customHeight else {
+        return evenSize(firstRenderableSize)
+      }
+      return evenSize(CGSize(width: CGFloat(width), height: CGFloat(height)))
     }
   }
 

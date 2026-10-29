@@ -807,6 +807,8 @@ private final class TimelinePlayerController {
     let clipDurations: [Int64]
     let canUndo: Bool
     let canRedo: Bool
+    let frameWidth: Int
+    let frameHeight: Int
   }
 
   let textureId: Int64
@@ -876,6 +878,7 @@ private final class TimelinePlayerController {
     tex.textureId = textureId
     tex.start()
     addObservers()
+    tex.onDisplayedFrameSizeChanged = { [weak self] in self?.emitState() }
     observeInitialItemReady(playerItem)
   }
 
@@ -1272,7 +1275,9 @@ private final class TimelinePlayerController {
       totalDuration: composition.totalDuration.timelineMilliseconds,
       clipDurations: composition.clipDurationsMs,
       canUndo: editHistory.canUndo,
-      canRedo: editHistory.canRedo
+      canRedo: editHistory.canRedo,
+      frameWidth: Int(texture.displayedFrameSize.width),
+      frameHeight: Int(texture.displayedFrameSize.height)
     )
     guard state != lastEmittedState else { return }
     lastEmittedState = state
@@ -1286,6 +1291,8 @@ private final class TimelinePlayerController {
       "clipDurationsMs": state.clipDurations,
       "canUndo": state.canUndo,
       "canRedo": state.canRedo,
+      "frameWidth": state.frameWidth,
+      "frameHeight": state.frameHeight,
     ])
   }
 

@@ -17,6 +17,7 @@ import androidx.media3.common.audio.GainProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.Size
 import androidx.media3.effect.Crop
+import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.MultipleInputVideoGraph
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
@@ -102,6 +103,20 @@ internal class TimelineCompositionController(
     private var videoLayers: List<VideoLayerDescriptor> = emptyList()
     private val editHistory = TimelineEditModel()
     private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
+    /**
+     * Size of the frame the texture shows now. After a size change the
+     * SurfaceTexture keeps the old frame until the rebuilt composition draws,
+     * so the Dart side lays the texture out with this, not with [renderSize].
+     */
+    private var displayedFrameSize: TimelineRenderSize? = null
+    private val frameConsumed = Runnable {
+        // While a replacement is pending, frames still come from the old
+        // player, at the old size.
+        if (textureEntry != null && pendingPlayer == null && displayedFrameSize != renderSize) {
+            displayedFrameSize = renderSize
+            emitState()
+        }
+    }
     private var surface: Surface? = null
     private var player: CompositionPlayer? = null
     private var playerUsesMultiInput = false
@@ -149,7 +164,9 @@ internal class TimelineCompositionController(
         val totalDuration: Long,
         val clipDurationsMs: List<Long>,
         val canUndo: Boolean,
-        val canRedo: Boolean
+        val canRedo: Boolean,
+        val frameWidth: Int,
+        val frameHeight: Int
     )
 
     /** Target of a layer seek still waiting for the debounced rebuild. */
@@ -247,6 +264,8 @@ internal class TimelineCompositionController(
         val entry = textureRegistry.createSurfaceTexture()
         entry.surfaceTexture().setDefaultBufferSize(renderSize.width, renderSize.height)
         val renderSurface = Surface(entry.surfaceTexture())
+        // Called on the raster thread each time Flutter latches a new frame.
+        entry.setOnFrameConsumedListener { mainHandler.post(frameConsumed) }
 
         textureEntry = entry
         surface = renderSurface
@@ -357,10 +376,11 @@ internal class TimelineCompositionController(
      * Switches output resolution/aspect ratio in place.
      *
      * Media3 effects are immutable, so the `Composition` still has to be
-     * rebuilt — but the already-resolved clip metadata, the player, the surface
-     * and the texture ID are all reused, and playback position and play state
-     * are preserved. That avoids the texture swap (and its black flash) plus
-     * the full metadata re-read a dispose/load cycle would cost.
+     * rebuilt, on a replacement player swapped in once READY. The resolved
+     * clip metadata, the surface and the texture ID are reused, and playback
+     * position and play state are preserved. That avoids the texture swap
+     * (and its black flash) plus the full metadata re-read a dispose/load
+     * cycle would cost.
      */
     fun setCompositionConfig(rawConfig: Map<*, *>?) {
         val nextConfig = TimelineCompositionConfig.from(rawConfig)
@@ -383,11 +403,13 @@ internal class TimelineCompositionController(
         }
         renderSize = nextSize
 
-        textureEntry?.surfaceTexture()?.setDefaultBufferSize(nextSize.width, nextSize.height)
-        surface?.let { activeSurface ->
-            player?.setVideoSurface(activeSurface, Size(nextSize.width, nextSize.height))
-        }
-        rebuildCompositionPreservingPlayback()
+        // The buffer size changes on swap (swapInPendingPlayer), so the old
+        // player never draws into a buffer of the new size.
+        // A paused player does not redraw after setComposition, so resizing
+        // the current one left its old frame stretched until play. A fresh
+        // player gets the new Surface size on swap and draws its first frame
+        // (muted nudge when paused); the old one keeps its frame until then.
+        rebuildCompositionPreservingPlayback(forceReplacement = true)
     }
 
     fun play() {
@@ -780,8 +802,11 @@ internal class TimelineCompositionController(
         player = null
         surface?.release()
         surface = null
+        mainHandler.removeCallbacks(frameConsumed)
+        textureEntry?.setOnFrameConsumedListener(null)
         textureEntry?.release()
         textureEntry = null
+        displayedFrameSize = null
     }
 
     private fun rebuildSegments() {
@@ -794,7 +819,7 @@ internal class TimelineCompositionController(
         totalDurationMs = startMs
     }
 
-    private fun rebuildCompositionPreservingPlayback() {
+    private fun rebuildCompositionPreservingPlayback(forceReplacement: Boolean = false) {
         rebuildSegments()
         var currentPlayer = player ?: return
         val positionMs = pendingLayerSeekMs
@@ -811,7 +836,7 @@ internal class TimelineCompositionController(
         // a second setComposition leaves the secondary sequence stuck in
         // BUFFERING until the stuck-player detector fails with
         // ERROR_CODE_TIMEOUT. With layers, every rebuild gets a fresh player.
-        if ((needsMultiInput || needsMultiInput != playerUsesMultiInput) &&
+        if ((forceReplacement || needsMultiInput || needsMultiInput != playerUsesMultiInput) &&
             activeSurface != null
         ) {
             prepareReplacementPlayer(needsMultiInput, positionMs.coerceIn(0L, totalDurationMs), wasPlaying)
@@ -873,6 +898,7 @@ internal class TimelineCompositionController(
         pendingSwap = null
         player?.release()
         player = next
+        textureEntry?.surfaceTexture()?.setDefaultBufferSize(renderSize.width, renderSize.height)
         surface?.let { next.setVideoSurface(it, Size(renderSize.width, renderSize.height)) }
         if (pendingWantsPlay) {
             positionOverrideMs = null
@@ -928,7 +954,9 @@ internal class TimelineCompositionController(
             totalDuration = totalDurationMs,
             clipDurationsMs = segments.map { it.durationMs },
             canUndo = editHistory.canUndo,
-            canRedo = editHistory.canRedo
+            canRedo = editHistory.canRedo,
+            frameWidth = displayedFrameSize?.width ?: 0,
+            frameHeight = displayedFrameSize?.height ?: 0
         )
         if (state == lastEmittedState) return
         lastEmittedState = state
@@ -942,7 +970,9 @@ internal class TimelineCompositionController(
                 "totalDuration" to state.totalDuration,
                 "clipDurationsMs" to state.clipDurationsMs,
                 "canUndo" to state.canUndo,
-                "canRedo" to state.canRedo
+                "canRedo" to state.canRedo,
+                "frameWidth" to state.frameWidth,
+                "frameHeight" to state.frameHeight
             )
         )
     }
@@ -1085,13 +1115,15 @@ internal class TimelineCompositionExporter(
             captionCues,
             captionStyle,
             config,
-            videoLayers
+            videoLayers,
+            exportFrameRate = config.frameRate
         )
         exportComposition(
             composition,
             outputPath,
             preferredVideoBitrate(config, clips),
-            callback
+            callback,
+            requestedSize = renderSize
         )
     }
 
@@ -1104,7 +1136,8 @@ internal class TimelineCompositionExporter(
         composition: Composition,
         outputPath: String?,
         videoBitrate: Int?,
-        callback: TimelineExportCallback
+        callback: TimelineExportCallback,
+        requestedSize: TimelineRenderSize? = null
     ) {
         progressCallback = callback
         callback.onProgress(0.0, "exporting")
@@ -1121,6 +1154,19 @@ internal class TimelineCompositionExporter(
                         composition: Composition,
                         exportResult: ExportResult
                     ) {
+                        // The encoder fallback may shrink an unsupported
+                        // (e.g. custom 4K) canvas without failing.
+                        if (requestedSize != null && exportResult.width > 0 &&
+                            (exportResult.width != requestedSize.width ||
+                                exportResult.height != requestedSize.height)
+                        ) {
+                            Log.w(
+                                "VideoUltraPlayer",
+                                "Export size ${exportResult.width}x${exportResult.height} " +
+                                    "differs from requested " +
+                                    "${requestedSize.width}x${requestedSize.height}"
+                            )
+                        }
                         complete {
                             callback.onProgress(1.0, "completed")
                             callback.onCompleted(outputFile.absolutePath)
@@ -1207,8 +1253,12 @@ private fun buildTimelineComposition(
     captionCues: List<CaptionCueDescriptor> = emptyList(),
     captionStyle: CaptionStyleDescriptor? = null,
     config: TimelineCompositionConfig = TimelineCompositionConfig(),
-    videoLayers: List<VideoLayerDescriptor> = emptyList()
+    videoLayers: List<VideoLayerDescriptor> = emptyList(),
+    // Export-only: the preview shares this builder (and the config) but must
+    // keep playing at the source rate.
+    exportFrameRate: Int? = null
 ): Composition {
+    val frameRateEffects = exportFrameRateEffects(exportFrameRate)
     val timelineDurationMs = clips.sumOf { it.scaledDurationMs }
     val placedLayers = videoLayers.mapNotNull { layer ->
         layer.visibleWindowMs(layer.sourceDurationMs, timelineDurationMs)
@@ -1222,7 +1272,12 @@ private fun buildTimelineComposition(
     var clipStartMs = 0L
     val items = clips.map { clip ->
         val item = if (composeOverlays) {
-            editedMediaItemFor(clip, renderSize, clipStartMs = clipStartMs)
+            editedMediaItemFor(
+                clip,
+                renderSize,
+                clipStartMs = clipStartMs,
+                imageFrameRate = exportFrameRate
+            )
         } else {
             editedMediaItemFor(
                 clip,
@@ -1230,7 +1285,8 @@ private fun buildTimelineComposition(
                 textOverlaysForClip(textOverlays, clipStartMs, clip.scaledDurationMs),
                 clipStartMs,
                 captionCues,
-                captionStyle
+                captionStyle,
+                exportFrameRate
             )
         }
         clipStartMs += clip.scaledDurationMs
@@ -1243,6 +1299,7 @@ private fun buildTimelineComposition(
             sequences.add(audioSequenceFor(audioTrack, timelineDurationMs))
         }
         return Composition.Builder(sequences)
+            .setEffects(Effects(emptyList(), frameRateEffects))
             .setHdrMode(config.media3HdrMode)
             .build()
     }
@@ -1263,7 +1320,15 @@ private fun buildTimelineComposition(
     }
     return Composition.Builder(sequences)
         .setVideoCompositorSettings(VideoLayerCompositorSettings(renderSize, layersBySequence))
-        .setEffects(timelineOverlayEffects(renderSize, textOverlays, captionCues, captionStyle))
+        .setEffects(
+            timelineOverlayEffects(
+                renderSize,
+                textOverlays,
+                captionCues,
+                captionStyle,
+                frameRateEffects
+            )
+        )
         // The multi-input compositor rejects HDR and mixed color spaces.
         .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
         .build()
@@ -1274,7 +1339,8 @@ private fun timelineOverlayEffects(
     renderSize: TimelineRenderSize,
     textOverlays: List<TextOverlayDescriptor>,
     captionCues: List<CaptionCueDescriptor>,
-    captionStyle: CaptionStyleDescriptor?
+    captionStyle: CaptionStyleDescriptor?,
+    trailingEffects: List<Effect> = emptyList()
 ): Effects {
     val videoEffects = mutableListOf<Effect>()
     if (textOverlays.isNotEmpty()) {
@@ -1297,7 +1363,17 @@ private fun timelineOverlayEffects(
             )
         )
     }
+    videoEffects.addAll(trailingEffects)
     return Effects(emptyList(), videoEffects)
+}
+
+/**
+ * Frame-rate ceiling for the exported file. [FrameDropEffect] only drops
+ * frames, so a source below [frameRate] keeps its own rate.
+ */
+internal fun exportFrameRateEffects(frameRate: Int?): List<Effect> {
+    if (frameRate == null || frameRate <= 0) return emptyList()
+    return listOf(FrameDropEffect.createDefaultFrameDropEffect(frameRate.toFloat()))
 }
 
 /**
@@ -1346,7 +1422,8 @@ private fun editedMediaItemFor(
     clipOverlays: List<TextOverlayDescriptor> = emptyList(),
     clipStartMs: Long = 0L,
     captionCues: List<CaptionCueDescriptor> = emptyList(),
-    captionStyle: CaptionStyleDescriptor? = null
+    captionStyle: CaptionStyleDescriptor? = null,
+    imageFrameRate: Int? = null
 ): EditedMediaItem {
     val mediaItemBuilder = MediaItem.Builder()
         .setUri(Uri.fromFile(File(clip.path)))
@@ -1386,7 +1463,7 @@ private fun editedMediaItemFor(
     }
 
     if (clip.type == TimelineMediaType.IMAGE) {
-        builder.setFrameRate(30)
+        builder.setFrameRate(imageFrameRate ?: 30)
     }
 
     return builder.build()
@@ -1681,7 +1758,7 @@ internal object SourceMetadataCache {
     }
 }
 
-private fun outputSizeFor(
+internal fun outputSizeFor(
     config: TimelineCompositionConfig,
     firstClip: TimelineClip
 ): TimelineRenderSize {
@@ -1699,6 +1776,10 @@ private fun outputSizeFor(
         OutputAspectRatio.ORIGINAL -> TimelineRenderSize(
             width = evenDimension(firstClip.sourceWidth),
             height = evenDimension(firstClip.sourceHeight)
+        )
+        OutputAspectRatio.CUSTOM -> TimelineRenderSize(
+            width = evenDimension(config.customWidth ?: firstClip.sourceWidth),
+            height = evenDimension(config.customHeight ?: firstClip.sourceHeight)
         )
     }
 }
@@ -1718,7 +1799,11 @@ internal data class TimelineCompositionConfig(
     val baseWidth: Int = 1080,
     val hdrMode: TimelineHdrMode = TimelineHdrMode.KEEP_HDR,
     val preserveSourceQuality: Boolean = false,
-    val enablePreview: Boolean = true
+    val enablePreview: Boolean = true,
+    val customWidth: Int? = null,
+    val customHeight: Int? = null,
+    /** Export-only frame-rate ceiling; `null` keeps the source rate. */
+    val frameRate: Int? = null
 ) {
     val media3HdrMode: Int
         get() = when (hdrMode) {
@@ -1733,10 +1818,21 @@ internal data class TimelineCompositionConfig(
                 "ratio16x9" -> OutputAspectRatio.RATIO_16X9
                 "ratio9x16" -> OutputAspectRatio.RATIO_9X16
                 "ratio1x1" -> OutputAspectRatio.RATIO_1X1
+                "custom" -> OutputAspectRatio.CUSTOM
                 else -> OutputAspectRatio.ORIGINAL
             }
+            val customWidth = (map?.get("customWidth") as? Number)?.toInt()?.takeIf { it > 0 }
+            val customHeight = (map?.get("customHeight") as? Number)?.toInt()?.takeIf { it > 0 }
+            val isCustom = aspectRatio == OutputAspectRatio.CUSTOM &&
+                customWidth != null && customHeight != null
             return TimelineCompositionConfig(
-                aspectRatio = aspectRatio,
+                // A custom ratio without a size cannot be honored: fall back to
+                // the first clip's size instead of an arbitrary canvas.
+                aspectRatio = if (aspectRatio == OutputAspectRatio.CUSTOM && !isCustom) {
+                    OutputAspectRatio.ORIGINAL
+                } else {
+                    aspectRatio
+                },
                 baseWidth = ((map?.get("baseWidth") as? Number)?.toInt() ?: 1080)
                     .coerceAtLeast(1),
                 hdrMode = when (map?.get("hdrMode") as? String) {
@@ -1746,7 +1842,10 @@ internal data class TimelineCompositionConfig(
                 },
                 preserveSourceQuality =
                     map?.get("preserveSourceQuality") as? Boolean ?: false,
-                enablePreview = map?.get("enablePreview") as? Boolean ?: true
+                enablePreview = map?.get("enablePreview") as? Boolean ?: true,
+                customWidth = customWidth.takeIf { isCustom },
+                customHeight = customHeight.takeIf { isCustom },
+                frameRate = (map?.get("frameRate") as? Number)?.toInt()?.takeIf { it > 0 }
             )
         }
     }
@@ -1926,5 +2025,6 @@ internal enum class OutputAspectRatio {
     RATIO_16X9,
     RATIO_9X16,
     RATIO_1X1,
-    ORIGINAL
+    ORIGINAL,
+    CUSTOM
 }
